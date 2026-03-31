@@ -51,6 +51,15 @@ paths:
                 - $ref: '#/components/schemas/AccountsBalancesRequest'
               discriminator:
                 propertyName: action
+                mapping:
+                  account_balance:    '#/components/schemas/AccountBalanceRequest'
+                  account_history:    '#/components/schemas/AccountHistoryRequest'
+                  account_info:       '#/components/schemas/AccountInfoRequest'
+                  pending:            '#/components/schemas/PendingRequest'
+                  receivable:         '#/components/schemas/PendingRequest'
+                  process:            '#/components/schemas/ProcessRequest'
+                  block_info:         '#/components/schemas/BlockInfoRequest'
+                  accounts_balances:  '#/components/schemas/AccountsBalancesRequest'
             examples:
               account_balance:
                 summary: Get account balance
