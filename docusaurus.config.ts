@@ -6,7 +6,7 @@ const config: Config = {
   title: 'Kakitu API',
   tagline: 'Developer documentation for the Kakitu wallet API',
   favicon: 'img/kakitu-logo.png',
-  url: 'https://api.kakitu.org',
+  url: 'https://developer.kakitu.org',
   baseUrl: '/',
   organizationName: 'kakitucurrency',
   projectName: 'kakitu-docs',
