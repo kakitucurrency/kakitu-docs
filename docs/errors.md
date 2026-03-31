@@ -44,7 +44,7 @@ Reconnection example:
 
 ```js
 function connect() {
-  const ws = new WebSocket('wss://walletapi.kakitu.africa');
+  const ws = new WebSocket('wss://walletapi.kakitu.org');
   ws.onclose = () => setTimeout(connect, 2000);
   ws.onopen = () => { /* re-subscribe */ };
 }

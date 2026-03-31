@@ -31,7 +31,7 @@ sequenceDiagram
 ### Request
 
 ```bash
-curl -X POST https://walletapi.kakitu.africa/mpesa/cashin \
+curl -X POST https://walletapi.kakitu.org/mpesa/cashin \
   -H "Content-Type: application/json" \
   -d '{
     "phone": "0712345678",
@@ -92,7 +92,7 @@ sequenceDiagram
 ### Step 1 — Get the treasury address
 
 ```bash
-curl https://walletapi.kakitu.africa/mpesa/config
+curl https://walletapi.kakitu.org/mpesa/config
 ```
 
 Response:
@@ -107,7 +107,7 @@ Use your wallet to send exactly `amount_kes` KSHS to the treasury address. Wait 
 ### Step 3 — Request cash-out
 
 ```bash
-curl -X POST https://walletapi.kakitu.africa/mpesa/cashout \
+curl -X POST https://walletapi.kakitu.org/mpesa/cashout \
   -H "Content-Type: application/json" \
   -d '{
     "phone": "0712345678",

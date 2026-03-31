@@ -9,7 +9,7 @@ The WebSocket endpoint provides real-time balance updates, price feeds, and bloc
 ## Endpoint
 
 ```
-wss://walletapi.kakitu.africa
+wss://walletapi.kakitu.org
 ```
 
 ## Keepalive
@@ -21,7 +21,7 @@ The server sends a WebSocket ping every **54 seconds**. Your client must respond
 Send an `account_subscribe` message after connecting:
 
 ```js
-const ws = new WebSocket('wss://walletapi.kakitu.africa');
+const ws = new WebSocket('wss://walletapi.kakitu.org');
 
 ws.onopen = () => {
   ws.send(JSON.stringify({

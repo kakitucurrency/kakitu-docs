@@ -18,7 +18,7 @@ GET /alerts/
 ## Example
 
 ```bash
-curl https://walletapi.kakitu.africa/alerts/en
+curl https://walletapi.kakitu.org/alerts/en
 ```
 
 If there is no active alert, the response is an empty object `{}`.

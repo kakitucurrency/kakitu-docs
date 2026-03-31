@@ -6,7 +6,7 @@ info:
     The Kakitu wallet server provides HTTP and WebSocket APIs for wallet operations,
     real-time updates, and M-Pesa cash-in/out.
 
-    **Base URL:** `https://walletapi.kakitu.africa`
+    **Base URL:** `https://walletapi.kakitu.org`
 
     **Rate limiting:** 100 requests/minute per IP. Pass `Authorization: <ADMIN_API_KEY>`
     to bypass.
@@ -14,7 +14,7 @@ info:
     url: https://kakitu.org
 
 servers:
-  - url: https://walletapi.kakitu.africa
+  - url: https://walletapi.kakitu.org
     description: Production
 
 tags:

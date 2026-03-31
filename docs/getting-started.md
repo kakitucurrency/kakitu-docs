@@ -7,7 +7,7 @@ sidebar_position: 2
 ## Base URL
 
 ```
-https://walletapi.kakitu.africa
+https://walletapi.kakitu.org
 ```
 
 ## Content-Type
@@ -62,7 +62,7 @@ kshs_1abc123def456...
 ## Example: Check balance
 
 ```bash
-curl -X POST https://walletapi.kakitu.africa/api \
+curl -X POST https://walletapi.kakitu.org/api \
   -H "Content-Type: application/json" \
   -d '{
     "action": "account_balance",
@@ -73,7 +73,7 @@ curl -X POST https://walletapi.kakitu.africa/api \
 ## Example: Get transaction history
 
 ```bash
-curl -X POST https://walletapi.kakitu.africa/api \
+curl -X POST https://walletapi.kakitu.org/api \
   -H "Content-Type: application/json" \
   -d '{
     "action": "account_history",

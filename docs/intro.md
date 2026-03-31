@@ -20,13 +20,13 @@ Transactions are feeless and settle in under a second.
 ## Base URL
 
 ```
-https://walletapi.kakitu.africa
+https://walletapi.kakitu.org
 ```
 
 ## Quick start
 
 ```bash
-curl -X POST https://walletapi.kakitu.africa/api \
+curl -X POST https://walletapi.kakitu.org/api \
   -H "Content-Type: application/json" \
   -d '{"action":"account_balance","account":"kshs_1abc123..."}'
 ```
