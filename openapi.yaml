@@ -22,6 +22,8 @@ tags:
     description: Nano RPC proxy — wallet and account operations
   - name: M-Pesa
     description: Cash-in (STK Push) and cash-out (B2C) via Safaricom Daraja
+  - name: Utility
+    description: Alerts and maintenance banners
 
 paths:
   /api:
