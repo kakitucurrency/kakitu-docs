@@ -44,8 +44,12 @@ All KSHS amounts in the API are in **raw** units:
 To convert:
 ```js
 const KSHS_TO_RAW = BigInt('1000000000000000000000000000000'); // 10^30
+
+// KSHS → raw
 const raw = BigInt(kshs) * KSHS_TO_RAW;
-const kshs = Number(raw) / Number(KSHS_TO_RAW);
+
+// raw → KSHS
+const amount = Number(rawAmount) / Number(KSHS_TO_RAW);
 ```
 
 ## Address format
