@@ -1,50 +1,47 @@
 ---
 sidebar_position: 1
+slug: /intro
+title: Introduction
 ---
 
-# Kakitu Developer Documentation
+# Kakitu developer API
 
-:::danger These docs have been withdrawn
+Kakitu is a Kenyan-shilling stablecoin. **KSHS is an ERC-20 token on Base, backed one to one by USDC held in reserve, and 1 KSHS is 1 KES.** Wallets are self-custody: the key is generated on the device and never reaches us. Reserve backing is public at [`https://walletapi.kakitu.org/reserves`](https://walletapi.kakitu.org/reserves).
 
-Everything that used to be published here described an **earlier version of
-Kakitu built on Nano**. It is no longer accurate in any part — not the
-endpoints, not the units, not the authentication, not the payment rails.
+The developer API lets a business **collect** money by M-Pesa and be credited in KSHS directly to its own wallet. The payer gets an M-Pesa PIN prompt, pays, and the shilling amount arrives as KSHS at the address you registered. We never hold it for you.
 
-Rather than leave it up, we have taken it down. Working from it would have cost
-you real time and, if you got far enough, real money.
+:::caution What works today, and what does not
+This page is the status board. Read it before you plan anything.
 
+| Feature | Status |
+|---|---|
+| Sign requests with a wallet key | Live |
+| `POST /v1/merchants`, register a merchant | Live |
+| `GET /v1/merchants/me`, read your merchant | Live |
+| `POST /v1/charges`, `GET /v1/charges/{id}`, collections | **Not yet available.** Documented from the code as it is being written. |
+| Webhook delivery | **Not yet available.** |
+| Operator approval of a merchant | Live, manual. Required before collections work. |
 :::
 
-## What was wrong
+## How it fits together
 
-The previous documentation described:
+1. Your **wallet address is your API credential.** There are no API keys to leak or rotate. You prove you own the address by signing each request. See [Authentication](./authentication).
+2. You **register** a merchant. It starts as `pending`. See [Merchants](./merchants).
+3. A Kakitu operator **approves** it. This is a person, not an automated step, and it is required. See [Going live](./going-live).
+4. Once approved you create **charges**. See [Collections](./collections).
 
-- a **Nano RPC proxy** at `POST /api`, taking an `action` in the request body
-- amounts in **raw units at 10<sup>30</sup>**
-- M-Pesa cash-in and cash-out through **Safaricom Daraja**
+## Base URL
 
-None of those exist. Kakitu has never held a Daraja integration, and the Nano
-node was replaced well before this site was last updated.
+```
+https://walletapi.kakitu.org
+```
 
-## What Kakitu actually is today
+All paths in these docs are relative to it. All bodies are JSON. All errors share one shape, described in [Errors](./errors).
 
-**KSHS is an ERC-20 token on Base**, backed one-to-one by USDC held in reserve.
-One KSHS is one Kenyan shilling. Wallets are **self-custody** — the key is
-generated on the device and never leaves it. Cash in and cash out run through
-licensed partner rails rather than a direct mobile-money integration.
+## A note on the old documentation
 
-Reserve backing is public and live at
-[`https://walletapi.kakitu.org/reserves`](https://walletapi.kakitu.org/reserves).
+An earlier version of this site described a Nano RPC proxy, raw-unit amounts and a Safaricom Daraja integration. None of that was ever accurate for the product in production, and it was withdrawn. If you built against it, none of it carries over. Everything here is checked against the running server's code.
 
-## What is coming
+## Help
 
-We are building a proper developer API, with collections first — so a business
-can charge a customer by M-Pesa and be credited directly into its own wallet.
-Alongside it: signed webhooks, idempotency on everything that moves money, a
-documented error set, and SDKs so you never have to hand-roll request signing.
-
-## In the meantime
-
-If you are building on Kakitu now, write to **kakitu@kakitu.org** and we will
-work with you directly rather than point you at a page. We would rather have
-that conversation than publish something else you cannot rely on.
+Write to **kakitu@kakitu.org**. When you report a problem, include the `request_id` from the error body. It is the only thing that lets us find your request in the logs.

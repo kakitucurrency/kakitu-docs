@@ -1,0 +1,233 @@
+openapi: 3.1.0
+info:
+  title: Kakitu developer API
+  version: 0.1.0
+  description: |
+    Merchant collections on Kakitu. Your wallet address is your credential: every request is signed
+    with the wallet key (EIP-191 personal_sign). See the Authentication page of the docs for the
+    scheme and runnable examples in TypeScript, Python and PHP.
+
+    **Live today:** `POST /v1/merchants`, `GET /v1/merchants/me`.
+    **Not yet available:** `POST /v1/charges`, `GET /v1/charges/{id}`. They are listed for planning
+    and will answer 404 until they ship. Shapes are provisional.
+
+    Collections require operator approval of the merchant, because a collection rings a payer's
+    handset with a real M-Pesa PIN prompt.
+servers:
+  - url: https://walletapi.kakitu.org
+security:
+  - walletSignature: []
+paths:
+  /v1/merchants:
+    post:
+      operationId: registerMerchant
+      summary: Register or update the signing wallet as a merchant
+      description: |
+        Creates a `pending` merchant (201) or updates its details (200). Absent or null
+        `contact_phone` / `callback_url` leave the stored value unchanged; an explicit `""` clears it.
+        `business_name` is frozen once the merchant is past `pending` (409 `merchant_name_frozen`).
+        Fields `state`, `webhook_secret`, `daily_cap_kes`, `per_charge_max_kes`, `address`,
+        `reviewed_by`, `review_note` are accepted and dropped. Any other unknown field is refused.
+        Body limit 16 KiB. No Idempotency-Key required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MerchantRequest' }
+      responses:
+        '201':
+          description: Registered (first time).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Merchant' }
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Merchant' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '409': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/merchants/me:
+    get:
+      operationId: getMerchant
+      summary: Read the signing wallet's merchant record
+      responses:
+        '200':
+          description: The merchant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Merchant' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '404':
+          description: merchant_not_registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/charges:
+    post:
+      operationId: createCharge
+      summary: Create a collection (NOT YET AVAILABLE)
+      description: |
+        **Not yet available. The route is not registered; calls return 404.** Provisional shape.
+        Requires an approved merchant and an `Idempotency-Key`. Sends an M-Pesa PIN prompt to `phone`.
+        A retry after a refusal that happened before the rail was reached needs the same key and a
+        NEW `reference`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChargeRequest' }
+      responses:
+        '201':
+          description: Charge created (provisional).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Charge' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/charges/{id}:
+    get:
+      operationId: getCharge
+      summary: Read a charge (NOT YET AVAILABLE)
+      description: '**Not yet available.** Provisional shape. A charge of another merchant answers 404 charge_not_found.'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The charge (provisional).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Charge' }
+        '404': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    walletSignature:
+      type: apiKey
+      in: header
+      name: X-Kakitu-Signature
+      description: |
+        Three headers on every request: `X-Kakitu-Address`, `X-Kakitu-Timestamp` (unix seconds, within
+        120 s of server time), `X-Kakitu-Signature` (0x + 65 bytes). The signature is EIP-191
+        personal_sign over `{METHOD} {path}{?query} {timestamp} {sha256hex(body)}`. The body hash is
+        of the raw body, sha256 of empty for GET/DELETE. The query is included with a leading `?`
+        only when non-empty. Replays are rejected for 300 s.
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Unique per logical request, at most 255 characters. Reuse only to retry the same request.
+      schema: { type: string, maxLength: 255 }
+  responses:
+    Error:
+      description: Error. Branch on `error.code`, never on `message`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    AuthFailure:
+      description: Signature check failed. Uses the older shape, not ErrorEnvelope.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AuthError' }
+  schemas:
+    MerchantRequest:
+      type: object
+      additionalProperties: false
+      required: [business_name, contact_email]
+      properties:
+        business_name: { type: string, minLength: 1, maxLength: 100 }
+        contact_email: { type: string, maxLength: 254 }
+        contact_phone:
+          type: [string, 'null']
+          maxLength: 20
+          description: Digits, +, space, hyphen. "" clears; absent or null leaves unchanged.
+        callback_url:
+          type: [string, 'null']
+          maxLength: 512
+          description: https, port 443, public host, punycode for non-ASCII. "" clears; absent or null leaves unchanged.
+    Merchant:
+      type: object
+      required: [address, business_name, contact_email, contact_phone, callback_url, state, daily_cap_kes, per_charge_max_kes]
+      properties:
+        address: { type: string }
+        business_name: { type: string }
+        contact_email: { type: string }
+        contact_phone: { type: string }
+        callback_url: { type: string }
+        state: { type: string, enum: [pending, approved, rejected, suspended] }
+        daily_cap_kes: { type: integer, format: int64, description: 0 means the platform default applies. }
+        per_charge_max_kes: { type: integer, format: int64, description: 0 means the platform default applies. }
+    ChargeRequest:
+      type: object
+      required: [amount, phone, reference]
+      properties:
+        amount: { type: integer, format: int64, description: Whole KES, greater than zero. }
+        phone: { type: string, description: Payer's Kenyan mobile number. }
+        reference: { type: string, maxLength: 128, description: Unique per merchant. }
+    Charge:
+      type: object
+      properties:
+        id: { type: string }
+        reference: { type: string }
+        amount: { type: integer, format: int64 }
+        currency: { type: string, const: KES }
+        status: { type: string, enum: [pending, prompted, paid, settled, failed, expired, cancelled] }
+        created_at: { type: string, format: date-time }
+        paid_at: { type: [string, 'null'], format: date-time }
+        settled_at: { type: [string, 'null'], format: date-time }
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code:
+              type: string
+              description: The contract. HTTP status per code is fixed (see the Errors page).
+              enum:
+                - invalid_request
+                - unauthorized
+                - merchant_not_registered
+                - merchant_not_approved
+                - merchant_suspended
+                - merchant_name_frozen
+                - idempotency_key_required
+                - idempotency_key_invalid
+                - idempotency_key_reuse
+                - idempotency_key_in_progress
+                - idempotency_key_acted
+                - idempotency_unavailable
+                - request_too_large
+                - amount_below_minimum
+                - amount_above_maximum
+                - daily_cap_exceeded
+                - payer_velocity_exceeded
+                - rate_limited
+                - charge_not_found
+                - reference_reused
+                - rail_unavailable
+                - internal
+            message: { type: string, description: For humans. May change. Do not branch on it. }
+            request_id: { type: string }
+    AuthError:
+      type: object
+      required: [error, reason]
+      properties:
+        error: { type: string, const: unauthorized }
+        reason:
+          type: string
+          enum: [missing_auth_headers, bad_timestamp, timestamp_out_of_range, bad_signature, replay, unreadable_body, auth_unavailable]
