@@ -1,6 +1,10 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm run build"
+# `npm run clear` first, deliberately. Railway mounts node_modules/.cache across builds, and
+# Docusaurus caches aggressively in it — on 2026-10-25 a build reported SUCCESS, passed its
+# healthcheck, and served the PREVIOUS site's pages. Nine new pages were invisible with no
+# error anywhere. Clearing costs a few seconds; a stale docs deploy costs an integrator a day.
+buildCommand = "npm run clear && npm run build"
 
 [deploy]
 startCommand = "npx serve@latest build -l ${PORT:-3000} -s"
