@@ -1,0 +1,26 @@
+{
+  "name": "@kakitu/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the Kakitu developer API. Request signing is handled for you.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@noble/curves": "1.9.7",
+    "@noble/hashes": "1.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  }
+}

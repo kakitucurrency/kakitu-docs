@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kakitu"
+version = "0.1.0"
+description = "Python SDK for the Kakitu developer API (accept M-Pesa payments). Request signing is automatic."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+  "eth-account==0.14.0",
+  "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+test = ["pytest==9.1.1"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["kakitu"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
