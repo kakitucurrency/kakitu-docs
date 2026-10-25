@@ -16,20 +16,8 @@ const config: Config = {
     defaultLocale: 'en',
     locales: ['en'],
   },
-  plugins: [
-    [
-      '@scalar/docusaurus',
-      {
-        label: 'API Reference',
-        route: '/api-reference',
-        configuration: {
-          spec: { url: '/openapi.yaml' },
-          theme: 'saturn',
-          darkMode: true,
-        },
-      },
-    ],
-  ],
+  plugins: [],
+
   presets: [
     [
       'classic',
@@ -65,11 +53,6 @@ const config: Config = {
           label: 'Docs',
         },
         {
-          to: '/api-reference',
-          label: 'API Reference',
-          position: 'left',
-        },
-        {
           href: 'https://kakitu.org',
           label: 'Explorer',
           position: 'right',
@@ -87,9 +70,7 @@ const config: Config = {
         {
           title: 'Docs',
           items: [
-            { label: 'Getting Started', to: '/docs/getting-started' },
-            { label: 'WebSocket', to: '/docs/websocket' },
-            { label: 'M-Pesa', to: '/docs/mpesa' },
+            { label: 'Introduction', to: '/docs/intro' },
           ],
         },
         {
