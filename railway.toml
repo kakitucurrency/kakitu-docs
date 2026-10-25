@@ -7,6 +7,12 @@ builder = "NIXPACKS"
 buildCommand = "npm run clear && npm run build"
 
 [deploy]
-startCommand = "npx serve@latest build -l ${PORT:-3000} -s"
+# Docusaurus's own server, not `serve -s`. On 2026-10-25 `serve -s build` returned the SPA
+# shell for every nested route — /docs/intro, /docs/authentication, all nine — while happily
+# serving top-level files like /openapi.yaml and /sitemap.xml from the same build. The sitemap
+# listed every page; none of them loaded. And because -s is SPA mode, each one answered
+# HTTP 200, so nothing anywhere reported a fault. `docusaurus serve` knows its own output
+# layout and resolves nested directory indexes correctly.
+startCommand = "npx docusaurus serve --port ${PORT:-3000} --host 0.0.0.0"
 healthcheckPath = "/"
 restartPolicyType = "ON_FAILURE"
