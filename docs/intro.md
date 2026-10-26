@@ -10,17 +10,26 @@ Kakitu is a Kenyan-shilling stablecoin. **KSHS is an ERC-20 token on Base, backe
 
 The developer API lets a business **collect** money by M-Pesa and be credited in KSHS directly to its own wallet. The payer gets an M-Pesa PIN prompt, pays, and the shilling amount arrives as KSHS at the address you registered. We never hold it for you.
 
-:::caution What works today, and what does not
-This page is the status board. Read it before you plan anything.
+:::danger Nothing here is live yet — last checked 26 Oct 2026
+This page is the status board, and it is honest about the one thing that matters: **no `/v1`
+endpoint answers in production today.** Every path below returns `404` on
+`walletapi.kakitu.org` right now. They are documented from the code as it is written, so that
+you can read the contract and tell us it is wrong before it is frozen — not so that you can
+call them.
 
 | Feature | Status |
 |---|---|
-| Sign requests with a wallet key | Live |
-| `POST /v1/merchants`, register a merchant | Live |
-| `GET /v1/merchants/me`, read your merchant | Live |
-| `POST /v1/charges`, `GET /v1/charges/{id}`, collections | **Not yet available.** Documented from the code as it is being written. |
-| Webhook delivery | **Not yet available.** |
-| Operator approval of a merchant | Live, manual. Required before collections work. |
+| Sign requests with a wallet key | Contract final. The scheme is not changing. |
+| `POST /v1/merchants`, `GET /v1/merchants/me` | Built, not deployed. |
+| `POST /v1/charges`, `GET /v1/charges/{id}`, collections | Built, not deployed. |
+| `POST /v1/transfers`, the gasless transfer | Built, not deployed. |
+| `GET /v1/balances`, `/v1/orders/{id}`, `/v1/limits`, `/v1/quotes` | Built, not deployed. |
+| Webhook delivery | In progress. |
+| Payouts (paying money OUT) | In progress. Default-off per merchant when it ships. |
+| Operator approval of a merchant | A person, not an endpoint. Required before collections work. |
+
+They ship together, not one at a time. This banner comes down the day they answer, and not
+before.
 :::
 
 ## How it fits together

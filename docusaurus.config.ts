@@ -20,6 +20,8 @@ const config: Config = {
     [
       '@scalar/docusaurus',
       {
+        // This label IS the navbar entry — the Scalar plugin adds one itself. Do not also
+        // add a manual {to: '/api-reference'} item in navbar.items, or the bar shows two.
         label: 'API Reference',
         route: '/api-reference',
         configuration: {
@@ -64,11 +66,6 @@ const config: Config = {
           sidebarId: 'docs',
           position: 'left',
           label: 'Docs',
-        },
-        {
-          to: '/api-reference',
-          label: 'API Reference',
-          position: 'left',
         },
         {
           href: 'https://kakitu.org',

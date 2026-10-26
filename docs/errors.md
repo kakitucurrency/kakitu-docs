@@ -48,7 +48,7 @@ Every `/v1/` endpoint answers an error with one envelope:
 | `rail_unavailable` | 503 | Collections are temporarily unavailable. Retry shortly. |
 | `internal` | 500 | Something went wrong on our side. Quote the request_id. |
 
-Only the first two merchant endpoints are live today. Codes for charges are in the set already, but those endpoints are [not yet available](./collections).
+No `/v1` endpoint is deployed yet (see [the status board](./intro)). The whole code set below is final and will not change under you, including the codes for endpoints you cannot call yet.
 
 ## Authentication failures
 

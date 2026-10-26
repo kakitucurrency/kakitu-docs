@@ -5,7 +5,7 @@ title: Quickstart
 
 # Quickstart
 
-This gets you from nothing to a registered merchant in about ten minutes. It stops at `pending`, because the next step is an operator, and collections are not yet available (see [Collections](./collections)).
+This is what registering will look like, end to end, in about ten minutes. **You cannot run it yet** — no `/v1` endpoint is deployed (see [the status board](./intro)). Read it to check the shape against your own integration; when the endpoints go up, this page works unchanged.
 
 ## 1. Get a wallet key
 
