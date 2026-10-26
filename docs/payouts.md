@@ -32,7 +32,7 @@ One code covers both switches on purpose. Which of the two is off is an operator
 
 An **approved** merchant with payouts switched on. The refusals are the same ones the rest of the API uses: an unsigned request gets `401 unauthorized`, a wallet that never registered gets `404 merchant_not_registered`, a `pending` or `rejected` one gets `403 merchant_not_approved`, and a suspended one gets `403 merchant_suspended`.
 
-`GET /v1/payouts/{id}` is the exception: it only needs a signed request, and it scopes by the signing address. A wallet that is not a merchant simply has no payouts, and is told so in the ordinary way.
+`GET /v1/payouts/{id}` and `GET /v1/payouts` are the exception: they only need a signed request, and they scope by the signing address. A wallet that is not a merchant simply has no payouts — the single read answers `404 payout_not_found` and the list answers an empty page.
 
 ## Payout caps are not your collection caps
 
@@ -48,6 +48,8 @@ None of these is `daily_cap_exceeded`, and they never will be. That code is the 
 
 The daily payout budget resets at **midnight East Africa Time**, not UTC.
 
+**You do not have to discover your own numbers by being refused.** [`GET /v1/limits`](./limits#payout-limits) publishes them: your per-payout maximum, your daily cap, what is left of today's budget, and the threshold above which a payout is [held](#the-hold). They are read from the same place the refusals above read them, so they cannot disagree.
+
 The budget is checked twice: at quote time, so you learn you are over it **before** you sign anything, and again when you confirm, which is the call that actually spends it. A payout that is accepted and then fails has still spent the day's budget — there is no refund path, because a counter that could be refunded is a counter that can be raced.
 
 ## The shape of it
@@ -58,6 +60,12 @@ Three calls, in this order:
 POST /v1/payouts/quote   price it, and get back exactly what to sign
 POST /v1/payouts         send the quote id and the signed transfer
 GET  /v1/payouts/{id}    read where it got to
+```
+
+And one for afterwards:
+
+```http
+GET  /v1/payouts         everything you have sent, newest first
 ```
 
 ## POST /v1/payouts/quote
@@ -288,6 +296,75 @@ HTTP 404
 
 Anything else would make this endpoint a way of asking whether somebody else's payout id is real. It is `payout_not_found` and not `order_not_found` because you are holding a payout id, and an integrator should not be sent off to look for an order.
 
+## GET /v1/payouts
+
+Your own payouts, newest first. Signed request, no body, no `Idempotency-Key`; it reads.
+
+**It exists so that losing a payout id is not the same as losing sight of the money.** `POST /v1/payouts` hands back an id, and before this route that id was the only handle on it — one crash between our response and your own commit, or one dropped log line, and you had no way to find out what you had sent.
+
+```http
+GET /v1/payouts?status=held&created_after=2026-10-01T00:00:00Z&limit=50
+```
+
+| Parameter | Rules |
+|---|---|
+| `status` | One of the seven [statuses](#status). Anything else: `invalid_request`. |
+| `created_after` | An RFC 3339 timestamp, for example `2026-10-25T00:00:00Z`. Exclusive. |
+| `limit` | A whole number from 1 to 100. Default 20. |
+| `cursor` | `next_cursor` from the previous page, unchanged. |
+
+```json
+{
+  "data": [
+    {
+      "id": "7c2b18e4-0f2a-4a1b-9a44-1b2c3d4e5f60",
+      "status": "held",
+      "amount_kes": 25000,
+      "fee_kes": 150,
+      "send_kes": 25150,
+      "currency": "KES",
+      "beneficiary": { "phone": "254712345678", "name": "Jane Wanjiru" },
+      "created_at": "2026-10-26T09:14:02Z",
+      "message": "This payout is held for review and has NOT been sent. A person will release or cancel it; poll GET /v1/payouts/{id} for the outcome."
+    }
+  ],
+  "next_cursor": "MjAyNi0xMC0yNlQwOToxNDowMloucy4u"
+}
+```
+
+### The paging is [`GET /v1/charges`](./collections#get-v1charges)'s, exactly
+
+The same opaque `(created_at, id)` cursor, the same 1-to-100 `limit` defaulting to 20, the same `data` / `next_cursor` body. If you have already written a pager for charges, it works here unchanged — that is the point of them being identical rather than merely similar.
+
+`next_cursor` is `null` on the last page. It is **an opaque string, not a page number**: payouts arrive while you are paging, and an offset would show you the same row twice. Pass it back unchanged — a cursor we did not issue is `invalid_request`, never a silently different page.
+
+An empty result is `{"data": [], "next_cursor": null}`.
+
+### There is no `reference` filter
+
+A payout has no merchant-supplied reference. That is a charge field: you name a charge, but a payout is priced from a quote and identified by the id we return. Keep your own mapping from your reference to that id — this list will not do it for you.
+
+### A bad `status` is a `400`, not an empty page
+
+```json
+HTTP 400
+{ "error": { "code": "invalid_request", "message": "status is not a payout status. See the status field of any payout for the values.", "request_id": "…" } }
+```
+
+An empty page reads as "you have no payouts like that", and for a typo'd status that is a lie about somebody's money.
+
+### It does not need a registered merchant
+
+This route is scoped by the **signing address**, in the query itself, and there is no merchant lookup in front of it. A wallet that never registered gets an empty page, not `404 merchant_not_registered`.
+
+That is a real difference from [`GET /v1/charges`](./collections#get-v1charges), which *does* answer `merchant_not_registered`. Do not write one handler for both and expect the same refusal. The scope is in the `WHERE` clause either way, so neither returns somebody else's rows.
+
+### `message` is where a hold is explained
+
+Each element is the **same object** `GET /v1/payouts/{id}` returns, `message` included — present only while a payout is `held` or `dispatched`, absent otherwise.
+
+Read it. **That sentence is the only place a hold is explained to you**, and a payout that was accepted and then does not move looks like an outage until something says a person is going to look at it. It is written for a human reading a log: display it, log it, but **branch on `status`, never on `message`.**
+
 ## Errors
 
 ### POST /v1/payouts/quote
@@ -334,6 +411,18 @@ The general idempotency rules — replays, mismatched bodies, the 24-hour window
 | `payout_not_found` | 404 | No payout with that id, or it is not yours. |
 | `rail_unavailable` | 503 | Temporarily unavailable. Retry shortly. |
 | `internal` | 500 | Something went wrong on our side. |
+
+### GET /v1/payouts
+
+| `code` | HTTP | When |
+|---|---|---|
+| `unauthorized` | 401 | The request was not signed. |
+| `invalid_request` | 400 | An unknown `status`, a `created_after` that is not RFC 3339, a `limit` outside 1–100, or a `cursor` we did not issue. |
+| `rate_limited` | 429 | Too many requests from this wallet. |
+| `rail_unavailable` | 503 | Temporarily unavailable. Retry shortly. |
+| `internal` | 500 | Something went wrong on our side. |
+
+**No `merchant_not_registered` and no `payouts_disabled`.** Reading what you have already sent is not paying out, so an unregistered caller and a merchant with payouts switched off both get a `200` — an empty page in the first case, and in the second whatever was sent before the switch moved.
 
 Every code on this page is from the closed set in [Errors](./errors).
 

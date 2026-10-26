@@ -37,11 +37,14 @@ The request and response shapes below are final and will not change under you.
 | `POST /v1/events/{id}/replay` | Private release | [Events](./events) |
 | `POST /v1/payouts/quote` | Private release · off by default per merchant | [Payouts](./payouts) |
 | `POST /v1/payouts` | Private release · off by default per merchant | [Payouts](./payouts) |
-| `GET /v1/payouts/{id}` | Private release · off by default per merchant | [Payouts](./payouts) |
+| `GET /v1/payouts` | Private release · a signed request is enough | [Payouts](./payouts) |
+| `GET /v1/payouts/{id}` | Private release · a signed request is enough | [Payouts](./payouts) |
 | Webhook delivery | Private release | [Webhooks](./webhooks) |
 | Operator approval of a merchant | A person, not an endpoint. Required before collections work. | [Going live](./going-live) |
 
-Fifteen routes. The twelve collection-side routes are enabled together, per merchant, once an operator activates you. **The three payout routes are not**: paying money out is a second decision, off by default both globally and per merchant, and approval does not imply it. See [Payouts](./payouts#payouts-are-off-by-default).
+Sixteen routes. The twelve collection-side routes are enabled together, per merchant, once an operator activates you. **The two payout routes that price and send money are not**: paying money out is a second decision, off by default both globally and per merchant, and approval does not imply it. See [Payouts](./payouts#payouts-are-off-by-default).
+
+The two that only **read** payouts — `GET /v1/payouts` and `GET /v1/payouts/{id}` — need nothing but a signed request, because reading what you have already sent is not paying out. A wallet with no payouts gets an empty page or a `404`, not a refusal.
 
 ## How it fits together
 

@@ -806,6 +806,73 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    get:
+      operationId: listPayouts
+      tags: [Payouts]
+      summary: List the signing wallet's payouts
+      description: |
+        Cursor-paged, newest first. It exists so that losing a payout id is not the same as
+        losing sight of the money: `POST /v1/payouts` hands back an id, and before this route
+        that id was the only handle on it.
+
+        The pagination is `GET /v1/charges`'s, deliberately and exactly: the same opaque
+        `(created_at, id)` cursor, the same 1 to 100 `limit` defaulting to 20, the same
+        `data` / `next_cursor` body. Pass `next_cursor` back as `cursor`, unchanged; `null`
+        means there is no further page. A cursor this API did not issue is
+        `400 invalid_request`, never a silently different page.
+
+        There is **no `reference` filter**. A payout carries no merchant-supplied reference —
+        that is a charge field.
+
+        **This route does not require merchant registration.** It is scoped by the signing
+        address alone, in the repository's `WHERE` clause, so a wallet that never registered
+        gets an empty page rather than `404 merchant_not_registered`. That is where it differs
+        from `GET /v1/charges`, which does answer `merchant_not_registered`.
+
+        Each element is the same object `GET /v1/payouts/{id}` returns, `message` included.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: A payout status. Anything else is `400 invalid_request`, not an empty page.
+          schema: { $ref: '#/components/schemas/PayoutStatus' }
+        - name: created_after
+          in: query
+          required: false
+          description: RFC 3339 timestamp, e.g. `2026-10-25T00:00:00Z`. Exclusive.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          description: 1 to 100.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: cursor
+          in: query
+          required: false
+          description: '`next_cursor` from the previous page, unchanged.'
+          schema: { type: string }
+      responses:
+        '200':
+          description: |
+            A page of payouts. A caller with none — including one that is not a registered
+            merchant — gets `{"data": [], "next_cursor": null}`.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PayoutList' }
+        '400':
+          description: '`invalid_request` — bad `status`, `created_after`, `limit` or `cursor`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/RailUnavailable' }
   /v1/payouts/{id}:
     get:
       operationId: getPayout
@@ -911,7 +978,7 @@ paths:
     get:
       operationId: getLimits
       tags: [Reads]
-      summary: Read the current withdrawal band
+      summary: Read the current withdrawal band, and your own payout limits
       description: |
         The published band is **cached**, refreshed on a timer (about every five minutes), so
         after the payout route is switched it can describe the previous route for up to that
@@ -922,9 +989,14 @@ paths:
 
         `source` is `live` when the numbers came from the payout route, `estimated` when they are
         the configured fallback because the route has not answered.
+
+        A **registered merchant** also gets a `payout` object: the per-payout maximum, the daily
+        payout cap, the hold threshold and what is left of today's budget. For any other caller
+        the `payout` key is **absent entirely** — this is a wallet route as well as a merchant
+        one, and the withdrawal band is never withheld over a merchant-only extra.
       responses:
         '200':
-          description: The band.
+          description: The band, and the caller's `payout` limits if it is a registered merchant.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
             RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
@@ -1668,6 +1740,16 @@ components:
             Kakitu's own sentence about what is happening now. Present on `held` (it says the
             payout has **not** been sent and a person will release or cancel it) and on
             `dispatched`. Omitted otherwise. For humans — never branch on it; branch on `status`.
+    PayoutList:
+      type: object
+      required: [data, next_cursor]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Payout' }
+        next_cursor:
+          type: [string, 'null']
+          description: Pass back as `cursor` for the next page. `null` on the last page.
     Balances:
       type: object
       required: [kshs, usdc]
@@ -1724,10 +1806,61 @@ components:
               type: string
               enum: [live, estimated]
               description: '`live` read from the payout route; `estimated` the configured fallback.'
+        payout:
+          $ref: '#/components/schemas/PayoutLimits'
         max_staleness_seconds:
           type: integer
           description: The longest this band can be behind the payout route.
         note: { type: string, description: A human-readable staleness caveat. }
+    PayoutLimits:
+      type: object
+      required: [enabled, max_kes, daily_cap_kes, hold_above_kes, remaining_today_kes, note]
+      description: |
+        The caller's own payout governance, published so that an integrator does not have to
+        discover it by being refused.
+
+        **The whole object is absent — not `null`, not an empty object — for a caller that is
+        not a registered merchant.** `GET /v1/limits` is a wallet route too, and an ordinary
+        customer has no payout limits to be told about. Test for the key, not for its contents.
+      properties:
+        enabled:
+          type: boolean
+          description: |
+            ONE fact: the platform-wide payout switch **and** this merchant's own, ANDed. It
+            deliberately does not say which of the two is off, because the `payouts_disabled`
+            refusal does not either. The three numbers below are published either way, so a
+            `false` here still tells you what the limits would be.
+        max_kes:
+          type: integer
+          format: int64
+          description: |
+            The largest single payout. Exact: read from the same place the enforcement reads
+            it, so it cannot disagree with `payout_amount_above_maximum`.
+        daily_cap_kes:
+          type: integer
+          format: int64
+          description: |
+            The day's payout budget. Exact, same source as the enforcement. The day resets at
+            midnight **East Africa Time**, not UTC.
+        hold_above_kes:
+          type: integer
+          format: int64
+          description: |
+            A payout **above** this is accepted and then held for a person to review — a normal
+            outcome, not an error. "Above" is strict: a payout exactly equal to this is
+            dispatched, not held. A threshold of 0 holds everything.
+        remaining_today_kes:
+          type: [integer, 'null']
+          format: int64
+          description: |
+            What is left of `daily_cap_kes`, floored at zero. A **snapshot, not an
+            authorisation**: another payout of your own can land between this read and your
+            next request, so it may already be lower. It is `null` when the counter could not
+            be read, and **`null` never means zero** — a budget that cannot be read is not an
+            empty one. The quote, not this field, is what authorises an amount.
+        note:
+          type: string
+          description: The same caveats in a sentence, for a human reading the body.
     QuoteRequest:
       type: object
       additionalProperties: false
