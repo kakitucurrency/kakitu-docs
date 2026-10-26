@@ -21,6 +21,7 @@ There is one environment: `https://walletapi.kakitu.org`. There is no separate s
 
 ## Checklist before you take real payments
 
+- [ ] The key you registered was generated for this integration, not exported from your personal wallet ([why](./quickstart#why-a-separate-key)).
 - [ ] Your private key is in a secret manager or environment variable, not in code, not in git.
 - [ ] You keep a backup of that key. It is both your credential and where your money lands. Losing it loses both.
 - [ ] Your `callback_url` is https, public, and punycode if non-ASCII.

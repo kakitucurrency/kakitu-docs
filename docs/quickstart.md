@@ -9,7 +9,32 @@ This is what registering will look like, end to end, in about ten minutes. **You
 
 ## 1. Get a wallet key
 
-You need an Ethereum-style secp256k1 private key. The address that key controls is your credential **and** the address your collections will be paid to, so use a key you control and keep safe. Do not use a throwaway.
+You need an Ethereum-style secp256k1 private key. The address that key controls is your credential **and** the address your collections are paid to.
+
+**Generate a key for this integration and use it for nothing else.** Not the key behind a wallet you already spend from, and not the 24-word secret phrase from the Kakitu app (Settings → Backup Secret Phrase). That phrase sits behind a PIN on a handset in your pocket and opens your entire personal balance. This key is going to sit on a server.
+
+```ts title="newkey.mjs"
+// node newkey.mjs - Node 18+, `npm install ethers@6`
+import { Wallet } from "ethers";
+
+const wallet = Wallet.createRandom();
+console.log("address    ", wallet.address);    // register this; collections land here
+console.log("private key", wallet.privateKey); // this is KAKITU_PRIVATE_KEY
+```
+
+Run it once, put the private key straight into your secret store, and register that address in step 4. Send nothing else to it.
+
+### Why a separate key
+
+- **A key on a server is not a secret you keep.** Your deploy tooling reads it, your CI reads it, your backups contain it, and anyone with production access can get at it. That is a fair risk for a float holding today's takings. It is not a fair risk for everything a person owns.
+- **The address is a pot of money, not only a login.** Collections settle into it. A separate key keeps the business's money apart from the owner's, which is what a business wants anyway.
+- **It bounds the damage.** If this key leaks, what is at risk is what it has collected since you last moved money out — not your whole balance.
+
+Move collections on to your real wallet on whatever schedule suits you: nightly, weekly, after a large charge. That is an ordinary on-chain send from that wallet, or a [transfer](./transfers) once you are approved. There is no sweep endpoint and nothing we do for you here.
+
+None of this is enforced. The server verifies a signature and nothing more. It cannot tell one key from another and it will not stop you using the wrong one.
+
+So pick the key you mean to keep. **There is no key rotation**: the address *is* the merchant, so changing keys means registering the new address as a new merchant and being approved again. Back the key up — losing it loses both your credential and the money sitting at that address.
 
 Keep the key out of source code. Put it in an environment variable or a secret store, never in a file you commit:
 
