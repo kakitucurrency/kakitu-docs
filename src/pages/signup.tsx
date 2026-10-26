@@ -253,7 +253,36 @@ function SignupFlow() {
       }
 
       // Loaded as its own chunk from this site. No third-party script is fetched.
-      const { HDNodeWallet, Mnemonic, Wallet } = await import('ethers');
+      //
+      // A chunk fetch can fail for a reason that has nothing to do with this browser: when the
+      // site is redeployed, the page already open in a tab still names the OLD chunk hash, and
+      // that file no longer exists. The browser's own message for it is "Loading chunk 73
+      // failed", which tells a shop owner nothing and reads like the key generator is broken.
+      // Reload once — the fresh page names the chunk that does exist — and only show an error
+      // if it fails again, which means it really is this browser or this network.
+      let ethers: typeof import('ethers');
+      try {
+        ethers = await import('ethers');
+      } catch (err) {
+        if (!sessionStorage.getItem(STALE_CHUNK_RELOAD)) {
+          try {
+            sessionStorage.setItem(STALE_CHUNK_RELOAD, '1');
+          } catch {
+            /* private mode: fall through to the message below rather than looping */
+          }
+          window.location.reload();
+          return;
+        }
+        throw new Error(
+          'Part of this page could not be downloaded. Check your connection and reload. If it keeps happening, email kakitu@kakitu.org.',
+        );
+      }
+      const { HDNodeWallet, Mnemonic, Wallet } = ethers;
+      try {
+        sessionStorage.removeItem(STALE_CHUNK_RELOAD);
+      } catch {
+        /* nothing to clear if storage is unavailable */
+      }
 
       // Prove the signer in THIS browser reproduces the signatures published on the
       // authentication page before anyone relies on it.
@@ -878,6 +907,12 @@ function SignupFlow() {
     </div>
   );
 }
+
+// STALE_CHUNK_RELOAD marks that we have already reloaded once for a failed chunk fetch, so a
+// genuinely broken download cannot put the page into a reload loop. sessionStorage, not
+// localStorage: it is scoped to this tab and gone when the tab is, which is the lifetime of
+// the problem it describes. It holds no key and nothing about the merchant.
+const STALE_CHUNK_RELOAD = 'kakitu.signup.chunkReload';
 
 export default function SignupPage() {
   return (
