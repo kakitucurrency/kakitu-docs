@@ -1043,13 +1043,14 @@ paths:
           in: query
           required: false
           description: |
-            A typo here is refused rather than quietly matching nothing. This filter accepts the
-            three **charge** types only; the payout types are not filterable and passing one is
-            `400 invalid_request`. There is no `payout_id` filter either — page the list and
-            read `payout_id`.
-          schema:
-            type: string
-            enum: [charge.paid, charge.settled, charge.failed]
+            A typo here is refused rather than quietly matching nothing. All five types are
+            filterable, including the two payout ones — `?type=payout.expired` is the filter a
+            merchant most needs, because that is the event saying money did **not** go and it
+            must be signed and submitted again.
+
+            There is no `payout_id` filter — narrow with `type` and read `payout_id` off the
+            rows.
+          schema: { $ref: '#/components/schemas/EventType' }
         - name: status
           in: query
           required: false
@@ -1136,6 +1137,118 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/Internal' }
+webhooks:
+  charge.paid:
+    post:
+      operationId: onChargePaid
+      tags: [Events]
+      summary: charge.paid — the payer paid
+      description: |
+        POSTed to your merchant's `callback_url`. The rail says the payer paid; the KSHS is
+        **not** at your address yet, so wait for `charge.settled` before releasing goods.
+      parameters:
+        - $ref: '#/components/parameters/KakituSignature'
+        - $ref: '#/components/parameters/KakituEventId'
+        - $ref: '#/components/parameters/KakituEventType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChargePaidPayload' }
+      responses:
+        '200': { $ref: '#/components/responses/WebhookAccepted' }
+        '4XX': { $ref: '#/components/responses/WebhookRejected' }
+  charge.settled:
+    post:
+      operationId: onChargeSettled
+      tags: [Events]
+      summary: charge.settled — the KSHS is at your address
+      description: |
+        POSTed to your merchant's `callback_url`. The merchant's wallet is credited on chain.
+        This is the event to release goods on.
+      parameters:
+        - $ref: '#/components/parameters/KakituSignature'
+        - $ref: '#/components/parameters/KakituEventId'
+        - $ref: '#/components/parameters/KakituEventType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChargeSettledPayload' }
+      responses:
+        '200': { $ref: '#/components/responses/WebhookAccepted' }
+        '4XX': { $ref: '#/components/responses/WebhookRejected' }
+  charge.failed:
+    post:
+      operationId: onChargeFailed
+      tags: [Events]
+      summary: charge.failed — the collection did not go through
+      description: |
+        POSTed to your merchant's `callback_url`. The collection failed, or a payment that had
+        gone through was refunded. `charge.paid_at` is what tells the two apart: `null` for a
+        charge that never reached paid, a timestamp for one that was paid and then refunded.
+      parameters:
+        - $ref: '#/components/parameters/KakituSignature'
+        - $ref: '#/components/parameters/KakituEventId'
+        - $ref: '#/components/parameters/KakituEventType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChargeFailedPayload' }
+      responses:
+        '200': { $ref: '#/components/responses/WebhookAccepted' }
+        '4XX': { $ref: '#/components/responses/WebhookRejected' }
+  payout.expired:
+    post:
+      operationId: onPayoutExpired
+      tags: [Events]
+      summary: payout.expired — NOT sent, sign and submit it again
+      description: |
+        POSTed to your merchant's `callback_url`. **The money did not go.** A held payout's
+        signed permit lapsed while it waited for a person, which is the ordinary end of a hold
+        and not an edge case. Nothing left your wallet and nothing reached the beneficiary. The
+        answer is a fresh quote, a fresh signature and a **new** payout.
+
+        This is the exact opposite instruction to `payout.cancelled`, which carries the same
+        amounts and the same "nothing was sent". Branch on `type` and on nothing else.
+      parameters:
+        - $ref: '#/components/parameters/KakituSignature'
+        - $ref: '#/components/parameters/KakituEventId'
+        - $ref: '#/components/parameters/KakituEventType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutExpiredPayload' }
+      responses:
+        '200': { $ref: '#/components/responses/WebhookAccepted' }
+        '4XX': { $ref: '#/components/responses/WebhookRejected' }
+  payout.cancelled:
+    post:
+      operationId: onPayoutCancelled
+      tags: [Events]
+      summary: payout.cancelled — NOT sent, do NOT submit it again
+      description: |
+        POSTed to your merchant's `callback_url`. **The money did not go, and it must not be
+        sent again.** A person looked at the held payout and refused it; re-signing walks
+        straight back into a decision that was just taken.
+
+        There is no reason field and no sentence to read, deliberately: a receiver that had to
+        parse English to decide whether to send money a second time would eventually get it
+        wrong.
+      parameters:
+        - $ref: '#/components/parameters/KakituSignature'
+        - $ref: '#/components/parameters/KakituEventId'
+        - $ref: '#/components/parameters/KakituEventType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutCancelledPayload' }
+      responses:
+        '200': { $ref: '#/components/responses/WebhookAccepted' }
+        '4XX': { $ref: '#/components/responses/WebhookRejected' }
 components:
   securitySchemes:
     walletSignature:
@@ -1183,7 +1296,54 @@ components:
         characters. Resend the SAME key when retrying so the request is never executed twice;
         use a NEW key for a new request. Missing: `400 idempotency_key_required`.
       schema: { type: string, minLength: 1, maxLength: 255 }
+    KakituSignature:
+      name: Kakitu-Signature
+      in: header
+      required: true
+      description: |
+        `t=<unix seconds>,v1=<hex HMAC-SHA256>`, where `v1` is the HMAC-SHA256 — keyed with your
+        webhook secret — of the string `<t>.<raw body>`.
+
+        **This is the only header worth trusting.** The other two are a convenience and both
+        values are also inside the signed body; a receiver that reads them without verifying the
+        signature has verified nothing.
+
+        The timestamp is *inside* the signed string, which is what makes checking it worth
+        anything: move `t` and the signature breaks. Verify against the **exact bytes** of the
+        request body — parsing and re-serialising reorders keys and changes whitespace, and you
+        would then be checking a different string from the one we signed.
+      schema: { type: string }
+    KakituEventId:
+      name: Kakitu-Event-Id
+      in: header
+      required: true
+      description: |
+        The event id, and your dedupe key. It is stable across every retry and every replay, and
+        is the same value as `id` in the body. Delivery is **at-least-once**: key on this, ignore
+        an id you have already processed, and you get exactly-once. Do not key on the charge or
+        payout id — one subject produces several events.
+      schema: { type: string, format: uuid }
+    KakituEventType:
+      name: Kakitu-Event-Type
+      in: header
+      required: true
+      description: The event type, the same value as `type` in the body.
+      schema: { $ref: '#/components/schemas/EventType' }
   responses:
+    WebhookAccepted:
+      description: |
+        Any 2xx, and nothing else, counts as delivered. Answer as soon as you have stored the
+        event and do your work afterwards — a receiver that processes before answering turns a
+        slow job into a retry. The response body is read to a bound and discarded.
+    WebhookRejected:
+      description: |
+        Anything that is not 2xx is a failed delivery and is retried: 30s, 1m, 2m, 4m, doubling
+        to a 6h ceiling, until the next attempt would fall outside 24 hours from the first — at
+        which point the event is marked `abandoned`, stays readable on `GET /v1/events` and can
+        be replayed with `POST /v1/events/{id}/replay`.
+
+        A **3xx is also a failure** and the redirect is not followed: following one would carry
+        a body signed for your host to a host the signature was never meant for.
     AuthFailure:
       description: |
         Unauthorized. Two shapes are possible on 401: the signature middleware answers
@@ -1620,10 +1780,12 @@ components:
     EventType:
       type: string
       description: |
-        The whole published set, as it appears on an event. `payout.expired` means the payout
-        was never sent and you should sign and submit it again; `payout.cancelled` means a
-        person refused it and you must not. The `type` query filter on `GET /v1/events` accepts
-        the three `charge.*` values only.
+        The whole published set, as it appears on an event and as the `type` query filter on
+        `GET /v1/events` accepts it. `payout.expired` means the payout was never sent and you
+        should sign and submit it again; `payout.cancelled` means a person refused it and you
+        must not.
+
+        `type` also decides the shape of `payload`; see `EventPayload`.
       enum: [charge.paid, charge.settled, charge.failed, payout.expired, payout.cancelled]
     EventStatus:
       type: string
@@ -1631,6 +1793,174 @@ components:
         `pending` not yet delivered; `delivered` your endpoint answered 2xx; `abandoned` attempts
         exhausted — kept for the audit trail and for replay.
       enum: [pending, delivered, abandoned]
+    ChargePaidPayload:
+      title: charge.paid
+      type: object
+      required: [id, type, created_at, charge]
+      description: |
+        The rail says the payer paid. The merchant's wallet is **not** credited yet; that is
+        `charge.settled`. There is no `payout` key on a charge event — absent, not null.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The event id, and the dedupe key. The same value as the `Kakitu-Event-Id` header, and the same on every retry and every replay.
+        type: { type: string, const: charge.paid }
+        created_at:
+          type: string
+          format: date-time
+          description: When the event was raised, not when it was delivered. RFC 3339, UTC, to the second.
+        charge:
+          type: object
+          required: [id, reference, amount, currency, status, paid_at, settled_at]
+          properties:
+            id: { type: string, format: uuid }
+            reference: { type: string, minLength: 1, description: 'The merchant''s own reference, unique per merchant. Never empty.' }
+            amount: { type: integer, format: int64, description: 'Whole KES. The key is `amount`, not `amount_kes`; a payout payload names its amounts differently.' }
+            currency: { type: string, const: KES }
+            status: { type: string, const: paid }
+            paid_at: { type: string, format: date-time, description: 'Always a timestamp on this type, never null.' }
+            settled_at: { type: 'null', description: 'Always null on this type. The key is present; nothing has settled yet.' }
+    ChargeSettledPayload:
+      title: charge.settled
+      type: object
+      required: [id, type, created_at, charge]
+      description: |
+        The merchant's wallet is credited on chain. This is the event to release goods on.
+      properties:
+        id: { type: string, format: uuid, description: 'The event id, and the dedupe key.' }
+        type: { type: string, const: charge.settled }
+        created_at: { type: string, format: date-time, description: 'RFC 3339, UTC, to the second.' }
+        charge:
+          type: object
+          required: [id, reference, amount, currency, status, paid_at, settled_at]
+          properties:
+            id: { type: string, format: uuid }
+            reference: { type: string, minLength: 1, description: 'The merchant''s own reference. Never empty.' }
+            amount: { type: integer, format: int64, description: 'Whole KES.' }
+            currency: { type: string, const: KES }
+            status: { type: string, const: settled }
+            paid_at:
+              type: string
+              format: date-time
+              description: |
+                Always a timestamp on this type, never null. For a charge that reached settled
+                without a `charge.paid` ever being raised, it is the moment it settled.
+            settled_at: { type: string, format: date-time, description: 'Always a timestamp on this type, never null. Equals `created_at`.' }
+    ChargeFailedPayload:
+      title: charge.failed
+      type: object
+      required: [id, type, created_at, charge]
+      description: |
+        The collection did not go through, or a payment that had gone through was refunded.
+
+        There is **no reason, code or message** on this type. Why a collection failed is a
+        rail's word about a payer and is not part of the contract. `paid_at` is what tells a
+        refund from a payment that never arrived.
+      properties:
+        id: { type: string, format: uuid, description: 'The event id, and the dedupe key.' }
+        type: { type: string, const: charge.failed }
+        created_at: { type: string, format: date-time, description: 'RFC 3339, UTC, to the second.' }
+        charge:
+          type: object
+          required: [id, reference, amount, currency, status, paid_at, settled_at]
+          properties:
+            id: { type: string, format: uuid }
+            reference: { type: string, minLength: 1, description: 'The merchant''s own reference. Never empty.' }
+            amount: { type: integer, format: int64, description: 'Whole KES — what was asked for, not what was collected.' }
+            currency: { type: string, const: KES }
+            status: { type: string, const: failed }
+            paid_at:
+              type: [string, 'null']
+              format: date-time
+              description: |
+                `null` for a charge that never reached paid — the ordinary case. A timestamp for
+                one that was paid and then refunded, and it is when it was **paid**, not when it
+                failed.
+            settled_at: { type: 'null', description: 'Always null on this type. A settled charge never fails.' }
+    PayoutExpiredPayload:
+      title: payout.expired
+      type: object
+      required: [id, type, created_at, payout]
+      description: |
+        **The payout was NOT sent. Sign a fresh quote and submit it again.**
+
+        A held payout carries a signed permit that stops being relayable after minutes, and a
+        person working a review queue does not work in minutes, so this is the ordinary end of a
+        hold rather than an edge case. Nothing left the merchant's wallet and nothing reached the
+        beneficiary. There is no `charge` key on a payout event — absent, not null.
+      properties:
+        id: { type: string, format: uuid, description: 'The event id, and the dedupe key.' }
+        type: { type: string, const: payout.expired }
+        created_at: { type: string, format: date-time, description: 'When the hold ended. The only timestamp on a payout payload.' }
+        payout: { allOf: [{ $ref: '#/components/schemas/PayoutEventSubject' }] }
+    PayoutCancelledPayload:
+      title: payout.cancelled
+      type: object
+      required: [id, type, created_at, payout]
+      description: |
+        **The payout was NOT sent. A person refused it. DO NOT submit it again.**
+
+        Nothing left the merchant's wallet and nothing reached the beneficiary — exactly as with
+        `payout.expired`, which is precisely why the two are separate types. There is no
+        cancellation reason and there will not be one: deciding whether to send money a second
+        time must never depend on parsing a sentence.
+      properties:
+        id: { type: string, format: uuid, description: 'The event id, and the dedupe key.' }
+        type: { type: string, const: payout.cancelled }
+        created_at: { type: string, format: date-time, description: 'When the hold ended. The only timestamp on a payout payload.' }
+        payout: { allOf: [{ $ref: '#/components/schemas/PayoutEventSubject' }] }
+    PayoutEventSubject:
+      type: object
+      required: [id, status, amount_kes, fee_kes, send_kes, currency]
+      description: |
+        The payout a `payout.expired` or `payout.cancelled` is about. Every field is always
+        present and never null.
+
+        It carries no beneficiary phone or name (those are on `GET /v1/payouts/{id}` under
+        `beneficiary`, never on the wire to a callback URL), no operator identity, no hold
+        reason, no rail name, no pricing partner's quote id and no signed permit. It carries no
+        `held_at`, `dispatched_at` or `paid_at` either, because none of them would be true.
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [expired, cancelled]
+          description: Always restates `type` — `expired` on `payout.expired`, `cancelled` on `payout.cancelled`.
+        amount_kes: { type: integer, format: int64, description: 'Whole KES that would have landed on the beneficiary.' }
+        fee_kes: { type: integer, format: int64, description: 'Kakitu''s fee. May be 0.' }
+        send_kes: { type: integer, format: int64, description: 'Whole KES that would have left the merchant''s wallet.' }
+        currency: { type: string, const: KES }
+    EventPayload:
+      description: |
+        The body of one webhook delivery, and the value of `payload` on an event. Which shape it
+        is, is decided by `type` and by nothing else.
+
+        Three things hold for all five:
+
+        - **It is never a delta.** Every body states its subject's state **at the time the event
+          was raised**, in full. That is what makes a duplicate delivery a no-op rather than a
+          second count — and delivery is at-least-once, so duplicates happen.
+        - **Exactly one subject key is present**, `charge` or `payout`. The other is *absent*,
+          not null.
+        - **The subject's `status` restates `type`.** It tells a receiver nothing `type` did not.
+
+        Because retries run for up to 24 hours, a body can arrive after its subject has moved
+        on. Order processing by `created_at`, not by arrival.
+      oneOf:
+        - $ref: '#/components/schemas/ChargePaidPayload'
+        - $ref: '#/components/schemas/ChargeSettledPayload'
+        - $ref: '#/components/schemas/ChargeFailedPayload'
+        - $ref: '#/components/schemas/PayoutExpiredPayload'
+        - $ref: '#/components/schemas/PayoutCancelledPayload'
+      discriminator:
+        propertyName: type
+        mapping:
+          charge.paid: '#/components/schemas/ChargePaidPayload'
+          charge.settled: '#/components/schemas/ChargeSettledPayload'
+          charge.failed: '#/components/schemas/ChargeFailedPayload'
+          payout.expired: '#/components/schemas/PayoutExpiredPayload'
+          payout.cancelled: '#/components/schemas/PayoutCancelledPayload'
     Event:
       type: object
       required: [id, type, charge_id, payout_id, created_at, status, attempts, next_attempt_at, last_attempt_at, delivered_at, payload]
@@ -1668,9 +1998,15 @@ components:
             A closed cause vocabulary (`http_503`, `timeout`, `no_callback_url`, …), never a raw
             error string. Omitted when there is none.
         payload:
+          allOf: [{ $ref: '#/components/schemas/EventPayload' }]
           description: |
-            The signed webhook body verbatim, as a JSON value rather than a quoted string.
-            `null` if nothing valid is stored.
+            The signed webhook body verbatim — the exact bytes that were or will be POSTed to
+            your callback URL — rendered as a JSON value rather than a quoted string, so it
+            needs no second parse.
+
+            Its shape is decided by `type`: a `charge.*` event carries a `charge` object and a
+            `payout.*` event carries a `payout` object, and the other key is absent rather than
+            null. See `EventPayload`.
     EventList:
       type: object
       required: [data, next_cursor]

@@ -51,11 +51,76 @@ A `POST` to your `callback_url`, `Content-Type: application/json`, `User-Agent: 
 
 **Only the signature header is worth trusting.** The other two are a convenience, and both values are also inside the signed body; a receiver that reads them without verifying the signature has verified nothing.
 
-The body:
+## The payload
+
+Every body is the same four-field envelope wrapped around **one** subject object, named for what the event is about.
+
+| Field | Type | Present |
+|---|---|---|
+| `id` | string, UUID | **Always.** The event id — the same value as `Kakitu-Event-Id`, and the same on every retry and every replay. Your dedupe key. |
+| `type` | string | **Always.** One of the five. |
+| `created_at` | string, RFC 3339 UTC to the second | **Always.** When the event was *raised*, not when it was delivered or when you received it. |
+| `charge` | object | On `charge.paid`, `charge.settled` and `charge.failed`. |
+| `payout` | object | On `payout.expired` and `payout.cancelled`. |
+
+Three things are true of every one of the five bodies, and your receiver can rely on all three:
+
+**A payload is never a delta.** It is the subject's **state at the time the event was raised**, stated in full, every time. Nothing in it is an increment, a difference or a patch. That is what makes a duplicate delivery a no-op rather than a second count.
+
+**A charge event has no `payout` key at all, and a payout event has no `charge` key.** The key is *absent*, not present-with-`null`. Do not branch on which key you can see — branch on `type`.
+
+**The subject's `status` always restates `type`.** `charge.paid` always carries `"status": "paid"`, `payout.cancelled` always carries `"status": "cancelled"`, and so on. It is there so the subject object reads correctly on its own; it tells you nothing `type` did not.
+
+One consequence of "state at the time it was raised": because delivery retries for up to 24 hours, a body can reach you after the subject has moved on. A `charge.paid` that took four hours to get through describes the charge as it was four hours ago, and the `charge.settled` behind it is the newer truth. Order your own processing by `created_at`, never by arrival.
+
+### `charge.paid`
+
+The rail says the payer paid. The KSHS is not at your address yet — wait for `charge.settled` before you release goods.
+
+| Field | Type | Present |
+|---|---|---|
+| `charge.id` | string, UUID | **Always.** Kakitu's id for the charge. |
+| `charge.reference` | string | **Always, and never empty.** Your own reference, the one you set when you created the charge. Unique per merchant. |
+| `charge.amount` | integer | **Always.** A whole number of shillings. The field is `amount`, **not** `amount_kes` — a charge and a payout name their amounts differently; see the note below. |
+| `charge.currency` | string | **Always.** Always the string `"KES"`. |
+| `charge.status` | string | **Always.** Always `"paid"` on this type. |
+| `charge.paid_at` | string, RFC 3339 UTC | **Always a timestamp on this type**, never `null`. |
+| `charge.settled_at` | `null` | **Always `null` on this type.** The key is present and its value is `null`; nothing has settled yet. |
 
 ```json
 {
   "id": "4e7c2b18-0f2a-4a1b-9a44-1b2c3d4e5f60",
+  "type": "charge.paid",
+  "created_at": "2026-10-26T09:13:44Z",
+  "charge": {
+    "id": "a1f0c9d2-55b1-4f3e-8a0d-77c1e2b3a4d5",
+    "reference": "order-1042",
+    "amount": 500,
+    "currency": "KES",
+    "status": "paid",
+    "paid_at": "2026-10-26T09:13:44Z",
+    "settled_at": null
+  }
+}
+```
+
+### `charge.settled`
+
+The KSHS is at your address on chain. This is the event to release goods on.
+
+| Field | Type | Present |
+|---|---|---|
+| `charge.id` | string, UUID | **Always.** |
+| `charge.reference` | string | **Always, and never empty.** |
+| `charge.amount` | integer | **Always.** Whole shillings. |
+| `charge.currency` | string | **Always** `"KES"`. |
+| `charge.status` | string | **Always** `"settled"` on this type. |
+| `charge.paid_at` | string, RFC 3339 UTC | **Always a timestamp on this type**, never `null`. If the charge jumped straight to settled without a `charge.paid` ever being raised, this is the moment it settled. |
+| `charge.settled_at` | string, RFC 3339 UTC | **Always a timestamp on this type**, never `null`. It equals the envelope's `created_at`. |
+
+```json
+{
+  "id": "6d9a4f12-7b31-4c08-9e5d-2a8f0b1c3d4e",
   "type": "charge.settled",
   "created_at": "2026-10-26T09:14:02Z",
   "charge": {
@@ -70,9 +135,51 @@ The body:
 }
 ```
 
-There is no payer phone number, no rail name, no partner status and no internal order id in it, and there never will be.
+### `charge.failed`
 
-A payout event has the same envelope with `payout` in place of `charge`:
+The collection did not go through, or a payment that had gone through was refunded.
+
+| Field | Type | Present |
+|---|---|---|
+| `charge.id` | string, UUID | **Always.** |
+| `charge.reference` | string | **Always, and never empty.** |
+| `charge.amount` | integer | **Always.** Whole shillings — what was asked for, not what was collected. |
+| `charge.currency` | string | **Always** `"KES"`. |
+| `charge.status` | string | **Always** `"failed"` on this type. |
+| `charge.paid_at` | string or `null` | **May be either.** `null` for a charge that never got as far as paid — the ordinary case. A **timestamp** for a charge that was paid and then refunded, and that timestamp is when it was paid, not when it failed. Read this field if you need to tell a refund from a payment that never arrived. |
+| `charge.settled_at` | `null` | **Always `null` on this type.** A settled charge never fails. |
+
+```json
+{
+  "id": "c0b7e218-9f44-4a63-8d12-5e6f7a8b9c0d",
+  "type": "charge.failed",
+  "created_at": "2026-10-26T09:18:31Z",
+  "charge": {
+    "id": "b2e1d8c7-66a2-4d5f-9b1c-88d2f3a4b5c6",
+    "reference": "order-1043",
+    "amount": 1200,
+    "currency": "KES",
+    "status": "failed",
+    "paid_at": null,
+    "settled_at": null
+  }
+}
+```
+
+**There is no reason, code or message on a `charge.failed`.** Why a collection failed is a rail's word about a payer, and it is not part of this contract. If you need to tell "never paid" from "paid and refunded", `paid_at` is the field that answers it.
+
+### `payout.expired`
+
+**The payout was not sent. Sign a fresh quote and submit it again.**
+
+| Field | Type | Present |
+|---|---|---|
+| `payout.id` | string, UUID | **Always.** The payout that did not go. |
+| `payout.status` | string | **Always** `"expired"` on this type. |
+| `payout.amount_kes` | integer | **Always.** Whole shillings that *would have* landed on the beneficiary. |
+| `payout.fee_kes` | integer | **Always.** Kakitu's fee on it. Can be `0`. |
+| `payout.send_kes` | integer | **Always.** Whole shillings that *would have* left your wallet. |
+| `payout.currency` | string | **Always** `"KES"`. A payout is KES by construction — the beneficiary is paid into a Kenyan mobile money account. |
 
 ```json
 {
@@ -90,7 +197,73 @@ A payout event has the same envelope with `payout` in place of `charge`:
 }
 ```
 
-`amount_kes` is what would have landed on the beneficiary and `send_kes` what would have left your wallet — the same vocabulary [`GET /v1/payouts/{id}`](./payouts) uses, so you meet one set of names whether you poll or listen. It carries no beneficiary phone or name, no operator's identity and no hold reason: enough to reconcile against your own ledger before you sign again, and nothing else.
+### `payout.cancelled`
+
+**The payout was not sent. A person refused it. Do not submit it again.**
+
+The body is the same six fields as `payout.expired`, with `status` reading `"cancelled"`. The amounts are what the payout was worth, so you can reconcile it against your own ledger and close it out.
+
+| Field | Type | Present |
+|---|---|---|
+| `payout.id` | string, UUID | **Always.** |
+| `payout.status` | string | **Always** `"cancelled"` on this type. |
+| `payout.amount_kes` | integer | **Always.** Whole shillings that *would have* landed on the beneficiary. |
+| `payout.fee_kes` | integer | **Always.** Can be `0`. |
+| `payout.send_kes` | integer | **Always.** Whole shillings that *would have* left your wallet. |
+| `payout.currency` | string | **Always** `"KES"`. |
+
+```json
+{
+  "id": "1f4a6c93-8d20-4b57-ae31-0c9d8e7f6a5b",
+  "type": "payout.cancelled",
+  "created_at": "2026-10-26T10:02:18Z",
+  "payout": {
+    "id": "3a5b7d91-4e62-4c08-b1d7-9f0e2a3b4c5d",
+    "status": "cancelled",
+    "amount_kes": 40000,
+    "fee_kes": 300,
+    "send_kes": 40300,
+    "currency": "KES"
+  }
+}
+```
+
+**There is no cancellation reason, and there will not be one.** An operator's words about why they refused a payout are not a thing to branch on, and reading them would be the one case where sending money a second time depended on parsing English. The type is the instruction.
+
+### Why a payout payload has no timestamps
+
+A `payout.*` body carries no `held_at`, `dispatched_at` or `paid_at`, because none of them would be true: nothing was dispatched and nothing was paid. The envelope's `created_at` is when the hold ended, and that is the only time there is to report.
+
+### Charges and payouts name their amounts differently
+
+| | Charge | Payout |
+|---|---|---|
+| What was asked for / what lands | `amount` | `amount_kes` |
+| Kakitu's fee | *not in the payload* | `fee_kes` |
+| What leaves your wallet | *not in the payload* | `send_kes` |
+
+This is not a slip to be tidied up later: each payload uses the names its own API already uses, so you meet one vocabulary whether you poll [`GET /v1/charges`](./collections) or [`GET /v1/payouts/{id}`](./payouts), or listen. A charge has no fee field in the webhook because a collection's fee is not part of what the merchant is told here.
+
+### What is never in a payload
+
+Both payload shapes are built field by field, and the fields below are not among them — not absent by accident, and not coming later.
+
+A `charge.*` body never carries:
+
+- the payer's phone number, or any hash or masked form of it;
+- the payer's wallet address;
+- the name of the payment rail or partner that served the collection, or that partner's own status string;
+- Kakitu's internal order id or order reference;
+- your own merchant address;
+- the charge's `created_at` (that one is on [`GET /v1/charges`](./collections), not here).
+
+A `payout.*` body never carries:
+
+- the beneficiary's phone number or name (they are on [`GET /v1/payouts/{id}`](./payouts), under `beneficiary`, but never on the wire to your endpoint);
+- the identity of the operator who cancelled it, or the reason they recorded;
+- the rail name, the pricing partner's quote id, the signed permit or its deadline.
+
+**If your integration needs the payer's number, it will never arrive in a webhook.** Hold it on your side against your own `reference` and match on that; `reference` is on every `charge.*` body for exactly this purpose. There is a test in the server that asserts, by literal string, that a payer phone number, a payer address, a rail name, a partner status and an internal order id are absent from a rendered charge payload — so this is a property of the build, not a convention.
 
 ### Verifying the signature
 
@@ -179,7 +352,7 @@ HTTP 200
 | `last_attempt_at` | When we last tried. `null` if we never have. |
 | `delivered_at` | When your endpoint accepted it. |
 | `last_error` | Why the last attempt failed. Absent if none has. See the table below. |
-| `payload` | The exact body we sent, as JSON rather than as a quoted string, so you can read it without a second parse. |
+| `payload` | The exact body we sent, as JSON rather than as a quoted string, so you can read it without a second parse. Its shape is [the payload](#the-payload), decided by `type`. |
 
 :::warning charge_id is nullable now
 `charge_id` used to be present on every event, because a charge was the only thing an event
