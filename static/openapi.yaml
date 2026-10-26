@@ -1,83 +1,272 @@
 openapi: 3.1.0
 info:
   title: Kakitu developer API
-  version: 0.1.0
+  version: 0.2.0
+  summary: Collect M-Pesa payments and be credited in KSHS at your own wallet address.
   description: |
-    Merchant collections on Kakitu. Your wallet address is your credential: every request is signed
-    with the wallet key (EIP-191 personal_sign). See the Authentication page of the docs for the
-    scheme and runnable examples in TypeScript, Python and PHP.
+    Kakitu is a Kenyan shilling stablecoin (KSHS). The developer API lets a business collect an
+    M-Pesa payment from a payer and be credited in KSHS **at its own wallet address**. Kakitu is
+    non-custodial: it never holds the merchant's money and never holds the merchant's key.
 
-    **Live today:** `POST /v1/merchants`, `GET /v1/merchants/me`.
-    **Not yet available:** `POST /v1/charges`, `GET /v1/charges/{id}`. They are listed for planning
-    and will answer 404 until they ship. Shapes are provisional.
+    ## Deployment status — as of 2026-10-26
 
-    Collections require operator approval of the merchant, because a collection rings a payer's
-    handset with a real M-Pesa PIN prompt.
+    **No `/v1` endpoint is live in production.** Every path in this document returns **404** on
+    `https://walletapi.kakitu.org` today. This specification describes the routes as they are
+    implemented in the server source on the `feat-developer-api` branch, so that integrators can
+    build against the real shapes before the routes are wired and released. Nothing here is
+    marked as live, because nothing is. When the first routes ship, this notice is what changes.
+
+    The per-merchant rate limiter (`RateLimit-*` headers, below) is implemented but is also part
+    of the same unreleased route wiring.
+
+    ## Authentication — your wallet address is the credential
+
+    **There are no API keys.** There is no secret to issue, rotate or leak: the merchant's wallet
+    address *is* the credential, and possession of its key is the proof. Every request carries
+    three headers:
+
+    | Header | Value |
+    | --- | --- |
+    | `X-Kakitu-Address` | the claimed signer, EIP-55 or lowercase hex (compared case-insensitively) |
+    | `X-Kakitu-Timestamp` | unix seconds |
+    | `X-Kakitu-Signature` | `0x` + 65 bytes, an EIP-191 `personal_sign` signature (v = 27/28 or 0/1) |
+
+    The signed message is exactly this string:
+
+    ```
+    {METHOD} {path}{?query} {timestamp} {sha256hex(body)}
+    ```
+
+    - `{METHOD}` is upper-case.
+    - `{path}` is the URL path. The raw query string is appended, prefixed with `?`,
+      **byte-for-byte as sent**, and only when it is non-empty.
+    - `{timestamp}` is the same value as the `X-Kakitu-Timestamp` header.
+    - `{sha256hex(body)}` is lowercase hex SHA-256 over the **raw** request body. For a request
+      with no body (every `GET` here) it is the SHA-256 of zero bytes,
+      `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+    Example message: `POST /v1/charges 1761436800 e3b0c442...b855`
+
+    ### Two different windows — do not confuse them
+
+    - **Clock skew tolerance: 120 seconds.** `X-Kakitu-Timestamp` must be within ±120 s of
+      server time, or the request is rejected (`timestamp_out_of_range`).
+    - **Replay window: 300 seconds.** The first request for a given
+      (address, method, path+query, timestamp, body hash) wins; any later request with the same
+      five values inside 300 s is rejected (`replay`). The signature bytes are deliberately not
+      part of that key, because ECDSA signatures are malleable.
+
+    A consequence worth knowing: two byte-identical requests from the same wallet to the same
+    path in the same second are a replay by design. Vary anything — the body, the query, the
+    second — and they are distinct.
+
+    ### Authentication failures use a different envelope
+
+    A failure in the signature middleware answers `401` with `{"error": "...", "reason": "..."}`,
+    **not** the `ErrorEnvelope` used everywhere else. Handle both shapes on `401`.
+
+    ## Errors
+
+    Every error raised by the API itself uses one envelope:
+
+    ```json
+    {"error": {"code": "invalid_request", "message": "...", "request_id": "..."}}
+    ```
+
+    `code` is the contract: a closed set, one fixed HTTP status per code. Branch on it.
+    `message` is for a human developer and may be reworded at any time — never branch on it.
+    `request_id` is always present and is the only handle support has; it is also returned on
+    every response in the `X-Request-Id` header.
+
+    An `internal` error always answers one fixed sentence and never reveals the underlying cause.
+
+    ## Idempotency
+
+    Three of the four `POST` routes require an `Idempotency-Key` header; one does not.
+
+    | Route | `Idempotency-Key` |
+    | --- | --- |
+    | `POST /v1/charges` | **required** |
+    | `POST /v1/transfers` | **required** |
+    | `POST /v1/merchants` | **not required** (registration is an upsert) |
+    | `POST /v1/quotes` | **not required** (a quote creates no order, charge or transfer) |
+    | `POST /v1/events/{id}/replay` | **not required** (idempotent by construction) |
+
+    Where it is required and missing, the request fails `400 idempotency_key_required`. The key
+    is at most 255 characters, is scoped to the authenticated address, and is fingerprinted
+    together with the method, path, raw query and body — so the same key reused on a different
+    endpoint or with a different body is a `409`, never a silent replay of the first response.
+
+    - Repeat with the **same** key and the **same** body: the stored response is replayed
+      verbatim, with the header `Idempotent-Replayed: true`. Only 2xx responses are stored, so a
+      failure stays retryable.
+    - Repeat with the same key and a **different** body: `409 idempotency_key_reuse`.
+    - Repeat while the first is still running: `409 idempotency_key_in_progress`.
+    - `409 idempotency_key_acted`: the original request **acted** but its outcome was not
+      recorded. Do **not** retry it, with this key or a new one. Check whether it took effect
+      first.
+    - `503 idempotency_unavailable`: the store could not be reached. Nothing ran. Retry shortly
+      with the same key.
+
+    A body larger than 1 MiB on a route behind this middleware is `413 request_too_large`
+    (individual handlers impose smaller limits of their own — see each route).
+
+    ## Rate limiting
+
+    Responses from the `/v1` chain carry:
+
+    - `RateLimit-Limit` — requests allowed in the current one-minute window.
+    - `RateLimit-Remaining` — how many are left, never below 0.
+    - `RateLimit-Reset` — seconds until the window rolls over.
+
+    Over the limit answers `429 rate_limited` and adds `Retry-After` (same value as
+    `RateLimit-Reset`). The limiter keys on the **authenticated address**, never on IP, so your
+    egress IP and your neighbours' do not matter. It fails open: if its backing store is down
+    you are not throttled, and reads keep working.
+
+    ## Resources belonging to someone else
+
+    A charge, order or webhook event that belongs to **another merchant** answers exactly as one
+    that **does not exist** — same status, same code, same sentence. A malformed id answers the
+    same way too. The API is never an oracle for whether another caller's id is real. There is no
+    error you can use to tell the three apart.
 servers:
   - url: https://walletapi.kakitu.org
+    description: Production. Every /v1 path on it returns 404 as of 2026-10-26.
 security:
   - walletSignature: []
+tags:
+  - name: Merchants
+    description: Register the signing wallet as a business and read its record.
+  - name: Charges
+    description: Collect an M-Pesa payment and be credited in KSHS.
+  - name: Transfers
+    description: Gasless KSHS transfers signed by the caller.
+  - name: Reads
+    description: Balances, orders, limits and prices.
+  - name: Events
+    description: Webhook delivery history and replay.
 paths:
   /v1/merchants:
     post:
       operationId: registerMerchant
+      tags: [Merchants]
       summary: Register or update the signing wallet as a merchant
       description: |
-        Creates a `pending` merchant (201) or updates its details (200). Absent or null
-        `contact_phone` / `callback_url` leave the stored value unchanged; an explicit `""` clears it.
-        `business_name` is frozen once the merchant is past `pending` (409 `merchant_name_frozen`).
-        Fields `state`, `webhook_secret`, `daily_cap_kes`, `per_charge_max_kes`, `address`,
-        `reviewed_by`, `review_note` are accepted and dropped. Any other unknown field is refused.
-        Body limit 16 KiB. No Idempotency-Key required.
+        Creates a `pending` merchant (`201`) or updates an existing one (`200`). The address comes
+        from the signature, never from the body, so a wallet can only ever register itself.
+
+        Registration is self-serve and instant, but it creates a **pending** merchant and nothing
+        more. Approval, the webhook secret and the limits belong to a Kakitu operator; those
+        fields do not exist on this request. A collection rings a stranger's handset with a real
+        M-Pesa PIN prompt, which is why approval is not self-serve.
+
+        `contact_phone` and `callback_url` are optional. **Absent or `null` leaves the stored
+        value unchanged**; an explicit `""` clears it. Sending the wrong field name would
+        otherwise silently wipe a webhook URL.
+
+        The server-owned fields `state`, `webhook_secret`, `daily_cap_kes`, `per_charge_max_kes`,
+        `address`, `reviewed_by` and `review_note` are accepted and **dropped**, so a client that
+        round-trips a merchant object does not break. Any other unknown field is refused with
+        `400 invalid_request` naming the key.
+
+        `business_name` is frozen once the merchant is past `pending`, because payers read it in
+        their M-Pesa prompt. Submitting a different name then answers `409 merchant_name_frozen`
+        and the message states whether anything was saved.
+
+        Body limit 16 KiB. **No `Idempotency-Key` required.**
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/MerchantRequest' }
       responses:
-        '201':
-          description: Registered (first time).
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Merchant' }
         '200':
-          description: Updated.
+          description: Existing merchant updated.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Merchant' }
-        '400': { $ref: '#/components/responses/Error' }
+        '201':
+          description: Registered for the first time, in state `pending`.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Merchant' }
+        '400':
+          description: '`invalid_request` — malformed body, unknown field, or a field that failed validation.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '401': { $ref: '#/components/responses/AuthFailure' }
-        '409': { $ref: '#/components/responses/Error' }
-        '413': { $ref: '#/components/responses/Error' }
-        '500': { $ref: '#/components/responses/Error' }
+        '409':
+          description: '`merchant_name_frozen`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '413':
+          description: '`request_too_large` — the body is larger than 16 KiB.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
   /v1/merchants/me:
     get:
       operationId: getMerchant
-      summary: Read the signing wallet's merchant record
+      tags: [Merchants]
+      summary: Read the signing wallet's own merchant record
+      description: |
+        Returns the merchant registered to the authenticated address. The webhook secret is never
+        in this response, and neither is anything derived from it.
       responses:
         '200':
-          description: The merchant.
+          description: The merchant record.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Merchant' }
         '401': { $ref: '#/components/responses/AuthFailure' }
         '404':
-          description: merchant_not_registered
+          description: '`merchant_not_registered` — this wallet has not registered. POST /v1/merchants first.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
-        '500': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
   /v1/charges:
     post:
       operationId: createCharge
-      summary: Create a collection (NOT YET AVAILABLE)
+      tags: [Charges]
+      summary: Create a collection — ring a payer's handset with an M-Pesa prompt
       description: |
-        **Not yet available. The route is not registered; calls return 404.** Provisional shape.
-        Requires an approved merchant and an `Idempotency-Key`. Sends an M-Pesa PIN prompt to `phone`.
-        A retry after a refusal that happened before the rail was reached needs the same key and a
-        NEW `reference`.
+        Creates a charge and asks the payment rail to send an M-Pesa PIN prompt to `phone`. The
+        merchant must be **approved**; a `pending` or `rejected` merchant gets
+        `403 merchant_not_approved`, a suspended one `403 merchant_suspended`.
+
+        `reference` is yours and must be unique per merchant: a repeat answers
+        `409 reference_reused`.
+
+        The response is a DTO. It carries no payer phone number, no payer hash, no rail name, no
+        provider status and no internal order id — which rail served the collection is not part
+        of the contract, and the `status` vocabulary below is Kakitu's own, never the rail's.
+
+        The server-owned fields `id`, `status`, `currency`, `created_at`, `paid_at` and
+        `settled_at` are accepted and dropped; any other unknown field is `400 invalid_request`.
+
+        Body limit 16 KiB. **`Idempotency-Key` is REQUIRED.** Retrying with the same key replays
+        the first response and the payer's handset rings exactly once.
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
       requestBody:
         required: true
         content:
@@ -85,32 +274,538 @@ paths:
             schema: { $ref: '#/components/schemas/ChargeRequest' }
       responses:
         '201':
-          description: Charge created (provisional).
+          description: Charge created.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Idempotent-Replayed: { $ref: '#/components/headers/IdempotentReplayed' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Charge' }
-        '400': { $ref: '#/components/responses/Error' }
-        '403': { $ref: '#/components/responses/Error' }
-        '409': { $ref: '#/components/responses/Error' }
-        '429': { $ref: '#/components/responses/Error' }
-        '503': { $ref: '#/components/responses/Error' }
+        '400':
+          description: |
+            One of `invalid_request` (malformed body, unknown field, non-positive amount,
+            non-Kenyan mobile number, missing or over-long reference),
+            `idempotency_key_required`, `idempotency_key_invalid`,
+            `amount_below_minimum` or `amount_above_maximum`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '403':
+          description: '`merchant_not_approved` or `merchant_suspended`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404':
+          description: '`merchant_not_registered`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '409':
+          description: |
+            `reference_reused`, or one of the idempotency conflicts: `idempotency_key_reuse`,
+            `idempotency_key_in_progress`, `idempotency_key_acted`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '413':
+          description: '`request_too_large` — the body is larger than 16 KiB.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429':
+          description: |
+            `rate_limited`, `daily_cap_exceeded` (the merchant's daily collection cap) or
+            `payer_velocity_exceeded` (this payer has been prompted too often today).
+          headers:
+            Retry-After: { $ref: '#/components/headers/RetryAfter' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503':
+          description: '`rail_unavailable` (collections are temporarily unavailable) or `idempotency_unavailable`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    get:
+      operationId: listCharges
+      tags: [Charges]
+      summary: List this merchant's charges
+      description: |
+        Cursor-paged, newest first, scoped to the authenticated merchant by the query itself —
+        there is no request shape that returns another merchant's charges.
+
+        Pass `next_cursor` from the previous page back as `cursor`, unchanged. A `next_cursor` of
+        `null` means there is no further page. The cursor is an opaque `(created_at, id)` pair,
+        deliberately not a page number: charges arrive while you page, and an offset would show
+        you the same row twice.
+      parameters:
+        - name: reference
+          in: query
+          required: false
+          description: Exact match on your own reference.
+          schema: { type: string }
+        - name: status
+          in: query
+          required: false
+          description: A charge status. Anything else is `400 invalid_request`.
+          schema: { $ref: '#/components/schemas/ChargeStatus' }
+        - name: created_after
+          in: query
+          required: false
+          description: RFC 3339 timestamp, e.g. `2026-10-25T00:00:00Z`.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          description: 1 to 100.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: cursor
+          in: query
+          required: false
+          description: '`next_cursor` from the previous page, unchanged.'
+          schema: { type: string }
+      responses:
+        '200':
+          description: A page of charges.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChargeList' }
+        '400':
+          description: '`invalid_request` — bad `status`, `created_after`, `limit` or `cursor`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '404':
+          description: '`merchant_not_registered`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
   /v1/charges/{id}:
     get:
       operationId: getCharge
-      summary: Read a charge (NOT YET AVAILABLE)
-      description: '**Not yet available.** Provisional shape. A charge of another merchant answers 404 charge_not_found.'
+      tags: [Charges]
+      summary: Read one of this merchant's charges
+      description: |
+        A charge belonging to another merchant, a charge that does not exist and a malformed id
+        all answer `404 charge_not_found` with the same sentence.
       parameters:
         - name: id
           in: path
           required: true
-          schema: { type: string }
+          description: The charge id returned at creation.
+          schema: { type: string, format: uuid }
       responses:
         '200':
-          description: The charge (provisional).
+          description: The charge.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Charge' }
-        '404': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '404':
+          description: '`charge_not_found` (missing, malformed or another merchant''s) or `merchant_not_registered`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
+  /v1/transfers:
+    post:
+      operationId: createTransfer
+      tags: [Transfers]
+      summary: Send KSHS gaslessly from the signing wallet
+      description: |
+        Relays a transfer that **you** signed. Kakitu holds no key and never decides who pays
+        whom: you send a signed intent and Kakitu pays the gas to put it on chain.
+
+        The body is the signed transfer. `from` must be the authenticated address. The two
+        signatures are the EIP-2612 permit (`v`, `r`, `s`, spender = the forwarder) and the
+        EIP-712 relay intent `Relay(owner,to,value,deadline,nonce)` (`iv`, `ir`, `is`), which
+        binds the recipient.
+
+        The merchant must be **approved**. There is a per-merchant hourly cap on relayed
+        transfers, because Kakitu pays the gas out of one balance; exceeding it is
+        `429 rate_limited`. This cap fails closed — if it cannot be evaluated, transfers are
+        refused.
+
+        **`Idempotency-Key` is REQUIRED.** Whether a failed attempt frees the key depends on
+        whether anything could have been broadcast; read the `409 idempotency_key_acted` text
+        carefully before retrying.
+
+        There is no `GET` and no `DELETE` for a transfer: there is nothing to read back or cancel.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransferRequest' }
+      responses:
+        '200':
+          description: Delivered and confirmed on chain (`status` is `confirmed`).
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Idempotent-Replayed: { $ref: '#/components/headers/IdempotentReplayed' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transfer' }
+        '202':
+          description: |
+            Submitted but not yet confirmed within the wait (`status` is `pending`). The `id` is
+            the transaction hash; do not resubmit.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transfer' }
+        '400':
+          description: |
+            `invalid_request` — a malformed or unusable signed transfer, a `from` that is not the
+            authenticated address, a transfer the chain says would revert (nothing was sent), or
+            a permit that another transfer from the same wallet has made out of date (nothing was
+            delivered; sign fresh and use a NEW key). Also `amount_below_minimum`,
+            `amount_above_maximum`, `idempotency_key_required` and `idempotency_key_invalid`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '403':
+          description: '`merchant_not_approved`, or `merchant_suspended` (also used when the wallet itself is frozen).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404':
+          description: '`merchant_not_registered`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '409':
+          description: |
+            `idempotency_key_reuse`, `idempotency_key_in_progress`, or `idempotency_key_acted` —
+            the last is also the answer whenever the money may already have moved: when the
+            relay reports this signed transfer has most likely already been delivered, AND
+            when the transfer could not be completed and its outcome is not known to us. In
+            both cases the key is held. Do not send it again, with this key or a new one,
+            until you have checked whether it went through.
+
+            This is the code to branch on. A `503` on this route always means nothing was
+            sent; a `409 idempotency_key_acted` always means check first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '413':
+          description: '`request_too_large` — the body is larger than 1 MiB.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429':
+          description: '`rate_limited` (the merchant''s hourly transfer cap) or `daily_cap_exceeded` (this wallet''s daily transfer limit).'
+          headers:
+            Retry-After: { $ref: '#/components/headers/RetryAfter' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503':
+          description: |
+            `rail_unavailable` — transfers are temporarily unavailable and **nothing was
+            sent**. This is the one failure on this route where retrying with the *same*
+            `Idempotency-Key` is correct: the key was never spent.
+
+            Also `idempotency_unavailable`.
+
+            An outcome we cannot determine is deliberately **not** this code — it answers
+            `409 idempotency_key_acted`, so that the single machine-readable field tells
+            "safe to retry" and "the money may already have moved" apart.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /v1/balances:
+    get:
+      operationId: getBalances
+      tags: [Reads]
+      summary: Read the signing wallet's on-chain balances
+      description: |
+        Reads the caller's own KSHS and USDC balances from the chain. An address with no history
+        holds zero; that is an answer, not an error.
+
+        Both balances state their `network`. KSHS v2 is an ERC-20 on Base — a customer has
+        already lost money sending a token to a Kakitu address on the wrong chain, so the chain
+        is never something you have to infer.
+      responses:
+        '200':
+          description: The balances.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Balances' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/RailUnavailable' }
+  /v1/orders/{id}:
+    get:
+      operationId: getOrder
+      tags: [Reads]
+      summary: Read one of the signing wallet's deposit or withdrawal orders
+      description: |
+        An order that belongs to another wallet, one that does not exist, one with a malformed id
+        and one this API does not expose (a merchant collection, a card load) all answer
+        `404 order_not_found` with the same sentence.
+
+        `status` is a small closed set. An internal pipeline step that has no public meaning
+        collapses to `processing`, never the raw internal word.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The order.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '404':
+          description: '`order_not_found`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/RailUnavailable' }
+  /v1/limits:
+    get:
+      operationId: getLimits
+      tags: [Reads]
+      summary: Read the current withdrawal band
+      description: |
+        The published band is **cached**, refreshed on a timer (about every five minutes), so
+        after the payout route is switched it can describe the previous route for up to that
+        long. `max_staleness_seconds` says how stale it can be and the response says so in
+        `note` rather than pretending to be live.
+
+        A quote, not this band, is what decides whether an amount is accepted.
+
+        `source` is `live` when the numbers came from the payout route, `estimated` when they are
+        the configured fallback because the route has not answered.
+      responses:
+        '200':
+          description: The band.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Limits' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/RailUnavailable' }
+  /v1/quotes:
+    post:
+      operationId: createQuote
+      tags: [Reads]
+      summary: Price a deposit or a withdrawal
+      description: |
+        A price, and only a price. **No order, charge or transfer is created**, which is why this
+        `POST` takes **no `Idempotency-Key`** — sending one is harmless but pointless.
+
+        - `type: "deposit"` — shillings in, KSHS out. `pay_kes` is what the payer is asked for.
+          `phone` is the payer's number.
+        - `type: "withdrawal"` — KSHS in, shillings out. `send_kes` is the KSHS that would be
+          sent. `beneficiary` is **required**.
+
+        The response carries no quote id, no rail, no treasury address and no signing amount.
+        There is deliberately no `quote_id`: the pricing partner's own id is not yours to hold,
+        and there is no route today that would redeem one.
+
+        Unknown fields are refused outright (`400 invalid_request`). Body limit 4 KiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QuoteRequest' }
+      responses:
+        '200':
+          description: The price.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Quote' }
+        '400':
+          description: |
+            `invalid_request` (unknown field, bad `type`, `amount_kes` below 1, missing
+            `beneficiary` on a withdrawal, or an amount/phone/beneficiary not valid for this
+            wallet), `amount_below_minimum` or `amount_above_maximum` — GET /v1/limits shows the
+            current band.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '403':
+          description: '`identity_verification_required` — this amount needs the customer''s identity verified first.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '409':
+          description: '`profile_required` — this wallet has no profile yet.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '413':
+          description: '`request_too_large` — the body is larger than 4 KiB.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/RailUnavailable' }
+  /v1/events:
+    get:
+      operationId: listEvents
+      tags: [Events]
+      summary: List this merchant's webhook events
+      description: |
+        Webhook delivery is **at-least-once and best effort, not guaranteed**. An endpoint that
+        was down for a day has events marked `abandoned`. This endpoint plus
+        `POST /v1/events/{id}/replay` is the whole recovery story: see what we tried to send, fix
+        your side, ask for it again — no support ticket needed.
+
+        `payload` is the signed body verbatim, as a JSON value rather than a quoted string.
+        `last_error` is from a closed vocabulary (`http_503`, `timeout`, `no_callback_url`, …),
+        never a raw Go error string.
+
+        Scoped to the authenticated merchant by the query itself. Same opaque cursor as the
+        charge list.
+      parameters:
+        - name: type
+          in: query
+          required: false
+          description: A typo here is refused rather than quietly matching nothing.
+          schema: { $ref: '#/components/schemas/EventType' }
+        - name: status
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/EventStatus' }
+        - name: charge_id
+          in: query
+          required: false
+          description: Restrict to events for one of your charges.
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: cursor
+          in: query
+          required: false
+          description: '`next_cursor` from the previous page, unchanged.'
+          schema: { type: string }
+      responses:
+        '200':
+          description: A page of events.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventList' }
+        '400':
+          description: '`invalid_request` — bad `type`, `status`, `charge_id`, `limit` or `cursor`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '404':
+          description: '`merchant_not_registered`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
+  /v1/events/{id}/replay:
+    post:
+      operationId: replayEvent
+      tags: [Events]
+      summary: Put a webhook event back in the delivery queue
+      description: |
+        Requeues the event with a fresh 24-hour delivery budget, whatever state it was in —
+        `abandoned` after a day of failures, or `delivered` and simply lost on your side.
+
+        **No `Idempotency-Key`**: replay is idempotent by construction, since requeuing an
+        already-requeued event sets the same row to the same state.
+
+        Answers **202**, not 200: nothing has been delivered when this returns. The worker picks
+        the row up on its next tick, and the body is the queued state, not a delivery receipt.
+
+        The event id does **not** change on a replay. That is the point: a receiver that dedupes
+        on the event id, as the at-least-once contract requires, can tell this is an event it may
+        already have seen.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '202':
+          description: Requeued. The body is the event in its queued state.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Event' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '404':
+          description: |
+            `event_not_found` (missing, malformed id, or another merchant's — all the same
+            answer) or `merchant_not_registered`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
 components:
   securitySchemes:
     walletSignature:
@@ -118,75 +813,381 @@ components:
       in: header
       name: X-Kakitu-Signature
       description: |
-        Three headers on every request: `X-Kakitu-Address`, `X-Kakitu-Timestamp` (unix seconds, within
-        120 s of server time), `X-Kakitu-Signature` (0x + 65 bytes). The signature is EIP-191
-        personal_sign over `{METHOD} {path}{?query} {timestamp} {sha256hex(body)}`. The body hash is
-        of the raw body, sha256 of empty for GET/DELETE. The query is included with a leading `?`
-        only when non-empty. Replays are rejected for 300 s.
+        Wallet-signature authentication. There are no API keys. OpenAPI can only name one header
+        here; **all three are required on every request**:
+
+        - `X-Kakitu-Address` — the signing wallet address.
+        - `X-Kakitu-Timestamp` — unix seconds, within **120 s** of server time.
+        - `X-Kakitu-Signature` — `0x` + 65 bytes, EIP-191 `personal_sign` over
+          `{METHOD} {path}{?query} {timestamp} {sha256hex(body)}`.
+
+        A given (address, method, path+query, timestamp, body hash) is accepted once; a repeat
+        within the **300 s** replay window is rejected. See the Authentication section of the
+        description for the full scheme.
+  headers:
+    XRequestId:
+      description: The id for this request, minted by the server. Quote it to support. An `X-Request-Id` you send is ignored.
+      schema: { type: string, format: uuid }
+    RateLimitLimit:
+      description: Requests allowed from this address in the current one-minute window.
+      schema: { type: integer }
+    RateLimitRemaining:
+      description: Requests remaining in the current window. Never below 0.
+      schema: { type: integer }
+    RateLimitReset:
+      description: Seconds until the current window rolls over.
+      schema: { type: integer }
+    RetryAfter:
+      description: Seconds to wait before retrying. Same value as `RateLimit-Reset`.
+      schema: { type: integer }
+    IdempotentReplayed:
+      description: Present and `true` when this is the stored response of an earlier request with the same `Idempotency-Key`.
+      schema: { type: string, const: 'true' }
   parameters:
-    IdempotencyKey:
+    IdempotencyKeyRequired:
       name: Idempotency-Key
       in: header
       required: true
-      description: Unique per logical request, at most 255 characters. Reuse only to retry the same request.
-      schema: { type: string, maxLength: 255 }
+      description: |
+        A unique string you generate per logical request; a UUID is ideal. At most 255
+        characters. Resend the SAME key when retrying so the request is never executed twice;
+        use a NEW key for a new request. Missing: `400 idempotency_key_required`.
+      schema: { type: string, minLength: 1, maxLength: 255 }
   responses:
-    Error:
-      description: Error. Branch on `error.code`, never on `message`.
+    AuthFailure:
+      description: |
+        Unauthorized. Two shapes are possible on 401: the signature middleware answers
+        `AuthError`, while a handler that finds no authenticated address answers the standard
+        `ErrorEnvelope` with code `unauthorized`.
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/AuthError'
+              - $ref: '#/components/schemas/ErrorEnvelope'
+    RateLimited:
+      description: '`rate_limited` — too many requests from this address in the current minute.'
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+        RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+        RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+        RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
-    AuthFailure:
-      description: Signature check failed. Uses the older shape, not ErrorEnvelope.
+    Internal:
+      description: '`internal` — something went wrong on our side. The message is always the same sentence; quote `request_id` to support.'
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/AuthError' }
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    RailUnavailable:
+      description: '`rail_unavailable` — temporarily unavailable, try again shortly.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
   schemas:
     MerchantRequest:
       type: object
       additionalProperties: false
       required: [business_name, contact_email]
       properties:
-        business_name: { type: string, minLength: 1, maxLength: 100 }
-        contact_email: { type: string, maxLength: 254 }
+        business_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: |
+            At most 100 characters. No control, invisible or text-direction characters — payers
+            read this in their M-Pesa prompt. Frozen once the merchant is past `pending`.
+        contact_email:
+          type: string
+          maxLength: 254
+          description: A plain email address. `Bob <a@b.co>` is refused.
         contact_phone:
           type: [string, 'null']
           maxLength: 20
-          description: Digits, +, space, hyphen. "" clears; absent or null leaves unchanged.
+          description: |
+            Digits, `+`, spaces and hyphens only. Absent or `null` leaves the stored value
+            unchanged; `""` clears it.
         callback_url:
           type: [string, 'null']
           maxLength: 512
-          description: https, port 443, public host, punycode for non-ASCII. "" clears; absent or null leaves unchanged.
+          description: |
+            Where webhooks are delivered. Must be `https`, port 443 only, no credentials in the
+            URL, a public host (no loopback, private, link-local, CGNAT or reserved address, no
+            single-label or `.local`/`.internal`/`.localhost`/`.lan`/`.home.arpa` name), ASCII
+            only — supply a non-ASCII domain in punycode. At most 512 characters. Absent or
+            `null` leaves the stored value unchanged; `""` clears it.
+        state:
+          description: Accepted and ignored. Set by a Kakitu operator.
+        webhook_secret:
+          description: Accepted and ignored. Set by a Kakitu operator; never readable over the API.
+        daily_cap_kes:
+          description: Accepted and ignored. Set by a Kakitu operator.
+        per_charge_max_kes:
+          description: Accepted and ignored. Set by a Kakitu operator.
+        address:
+          description: Accepted and ignored. The address always comes from the signature.
+        reviewed_by:
+          description: Accepted and ignored. Set by a Kakitu operator.
+        review_note:
+          description: Accepted and ignored. Set by a Kakitu operator.
     Merchant:
       type: object
       required: [address, business_name, contact_email, contact_phone, callback_url, state, daily_cap_kes, per_charge_max_kes]
       properties:
-        address: { type: string }
+        address:
+          type: string
+          description: The merchant's wallet address — the credential and the settlement destination.
         business_name: { type: string }
         contact_email: { type: string }
-        contact_phone: { type: string }
-        callback_url: { type: string }
-        state: { type: string, enum: [pending, approved, rejected, suspended] }
-        daily_cap_kes: { type: integer, format: int64, description: 0 means the platform default applies. }
-        per_charge_max_kes: { type: integer, format: int64, description: 0 means the platform default applies. }
+        contact_phone: { type: string, description: Empty string when none is stored. }
+        callback_url: { type: string, description: Empty string when none is stored. }
+        state:
+          type: string
+          enum: [pending, approved, rejected, suspended]
+          description: |
+            `pending` on registration. Only an `approved` merchant may create charges or
+            transfers. Changed by a Kakitu operator, never by this API.
+        daily_cap_kes: { type: integer, format: int64 }
+        per_charge_max_kes: { type: integer, format: int64 }
+    ChargeStatus:
+      type: string
+      description: |
+        Kakitu's own vocabulary, never the payment rail's. `pending` created, nothing sent yet;
+        `prompted` the payer's handset has been rung; `paid` the rail says the payer paid;
+        `settled` the merchant's wallet is credited on chain. `settled` and `cancelled` are
+        terminal; `failed` and `expired` are not, because a late completion can still arrive.
+      enum: [pending, prompted, paid, settled, failed, expired, cancelled]
     ChargeRequest:
       type: object
       required: [amount, phone, reference]
       properties:
-        amount: { type: integer, format: int64, description: Whole KES, greater than zero. }
-        phone: { type: string, description: Payer's Kenyan mobile number. }
-        reference: { type: string, maxLength: 128, description: Unique per merchant. }
+        amount:
+          type: integer
+          format: int64
+          minimum: 1
+          description: A positive whole number of KES. Not a decimal.
+        phone:
+          type: string
+          description: The payer's Kenyan mobile number. It is hashed; it is never returned.
+        reference:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Your own reference. Must be unique per merchant, or `409 reference_reused`.
+        id:
+          description: Accepted and ignored, so a charge object can be round-tripped.
+        status:
+          description: Accepted and ignored. A client must not choose its own status.
+        currency:
+          description: Accepted and ignored.
+        created_at:
+          description: Accepted and ignored.
+        paid_at:
+          description: Accepted and ignored.
+        settled_at:
+          description: Accepted and ignored.
     Charge:
       type: object
+      required: [id, reference, amount, currency, status, created_at, paid_at, settled_at]
       properties:
-        id: { type: string }
+        id: { type: string, format: uuid }
         reference: { type: string }
-        amount: { type: integer, format: int64 }
+        amount: { type: integer, format: int64, description: Whole KES. }
         currency: { type: string, const: KES }
-        status: { type: string, enum: [pending, prompted, paid, settled, failed, expired, cancelled] }
+        status: { $ref: '#/components/schemas/ChargeStatus' }
         created_at: { type: string, format: date-time }
         paid_at: { type: [string, 'null'], format: date-time }
         settled_at: { type: [string, 'null'], format: date-time }
+    ChargeList:
+      type: object
+      required: [data, next_cursor]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Charge' }
+        next_cursor:
+          type: [string, 'null']
+          description: Pass back as `cursor` for the next page. `null` on the last page.
+    TransferRequest:
+      type: object
+      required: [from, to, value_wei, deadline, v, r, s, iv, ir, is]
+      properties:
+        from: { type: string, description: Must equal the authenticated address. }
+        to: { type: string, description: The recipient address. }
+        value_wei: { type: string, description: 'Amount in the token''s smallest unit, as a decimal string.' }
+        deadline: { type: integer, format: int64, description: Unix seconds; the permit's expiry. }
+        v: { type: integer, description: 'EIP-2612 permit signature (spender = the forwarder).' }
+        r: { type: string, description: 'EIP-2612 permit signature.' }
+        s: { type: string, description: 'EIP-2612 permit signature.' }
+        iv: { type: integer, description: 'EIP-712 Relay(owner,to,value,deadline,nonce) intent signature, which binds the recipient.' }
+        ir: { type: string, description: 'EIP-712 relay intent signature.' }
+        is: { type: string, description: 'EIP-712 relay intent signature.' }
+    Transfer:
+      type: object
+      required: [id, status]
+      properties:
+        id: { type: string, description: The transaction hash — your only handle on this transfer. }
+        status:
+          type: string
+          enum: [pending, confirmed]
+          description: '`confirmed` with HTTP 200; `pending` with HTTP 202.'
+    Balances:
+      type: object
+      required: [kshs, usdc]
+      properties:
+        kshs:
+          type: object
+          required: [amount_kes, network]
+          properties:
+            amount_kes: { type: integer, format: int64, description: Whole shillings. }
+            network: { type: string, description: 'The chain the balance is on, e.g. `base`.' }
+        usdc:
+          type: object
+          required: [amount, network]
+          properties:
+            amount: { type: string, description: 'A decimal string, e.g. "3.5". Not a JSON number.' }
+            network: { type: string, description: 'The chain the balance is on, e.g. `base`.' }
+    Order:
+      type: object
+      required: [id, type, status, amount_kes, receive_kes, fee_kes, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        type:
+          type: string
+          enum: [deposit, withdrawal]
+        status:
+          type: string
+          enum: [awaiting_payment, processing, completed, failed, refunding, refunded]
+          description: '`processing` covers every internal step with no public meaning.'
+        amount_kes:
+          type: integer
+          format: int64
+          description: 'Deposit: shillings paid in. Withdrawal: KSHS sent.'
+        receive_kes:
+          type: integer
+          format: int64
+          description: 'Deposit: KSHS received. Withdrawal: shillings paid out.'
+        fee_kes: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+          description: Present only while the order is `awaiting_payment`.
+    Limits:
+      type: object
+      required: [withdrawal, max_staleness_seconds, note]
+      properties:
+        withdrawal:
+          type: object
+          required: [min_kes, max_kes, source]
+          properties:
+            min_kes: { type: integer, format: int64 }
+            max_kes: { type: integer, format: int64 }
+            source:
+              type: string
+              enum: [live, estimated]
+              description: '`live` read from the payout route; `estimated` the configured fallback.'
+        max_staleness_seconds:
+          type: integer
+          description: The longest this band can be behind the payout route.
+        note: { type: string, description: A human-readable staleness caveat. }
+    QuoteRequest:
+      type: object
+      additionalProperties: false
+      required: [type, amount_kes]
+      properties:
+        type:
+          type: string
+          enum: [deposit, withdrawal]
+        amount_kes:
+          type: integer
+          format: int64
+          minimum: 1
+          description: A whole number of shillings, at least 1.
+        phone:
+          type: string
+          description: The payer's number. Used for a deposit quote.
+        beneficiary:
+          type: [object, 'null']
+          description: Required for a withdrawal quote.
+          additionalProperties: false
+          properties:
+            channel:
+              type: string
+              enum: [mobile_money, buy_goods, paybill]
+            number:
+              type: string
+              description: The mobile number, till number or paybill number.
+            reference:
+              type: string
+              description: The account reference. Required for `paybill`.
+    Quote:
+      type: object
+      required: [type, receive_kes, fee_kes, rate_kes_per_usdc, expires_at]
+      properties:
+        type:
+          type: string
+          enum: [deposit, withdrawal]
+        pay_kes:
+          type: integer
+          format: int64
+          description: Deposit only — what the payer is asked for. Omitted on a withdrawal.
+        send_kes:
+          type: integer
+          format: int64
+          description: Withdrawal only — the KSHS that would be sent. Omitted on a deposit.
+        receive_kes: { type: integer, format: int64 }
+        fee_kes: { type: integer, format: int64 }
+        rate_kes_per_usdc: { type: string, description: 'A decimal string, not a JSON number.' }
+        expires_at: { type: string, format: date-time }
+    EventType:
+      type: string
+      enum: [charge.paid, charge.settled, charge.failed]
+    EventStatus:
+      type: string
+      description: |
+        `pending` not yet delivered; `delivered` your endpoint answered 2xx; `abandoned` attempts
+        exhausted — kept for the audit trail and for replay.
+      enum: [pending, delivered, abandoned]
+    Event:
+      type: object
+      required: [id, type, charge_id, created_at, status, attempts, next_attempt_at, last_attempt_at, delivered_at, payload]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The dedupe key. It does not change on a replay.
+        type: { $ref: '#/components/schemas/EventType' }
+        charge_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        status: { $ref: '#/components/schemas/EventStatus' }
+        attempts: { type: integer }
+        next_attempt_at:
+          type: [string, 'null']
+          format: date-time
+          description: Non-null only while `status` is `pending`.
+        last_attempt_at: { type: [string, 'null'], format: date-time }
+        delivered_at: { type: [string, 'null'], format: date-time }
+        last_error:
+          type: string
+          description: |
+            A closed cause vocabulary (`http_503`, `timeout`, `no_callback_url`, …), never a raw
+            error string. Omitted when there is none.
+        payload:
+          description: |
+            The signed webhook body verbatim, as a JSON value rather than a quoted string.
+            `null` if nothing valid is stored.
+    EventList:
+      type: object
+      required: [data, next_cursor]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Event' }
+        next_cursor:
+          type: [string, 'null']
+          description: Pass back as `cursor` for the next page. `null` on the last page.
     ErrorEnvelope:
       type: object
       required: [error]
@@ -196,38 +1197,87 @@ components:
           required: [code, message, request_id]
           properties:
             code:
+              $ref: '#/components/schemas/ErrorCode'
+            message:
               type: string
-              description: The contract. HTTP status per code is fixed (see the Errors page).
-              enum:
-                - invalid_request
-                - unauthorized
-                - merchant_not_registered
-                - merchant_not_approved
-                - merchant_suspended
-                - merchant_name_frozen
-                - idempotency_key_required
-                - idempotency_key_invalid
-                - idempotency_key_reuse
-                - idempotency_key_in_progress
-                - idempotency_key_acted
-                - idempotency_unavailable
-                - request_too_large
-                - amount_below_minimum
-                - amount_above_maximum
-                - daily_cap_exceeded
-                - payer_velocity_exceeded
-                - rate_limited
-                - charge_not_found
-                - reference_reused
-                - rail_unavailable
-                - internal
-            message: { type: string, description: For humans. May change. Do not branch on it. }
-            request_id: { type: string }
+              description: For a human developer. May be reworded at any time. Never branch on it.
+            request_id:
+              type: string
+              description: Always present, never empty. The same id is in `X-Request-Id` and in our logs.
+    ErrorCode:
+      type: string
+      description: |
+        The closed error-code set. Each code has exactly one HTTP status, shown below. This is
+        the contract; branch on it rather than on `message`.
+      enum:
+        - invalid_request
+        - unauthorized
+        - merchant_not_registered
+        - merchant_not_approved
+        - merchant_suspended
+        - merchant_name_frozen
+        - idempotency_key_required
+        - idempotency_key_invalid
+        - idempotency_key_reuse
+        - idempotency_key_in_progress
+        - idempotency_key_acted
+        - idempotency_unavailable
+        - request_too_large
+        - amount_below_minimum
+        - amount_above_maximum
+        - daily_cap_exceeded
+        - payer_velocity_exceeded
+        - rate_limited
+        - charge_not_found
+        - reference_reused
+        - rail_unavailable
+        - order_not_found
+        - event_not_found
+        - profile_required
+        - identity_verification_required
+        - internal
+      x-http-status:
+        invalid_request: 400
+        unauthorized: 401
+        merchant_not_registered: 404
+        merchant_not_approved: 403
+        merchant_suspended: 403
+        merchant_name_frozen: 409
+        idempotency_key_required: 400
+        idempotency_key_invalid: 400
+        idempotency_key_reuse: 409
+        idempotency_key_in_progress: 409
+        idempotency_key_acted: 409
+        idempotency_unavailable: 503
+        request_too_large: 413
+        amount_below_minimum: 400
+        amount_above_maximum: 400
+        daily_cap_exceeded: 429
+        payer_velocity_exceeded: 429
+        rate_limited: 429
+        charge_not_found: 404
+        reference_reused: 409
+        rail_unavailable: 503
+        order_not_found: 404
+        event_not_found: 404
+        profile_required: 409
+        identity_verification_required: 403
+        internal: 500
     AuthError:
       type: object
+      description: |
+        The 401 shape of the signature middleware. It is NOT the standard error envelope and
+        carries no `request_id`; read `X-Request-Id` from the response headers instead.
       required: [error, reason]
       properties:
         error: { type: string, const: unauthorized }
         reason:
           type: string
-          enum: [missing_auth_headers, bad_timestamp, timestamp_out_of_range, bad_signature, replay, unreadable_body, auth_unavailable]
+          enum:
+            - missing_auth_headers
+            - bad_timestamp
+            - timestamp_out_of_range
+            - unreadable_body
+            - bad_signature
+            - auth_unavailable
+            - replay
