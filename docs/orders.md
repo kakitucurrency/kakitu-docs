@@ -5,10 +5,6 @@ title: Orders
 
 # Orders
 
-:::danger Not yet available
-`GET /v1/orders/{id}` **does not answer on the live server today.** The route is not registered, so calling it returns a plain 404. See [the status board](./intro).
-:::
-
 An order is one movement of money between shillings and KSHS for your own wallet: a **deposit** (shillings in, KSHS credited) or a **withdrawal** (KSHS sent, shillings paid out).
 
 **This API does not create orders.** There is no `POST /v1/orders`. Orders are created by Kakitu's own deposit and withdrawal flows for the wallet that owns them; this endpoint is how you read one you already have an id for. Collections are a different thing entirely and have their own ids — see [Collections](./collections).

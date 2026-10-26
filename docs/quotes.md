@@ -5,10 +5,6 @@ title: Quotes
 
 # Quotes
 
-:::danger Not yet available
-`POST /v1/quotes` **does not answer on the live server today.** The route is not registered, so calling it returns a plain 404. See [the status board](./intro).
-:::
-
 A quote is a **price**: what a payment in or out would cost right now, and what would land. Asking for one creates no order, no charge and no transfer, and commits you to nothing.
 
 ## No Idempotency-Key

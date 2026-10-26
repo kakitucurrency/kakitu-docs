@@ -5,10 +5,6 @@ title: Limits
 
 # Limits
 
-:::danger Not yet available
-`GET /v1/limits` **does not answer on the live server today.** The route is not registered, so calling it returns a plain 404. See [the status board](./intro).
-:::
-
 ## GET /v1/limits
 
 The current withdrawal band: the smallest and largest payout that will be accepted. Signed request, no body, no `Idempotency-Key`.

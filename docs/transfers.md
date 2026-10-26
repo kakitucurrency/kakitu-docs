@@ -5,10 +5,6 @@ title: Transfers
 
 # Transfers
 
-:::danger Not yet available
-`POST /v1/transfers` **does not answer on the live server today.** The route is not registered, so calling it returns a plain 404. Everything below is read from the handler and the relay it wraps, so you can build and review against it now. See [the status board](./intro).
-:::
-
 A transfer moves KSHS from your own wallet to another address, and **Kakitu's relayer pays the gas.** You hold no ETH and you never need any.
 
 That is the only thing we do for you. **You sign the transfer with your own key and send us the signed result.** We hold no key of yours, we cannot change who is paid, and we cannot send anything you did not sign. If our relayer vanished tomorrow, your signed intent would still be a thing anyone could submit — the forwarder is permissionless.

@@ -5,10 +5,6 @@ title: Collections
 
 # Collections
 
-:::danger Not yet available
-`POST /v1/charges`, `GET /v1/charges` and `GET /v1/charges/{id}` **do not work on the live server today.** The routes are not registered, so calling them returns a plain 404. This page documents the shapes from the charge service as it is being built, so you can plan. Field names here are provisional until the endpoints ship; this notice will be removed when they do.
-:::
-
 A collection (a *charge*) asks a payer's phone to approve an M-Pesa payment. When they pay, the shilling amount is credited as KSHS to your merchant wallet.
 
 ## Operator approval is required
@@ -17,7 +13,7 @@ A collection (a *charge*) asks a payer's phone to approve an M-Pesa payment. Whe
 
 The reason is plain: a collection **rings a stranger's handset with a real M-Pesa PIN prompt**, showing your business name. Without a human check, the endpoint would be a phishing tool. So a Kakitu operator reviews every merchant first. See [Going live](./going-live).
 
-## `POST /v1/charges` (not yet available)
+## `POST /v1/charges`
 
 Requires `Idempotency-Key` (below).
 
@@ -44,11 +40,11 @@ Provisional response:
 
 A field the server owns — `id`, `status`, `currency`, `created_at`, `paid_at`, `settled_at` — is tolerated and dropped if you echo it back from a charge you read, so round-tripping a charge object does not break. It is never obeyed. Any other unknown field is refused with `invalid_request`, and the message names it.
 
-## `GET /v1/charges/{id}` (not yet available)
+## `GET /v1/charges/{id}`
 
 Returns the charge. A charge that belongs to another merchant answers `404 charge_not_found`, the same as one that does not exist, and so does an id that is not well formed.
 
-## `GET /v1/charges` (not yet available)
+## `GET /v1/charges`
 
 Your own charges, newest first. No `Idempotency-Key`; it reads.
 

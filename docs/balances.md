@@ -5,10 +5,6 @@ title: Balances
 
 # Balances
 
-:::danger Not yet available
-`GET /v1/balances` **does not answer on the live server today.** The route is not registered, so calling it returns a plain 404. See [the status board](./intro).
-:::
-
 ## GET /v1/balances
 
 The balances of **the wallet that signed the request**, read live from the chain. Signed request, no body, no `Idempotency-Key`.

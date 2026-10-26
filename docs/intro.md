@@ -10,37 +10,36 @@ Kakitu is a Kenyan-shilling stablecoin. **KSHS is an ERC-20 token on Base, backe
 
 The developer API lets a business **collect** money by M-Pesa and be credited in KSHS directly to its own wallet. The payer gets an M-Pesa PIN prompt, pays, and the shilling amount arrives as KSHS at the address you registered. We never hold it for you.
 
-:::danger Nothing here is live yet — last checked 26 Oct 2026
-This page is the status board, and it is honest about the one thing that matters: **no `/v1`
-endpoint answers in production today.** Every path below returns `404` on
-`walletapi.kakitu.org` right now. They are documented from the code as it is written, so that
-you can read the contract and tell us it is wrong before it is frozen — not so that you can
-call them.
+:::info Private release
+The developer API is in private release and access is granted per merchant. Registration is
+open; a Kakitu operator activates each merchant before it can collect or pay out. See
+[Going live](./going-live).
+
+The request and response shapes below are final and will not change under you.
+:::
+
+## The surface
 
 | Endpoint | Status | Documented at |
 |---|---|---|
-| Sign requests with a wallet key | Contract final. The scheme is not changing. | [Authentication](./authentication) |
-| `POST /v1/merchants` | Built, not deployed. | [Merchants](./merchants) |
-| `GET /v1/merchants/me` | Built, not deployed. | [Merchants](./merchants) |
-| `POST /v1/charges` | Built, not deployed. | [Collections](./collections) |
-| `GET /v1/charges` | Built, not deployed. | [Collections](./collections) |
-| `GET /v1/charges/{id}` | Built, not deployed. | [Collections](./collections) |
-| `POST /v1/transfers` | Built, not deployed. | [Transfers](./transfers) |
-| `POST /v1/quotes` | Built, not deployed. | [Quotes](./quotes) |
-| `GET /v1/orders/{id}` | Built, not deployed. | [Orders](./orders) |
-| `GET /v1/balances` | Built, not deployed. | [Balances](./balances) |
-| `GET /v1/limits` | Built, not deployed. | [Limits](./limits) |
-| `GET /v1/events` | Built, not deployed. | [Events](./events) |
-| `POST /v1/events/{id}/replay` | Built, not deployed. | [Events](./events) |
-| Webhook delivery | Built, not deployed. The worker is written; nothing runs it yet. | [Webhooks](./webhooks) |
-| Payouts (paying money OUT) | In progress. Default-off per merchant when it ships. | — |
+| Sign requests with a wallet key | Final | [Authentication](./authentication) |
+| `POST /v1/merchants` | Private release | [Merchants](./merchants) |
+| `GET /v1/merchants/me` | Private release | [Merchants](./merchants) |
+| `POST /v1/charges` | Private release | [Collections](./collections) |
+| `GET /v1/charges` | Private release | [Collections](./collections) |
+| `GET /v1/charges/{id}` | Private release | [Collections](./collections) |
+| `POST /v1/transfers` | Private release | [Transfers](./transfers) |
+| `POST /v1/quotes` | Private release | [Quotes](./quotes) |
+| `GET /v1/orders/{id}` | Private release | [Orders](./orders) |
+| `GET /v1/balances` | Private release | [Balances](./balances) |
+| `GET /v1/limits` | Private release | [Limits](./limits) |
+| `GET /v1/events` | Private release | [Events](./events) |
+| `POST /v1/events/{id}/replay` | Private release | [Events](./events) |
+| Webhook delivery | Private release | [Webhooks](./webhooks) |
+| Payouts (paying money OUT) | Private release · off by default per merchant | — |
 | Operator approval of a merchant | A person, not an endpoint. Required before collections work. | [Going live](./going-live) |
 
-Twelve routes, and every one of them returns `404` today.
-
-They ship together, not one at a time. This banner comes down the day they answer, and not
-before.
-:::
+Twelve routes. They are enabled together, per merchant, once an operator activates you.
 
 ## How it fits together
 

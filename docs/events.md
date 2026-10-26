@@ -5,10 +5,6 @@ title: Events
 
 # Events
 
-:::danger Not yet available
-`GET /v1/events` and `POST /v1/events/{id}/replay` **do not answer on the live server today**, and the delivery worker that fills the queue is not running either. Nothing is being sent to your `callback_url`. The routes, the payload, the signature and the retry schedule below are read from the server's code so you can build against them now. See [the status board](./intro).
-:::
-
 An event is one webhook delivery: what we sent you about a charge, when we tried, and whether it worked. These two endpoints exist because **delivery is best-effort, not guaranteed.** An endpoint that was down for a day has events marked `abandoned`, and you need to be able to see that, read what we tried to send, fix your side and ask for it again — without opening a support ticket.
 
 ## Delivery is at-least-once

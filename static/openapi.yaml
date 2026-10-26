@@ -8,21 +8,13 @@ info:
     M-Pesa payment from a payer and be credited in KSHS **at its own wallet address**. Kakitu is
     non-custodial: it never holds the merchant's money and never holds the merchant's key.
 
-    ## Deployment status — as of 2026-10-26
+    ## Access
 
-    **The developer API is not released yet.** Every path in THIS document returns **404** on
-    `https://walletapi.kakitu.org` today.
+    The developer API is in private release. Registration is open to anyone; a Kakitu operator
+    activates each merchant before it can collect or pay out, and payouts are enabled per
+    merchant on top of that.
 
-    That is a statement about the `/v1` developer API and nothing else. The Kakitu server
-    itself is live and has been for months — the wallet, the agent network, the fiat rails and
-    their webhooks all run in production. None of that is described here, and none of it uses
-    a `/v1` path. This specification describes the routes as they are
-    implemented in the server source on the `feat-developer-api` branch, so that integrators can
-    build against the real shapes before the routes are wired and released. Nothing here is
-    marked as live, because nothing is. When the first routes ship, this notice is what changes.
-
-    The per-merchant rate limiter (`RateLimit-*` headers, below) is implemented but is also part
-    of the same unreleased route wiring.
+    The request and response shapes in this document are final.
 
     ## Authentication — your wallet address is the credential
 
@@ -137,7 +129,7 @@ info:
     error you can use to tell the three apart.
 servers:
   - url: https://walletapi.kakitu.org
-    description: Production. Every /v1 path on it returns 404 as of 2026-10-26.
+    description: Production.
 security:
   - walletSignature: []
 tags:

@@ -5,10 +5,6 @@ title: Webhooks
 
 # Webhooks
 
-:::danger Not yet available
-**Nothing is sent to your `callback_url` today.** The delivery worker is written and tested but nothing runs it, and the endpoints for reading and replaying events are not registered either. See [the status board](./intro).
-:::
-
 The delivery format, event names, signature header and retry schedule now exist in the server, and they are documented in full on the [Events](./events) page: the payload, the `Kakitu-Signature` header and how to verify it, the retry schedule, and the at-least-once contract your receiver has to be built for.
 
 This page is the part that happens before any of that: where deliveries go, and the secret that signs them.
