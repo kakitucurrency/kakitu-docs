@@ -17,16 +17,26 @@ endpoint answers in production today.** Every path below returns `404` on
 you can read the contract and tell us it is wrong before it is frozen — not so that you can
 call them.
 
-| Feature | Status |
-|---|---|
-| Sign requests with a wallet key | Contract final. The scheme is not changing. |
-| `POST /v1/merchants`, `GET /v1/merchants/me` | Built, not deployed. |
-| `POST /v1/charges`, `GET /v1/charges/{id}`, collections | Built, not deployed. |
-| `POST /v1/transfers`, the gasless transfer | Built, not deployed. |
-| `GET /v1/balances`, `/v1/orders/{id}`, `/v1/limits`, `/v1/quotes` | Built, not deployed. |
-| Webhook delivery | In progress. |
-| Payouts (paying money OUT) | In progress. Default-off per merchant when it ships. |
-| Operator approval of a merchant | A person, not an endpoint. Required before collections work. |
+| Endpoint | Status | Documented at |
+|---|---|---|
+| Sign requests with a wallet key | Contract final. The scheme is not changing. | [Authentication](./authentication) |
+| `POST /v1/merchants` | Built, not deployed. | [Merchants](./merchants) |
+| `GET /v1/merchants/me` | Built, not deployed. | [Merchants](./merchants) |
+| `POST /v1/charges` | Built, not deployed. | [Collections](./collections) |
+| `GET /v1/charges` | Built, not deployed. | [Collections](./collections) |
+| `GET /v1/charges/{id}` | Built, not deployed. | [Collections](./collections) |
+| `POST /v1/transfers` | Built, not deployed. | [Transfers](./transfers) |
+| `POST /v1/quotes` | Built, not deployed. | [Quotes](./quotes) |
+| `GET /v1/orders/{id}` | Built, not deployed. | [Orders](./orders) |
+| `GET /v1/balances` | Built, not deployed. | [Balances](./balances) |
+| `GET /v1/limits` | Built, not deployed. | [Limits](./limits) |
+| `GET /v1/events` | Built, not deployed. | [Events](./events) |
+| `POST /v1/events/{id}/replay` | Built, not deployed. | [Events](./events) |
+| Webhook delivery | Built, not deployed. The worker is written; nothing runs it yet. | [Webhooks](./webhooks) |
+| Payouts (paying money OUT) | In progress. Default-off per merchant when it ships. | — |
+| Operator approval of a merchant | A person, not an endpoint. Required before collections work. | [Going live](./going-live) |
+
+Twelve routes, and every one of them returns `404` today.
 
 They ship together, not one at a time. This banner comes down the day they answer, and not
 before.
@@ -38,6 +48,8 @@ before.
 2. You **register** a merchant. It starts as `pending`. See [Merchants](./merchants).
 3. A Kakitu operator **approves** it. This is a person, not an automated step, and it is required. See [Going live](./going-live).
 4. Once approved you create **charges**. See [Collections](./collections).
+
+Alongside collections there is a second surface for an approved merchant: [transfers](./transfers) (send KSHS and we pay the gas), [quotes](./quotes), [orders](./orders), [balances](./balances), [limits](./limits) and your webhook [events](./events).
 
 ## Base URL
 

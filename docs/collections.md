@@ -6,7 +6,7 @@ title: Collections
 # Collections
 
 :::danger Not yet available
-`POST /v1/charges` and `GET /v1/charges/{id}` **do not work on the live server today.** The routes are not registered, so calling them returns a plain 404. This page documents the shapes from the charge service as it is being built, so you can plan. Field names here are provisional until the endpoints ship; this notice will be removed when they do.
+`POST /v1/charges`, `GET /v1/charges` and `GET /v1/charges/{id}` **do not work on the live server today.** The routes are not registered, so calling them returns a plain 404. This page documents the shapes from the charge service as it is being built, so you can plan. Field names here are provisional until the endpoints ship; this notice will be removed when they do.
 :::
 
 A collection (a *charge*) asks a payer's phone to approve an M-Pesa payment. When they pay, the shilling amount is credited as KSHS to your merchant wallet.
@@ -42,9 +42,49 @@ Provisional response:
 }
 ```
 
+A field the server owns — `id`, `status`, `currency`, `created_at`, `paid_at`, `settled_at` — is tolerated and dropped if you echo it back from a charge you read, so round-tripping a charge object does not break. It is never obeyed. Any other unknown field is refused with `invalid_request`, and the message names it.
+
 ## `GET /v1/charges/{id}` (not yet available)
 
-Returns the charge. A charge that belongs to another merchant answers `404 charge_not_found`, the same as one that does not exist.
+Returns the charge. A charge that belongs to another merchant answers `404 charge_not_found`, the same as one that does not exist, and so does an id that is not well formed.
+
+## `GET /v1/charges` (not yet available)
+
+Your own charges, newest first. No `Idempotency-Key`; it reads.
+
+```http
+GET /v1/charges?status=settled&created_after=2026-10-01T00:00:00Z&limit=50
+```
+
+| Parameter | Rules |
+|---|---|
+| `reference` | Your own identifier, matched exactly. |
+| `status` | One of the statuses above. Anything else: `invalid_request`. |
+| `created_after` | An RFC 3339 timestamp, for example `2026-10-25T00:00:00Z`. |
+| `limit` | A whole number from 1 to 100. Default 20. |
+| `cursor` | `next_cursor` from the previous page, unchanged. |
+
+```json
+{
+  "data": [
+    {
+      "id": "a1f0c9d2-55b1-4f3e-8a0d-77c1e2b3a4d5",
+      "reference": "order-1042",
+      "amount": 500,
+      "currency": "KES",
+      "status": "settled",
+      "created_at": "2026-10-25T12:00:00Z",
+      "paid_at": "2026-10-25T12:00:41Z",
+      "settled_at": "2026-10-25T12:01:03Z"
+    }
+  ],
+  "next_cursor": "MjAyNi0xMC0yNVQxMjowMDowMFouLg"
+}
+```
+
+`next_cursor` is `null` on the last page. It is **an opaque string, not a page number**: charges arrive while you are paging, and an offset would show you the same row twice. Pass it back unchanged — a cursor we did not issue is `invalid_request`.
+
+The list is scoped to your merchant in the query itself, not by a filter we remember to apply, so there is no shape of request that returns somebody else's charges.
 
 ## Status
 

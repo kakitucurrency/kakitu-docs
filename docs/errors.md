@@ -1,5 +1,5 @@
 ---
-sidebar_position: 7
+sidebar_position: 13
 title: Errors
 ---
 
@@ -37,16 +37,22 @@ Every `/v1/` endpoint answers an error with one envelope:
 | `idempotency_key_in_progress` | 409 | A request with this key is still running. Retry with the same key. |
 | `idempotency_key_acted` | 409 | The original request acted but its outcome was not recorded. Do not retry; check first. |
 | `idempotency_unavailable` | 503 | The idempotency store is down. Retry with the same key. |
-| `request_too_large` | 413 | The body exceeds the limit (16 KiB on merchant registration, 1 MiB elsewhere). |
+| `request_too_large` | 413 | The body exceeds the limit for that endpoint. See [Sizes](./rate-limits#sizes). |
 | `amount_below_minimum` | 400 | The amount is under the minimum that can be collected. |
 | `amount_above_maximum` | 400 | The amount is over the per-charge or rail maximum. |
 | `daily_cap_exceeded` | 429 | The merchant's daily collection cap is reached. |
 | `payer_velocity_exceeded` | 429 | This payer has been prompted too often today. |
-| `rate_limited` | 429 | Too many charges per minute, or too many prompts. |
+| `rate_limited` | 429 | Too many requests per minute, too many charges per minute, too many prompts, or too many transfers this hour. See [Rate limits](./rate-limits). |
 | `charge_not_found` | 404 | No such charge for this merchant. |
 | `reference_reused` | 409 | This merchant already has a charge with that reference. |
-| `rail_unavailable` | 503 | Collections are temporarily unavailable. Retry shortly. |
+| `rail_unavailable` | 503 | The thing you asked for is temporarily unavailable. Retry shortly. |
+| `order_not_found` | 404 | No such order. See [Orders](./orders). |
+| `event_not_found` | 404 | No such webhook event. See [Events](./events). |
+| `profile_required` | 409 | This wallet has no profile yet. It must be completed before a quote can be priced. |
+| `identity_verification_required` | 403 | The amount needs the customer's identity verified first. |
 | `internal` | 500 | Something went wrong on our side. Quote the request_id. |
+
+Four of these answer the same way for a thing that does not exist and a thing that belongs to somebody else: `merchant_not_registered`, `charge_not_found`, `order_not_found` and `event_not_found`. Same status, same code, same sentence, deliberately. An error that told the two apart would turn the endpoint into a way of asking whether somebody else's id is real.
 
 No `/v1` endpoint is deployed yet (see [the status board](./intro)). The whole code set below is final and will not change under you, including the codes for endpoints you cannot call yet.
 
@@ -68,6 +74,7 @@ Here `error` is a string and `reason` is one of `missing_auth_headers`, `bad_tim
 | `503` (`idempotency_unavailable`, `rail_unavailable`) | Retry with backoff, same `Idempotency-Key`. |
 | `409 idempotency_key_in_progress` | Wait, retry with the same key. |
 | `429` | Back off. See [Rate limits](./rate-limits). |
-| `409 idempotency_key_acted` | Do not retry. Check state first. |
+| `409 idempotency_key_acted` | Do not retry. Check state first. On [transfers](./transfers#the-three-answers-that-are-not-retry) you can get this on the first attempt. |
+| `503 rail_unavailable` saying the outcome is not known | Do not retry. That wording means money may have moved. |
 | `reference_reused` after a refused charge | Same key, **new reference**. |
 | `4xx` otherwise | Fix the request. Retrying will not help. |
