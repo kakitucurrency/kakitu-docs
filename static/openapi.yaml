@@ -10,8 +10,13 @@ info:
 
     ## Deployment status — as of 2026-10-26
 
-    **No `/v1` endpoint is live in production.** Every path in this document returns **404** on
-    `https://walletapi.kakitu.org` today. This specification describes the routes as they are
+    **The developer API is not released yet.** Every path in THIS document returns **404** on
+    `https://walletapi.kakitu.org` today.
+
+    That is a statement about the `/v1` developer API and nothing else. The Kakitu server
+    itself is live and has been for months — the wallet, the agent network, the fiat rails and
+    their webhooks all run in production. None of that is described here, and none of it uses
+    a `/v1` path. This specification describes the routes as they are
     implemented in the server source on the `feat-developer-api` branch, so that integrators can
     build against the real shapes before the routes are wired and released. Nothing here is
     marked as live, because nothing is. When the first routes ship, this notice is what changes.
