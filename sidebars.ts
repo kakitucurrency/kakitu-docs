@@ -8,6 +8,7 @@ const sidebars: SidebarsConfig = {
     'merchants',
     'collections',
     'transfers',
+    'payouts',
     'quotes',
     'orders',
     'balances',

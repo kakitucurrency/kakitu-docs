@@ -18,9 +18,19 @@ A merchant is a business that collects money. It is identified by the wallet add
 
 You cannot change `state` yourself. See [Going live](./going-live).
 
+### If an operator entered you by hand
+
+An operator can create a merchant from an address you give them — for a business that has no developer, so the paperwork can be done before anyone writes code. That row is created `pending`, with your details already filled in.
+
+**It cannot be approved until a correctly signed request from that address reaches `POST /v1/merchants`.** So you still have to make one signed call, even though your details are already there. Send the registration as below; it will update the existing row rather than create a second one.
+
+That gate is not bureaucracy. The address is where your money is paid, **on chain**. An operator typing it proves the characters were typed — not that you hold the key, and not that the address is right. If it is wrong by one character, or it is a wallet you cannot spend from, every payment you ever take is gone and there is nobody to ask for it back. A signed request is the only thing that proves the key is yours. It approves nothing by itself; it only clears the way for the operator's decision.
+
 ## POST /v1/merchants
 
 Registers the signing wallet as a merchant, or updates its details. Signed request; no `Idempotency-Key` is needed because registration does not move money.
+
+If you have not written the signing code yet, **[register in your browser](/signup)** instead: it generates a key, signs this request and submits it. It calls this same endpoint with the same rules, so everything below still applies.
 
 | Field | Type | Rules |
 |---|---|---|

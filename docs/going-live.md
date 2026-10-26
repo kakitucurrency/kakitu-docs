@@ -1,5 +1,5 @@
 ---
-sidebar_position: 15
+sidebar_position: 16
 title: Going live
 ---
 
@@ -17,7 +17,9 @@ There is one environment: `https://walletapi.kakitu.org`. There is no separate s
 2. **Write to kakitu@kakitu.org** with your wallet address and what you sell. Expect questions.
 3. **Approval.** An operator sets your state to `approved`, sets your limits, and issues your **webhook secret**. The secret is shown **once**. Store it in a secret manager at once; it cannot be retrieved later.
 4. **Confirm** with `GET /v1/merchants/me` that `state` is `approved`.
-5. **Collect.** Create charges, once [collections are available](./collections).
+5. **Collect.** Create [charges](./collections).
+
+Paying money **out** is a separate request and a separate decision: approval does not switch payouts on. Ask for them by name. See [Payouts](./payouts#payouts-are-off-by-default).
 
 ## Checklist before you take real payments
 
@@ -57,6 +59,7 @@ The steps are the same minus the hurry.
 
 - Renaming the business.
 - Raising limits.
+- Switching payouts on, and setting the payout caps. These are separate from your collection caps.
 - Getting a new webhook secret.
 - Reinstating a suspended or rejected merchant.
 

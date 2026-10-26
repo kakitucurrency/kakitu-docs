@@ -5,9 +5,19 @@ title: Quickstart
 
 # Quickstart
 
-This is what registering will look like, end to end, in about ten minutes. **You cannot run it yet** — no `/v1` endpoint is deployed (see [the status board](./intro)). Read it to check the shape against your own integration; when the endpoints go up, this page works unchanged.
+Registering, end to end, in about ten minutes.
 
 ## 1. Get a wallet key
+
+:::tip There is a page that does this for you
+If you would rather not write signing code before you have registered, **[register in your
+browser](/signup)**. It generates a key on your machine, signs the registration and submits it.
+The key never leaves your browser, and you still have to copy it into your secret store before
+you close the tab.
+
+The rest of this page is the same thing by hand. You will need the signing code eventually
+anyway — every call after registration is signed — so it is worth reading either way.
+:::
 
 You need an Ethereum-style secp256k1 private key. The address that key controls is your credential **and** the address your collections are paid to.
 
@@ -109,6 +119,10 @@ The business name is what a payer reads in their M-Pesa prompt, so it is frozen 
 
 Write to kakitu@kakitu.org with your registered address. Until an operator approves you, collections will not work. [Going live](./going-live) explains the checklist and why a person is in the loop.
 
-## Where you cannot go yet
+## 6. Collect
 
-`POST /v1/charges` is not available. When it ships, [Collections](./collections) will say so and this quickstart will gain a step 6.
+Once you are approved, `POST /v1/charges` prompts a payer for their M-Pesa PIN and the shillings land at your address as KSHS. See [Collections](./collections).
+
+Alongside it: [transfers](./transfers) to send KSHS and let us pay the gas, [quotes](./quotes), [orders](./orders), [balances](./balances), [limits](./limits) and your webhook [events](./events).
+
+Paying money **out** to M-Pesa is [payouts](./payouts). It is switched off by default and needs a second decision from an operator — approval alone does not enable it.

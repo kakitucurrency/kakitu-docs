@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kakitu developer API
-  version: 0.2.0
+  version: 0.3.0
   summary: Collect M-Pesa payments and be credited in KSHS at your own wallet address.
   description: |
     Kakitu is a Kenyan shilling stablecoin (KSHS). The developer API lets a business collect an
@@ -11,8 +11,14 @@ info:
     ## Access
 
     The developer API is in private release. Registration is open to anyone; a Kakitu operator
-    activates each merchant before it can collect or pay out, and payouts are enabled per
-    merchant on top of that.
+    activates each merchant before it can collect or pay out.
+
+    **Payouts are off by default.** They are governed by two switches that are ANDed: a global
+    one for the whole platform, and a per-merchant one on your own record. Both are an
+    operator's decision and neither can be turned on through this API. Until both are on, every
+    payout route answers `403 payouts_disabled` — and which of the two is off is deliberately
+    not revealed. Collecting is a separate permission from paying out, with its own caps and its
+    own counter; being approved to collect does not enable payouts.
 
     The request and response shapes in this document are final.
 
@@ -79,14 +85,16 @@ info:
 
     ## Idempotency
 
-    Three of the four `POST` routes require an `Idempotency-Key` header; one does not.
+    Three of the six `POST` routes require an `Idempotency-Key` header; three do not.
 
     | Route | `Idempotency-Key` |
     | --- | --- |
     | `POST /v1/charges` | **required** |
     | `POST /v1/transfers` | **required** |
+    | `POST /v1/payouts` | **required** |
     | `POST /v1/merchants` | **not required** (registration is an upsert) |
     | `POST /v1/quotes` | **not required** (a quote creates no order, charge or transfer) |
+    | `POST /v1/payouts/quote` | **not required** (a payout quote creates no payout and moves no money) |
     | `POST /v1/events/{id}/replay` | **not required** (idempotent by construction) |
 
     Where it is required and missing, the request fails `400 idempotency_key_required`. The key
@@ -123,10 +131,10 @@ info:
 
     ## Resources belonging to someone else
 
-    A charge, order or webhook event that belongs to **another merchant** answers exactly as one
-    that **does not exist** — same status, same code, same sentence. A malformed id answers the
-    same way too. The API is never an oracle for whether another caller's id is real. There is no
-    error you can use to tell the three apart.
+    A charge, order, payout, payout quote or webhook event that belongs to **another merchant**
+    answers exactly as one that **does not exist** — same status, same code, same sentence. A
+    malformed id answers the same way too. The API is never an oracle for whether another
+    caller's id is real. There is no error you can use to tell the three apart.
 servers:
   - url: https://walletapi.kakitu.org
     description: Production.
@@ -139,6 +147,8 @@ tags:
     description: Collect an M-Pesa payment and be credited in KSHS.
   - name: Transfers
     description: Gasless KSHS transfers signed by the caller.
+  - name: Payouts
+    description: Send shillings to a beneficiary's M-Pesa. Off by default; enabled per merchant by an operator.
   - name: Reads
     description: Balances, orders, limits and prices.
   - name: Events
@@ -537,6 +547,302 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /v1/payouts/quote:
+    post:
+      operationId: createPayoutQuote
+      tags: [Payouts]
+      summary: Price a payout and get back exactly what to sign
+      description: |
+        Prices a payout to a beneficiary's M-Pesa and mints the **single-use quote that is the
+        only thing `POST /v1/payouts` will accept**. Nothing is created and no money moves.
+
+        **Payouts are off by default**, globally and per merchant. Both switches are an
+        operator's decision; until both are on this route answers `403 payouts_disabled`, and
+        which of the two is off is not revealed. The merchant must also be **approved**.
+
+        **No `Idempotency-Key`.** A quote creates nothing, and each call is a request for a
+        distinct price.
+
+        ### The two amounts are not the same number
+
+        - `amount_kes` is what **lands on the beneficiary**. It is the number you asked for.
+        - `send_kes` is what **leaves your wallet** — `amount_kes` plus `fee_kes`.
+        - `value_wei` is `send_kes` in the token's smallest unit, and is the number the permit
+          must be for. Do not re-derive it.
+
+        ### The beneficiary is yours, not ours
+
+        `beneficiary.name` is **your** text and is what the recipient sees on their M-Pesa
+        statement. It is never filled in from the sending merchant's profile. At most 100
+        characters, and it must not be empty. `beneficiary.phone` is a Kenyan mobile number in
+        `2547xxxxxxxx` form.
+
+        ### What to sign
+
+        `eip712` carries **both** domains, because they are different: the token's for the
+        EIP-2612 permit, and the forwarder's for the EIP-712 relay intent. Signing the permit
+        under the forwarder's domain produces a signature the chain rejects with nothing to
+        read, so neither is left to be inferred.
+
+        `deadline` is the **latest** deadline that will be accepted. An earlier one is fine; a
+        later one is a signature the confirm refuses after you have already signed it.
+
+        ### The daily budget is read here, not spent here
+
+        The per-merchant daily payout cap and the per-payout maximum are checked at quote time
+        so you learn you are over them **before** signing. Nothing is counted until
+        `POST /v1/payouts` accepts the payout, so an abandoned quote costs you no budget.
+
+        Unknown fields are refused outright (`400 invalid_request`). Body limit 4 KiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutQuoteRequest' }
+      responses:
+        '200':
+          description: The price, and everything to sign.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PayoutQuote' }
+        '400':
+          description: |
+            `invalid_request` (unknown field, `amount_kes` below 1, missing `beneficiary`, a
+            number that is not a Kenyan mobile, a missing or over-long `beneficiary.name`),
+            `payout_amount_above_maximum` (above the largest single payout allowed for this
+            merchant — no amount of waiting makes it acceptable, only a smaller one),
+            `amount_below_minimum` or `amount_above_maximum` (GET /v1/limits shows the current
+            band).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '403':
+          description: |
+            `payouts_disabled` (payouts are not switched on for this merchant — contact support),
+            `merchant_not_approved`, `merchant_suspended`, or
+            `identity_verification_required`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404':
+          description: '`merchant_not_registered`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '409':
+          description: '`profile_required` — this wallet has no profile yet.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '413':
+          description: '`request_too_large` — the body is larger than 4 KiB.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429':
+          description: |
+            `rate_limited`, or `payout_daily_cap_exceeded` — this merchant's daily **payout**
+            budget is spent; it resets at midnight East Africa Time. This is deliberately not
+            `daily_cap_exceeded`, which is the separate **collection** cap: raising that one
+            would change nothing here.
+          headers:
+            Retry-After: { $ref: '#/components/headers/RetryAfter' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503':
+          description: |
+            `rail_unavailable` — payouts are temporarily unavailable and **nothing was priced**.
+            Try again shortly. The payout limiter fails closed: if it cannot count, no payout is
+            priced.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /v1/payouts:
+    post:
+      operationId: createPayout
+      tags: [Payouts]
+      summary: Confirm a signed payout
+      description: |
+        Spends a quote from `POST /v1/payouts/quote` and accepts the payout. The body is the
+        quote id plus that quote, signed.
+
+        **`Idempotency-Key` is REQUIRED.** Unlike the quote route, this one authorises money
+        leaving.
+
+        ### The quote is single-use and bound to you
+
+        A quote id can be confirmed **once**. A quote that has already been spent, has expired,
+        belongs to another merchant, or was minted somewhere other than
+        `POST /v1/payouts/quote` — a `/v1/quotes` price or an older `/ramp/*` quote id, neither
+        of which is a payout quote — all answer `404 payout_quote_not_found` with the same
+        sentence. There is no way to tell them apart, and there is no way to tell any of them
+        from an id that never existed.
+
+        ### The signature must match the quote exactly
+
+        - `transfer.from` must be your own authenticated address.
+        - `transfer.to` must be the quote's `treasury_address`.
+        - `transfer.value_wei` must be the quote's `value_wei`, byte for byte.
+        - `transfer.deadline` must be in the future and **no later than** the quote's
+          `deadline`. Earlier is your own business.
+
+        Anything else is `400 invalid_request` and nothing is sent.
+
+        ### 202 means accepted, and there are two kinds of accepted
+
+        This route answers **202** in both successful cases — read `status`:
+
+        - `status: "dispatched"` — handed to the worker; the money is on its way.
+        - `status: "held"` — **a normal, expected answer and not an error.** A payout above the
+          merchant's hold threshold is accepted but parked for a person to look at. Nothing has
+          been sent. `message` says so. Poll `GET /v1/payouts/{id}` for the outcome.
+
+        A held payout keeps the permit you signed, and that permit stops being relayable at its
+        own `deadline` — minutes, which a human working a queue rarely beats. So the ordinary
+        end of a hold is **`expired`**: nothing left your wallet, nothing reached the
+        beneficiary, and a `payout.expired` webhook tells you to sign a fresh quote and submit
+        again. If instead a person **refused** it, the payout ends `cancelled` and raises
+        `payout.cancelled` — do **not** submit it again.
+
+        ### The daily budget is spent here
+
+        The per-merchant daily payout cap is counted at this moment, once, and there is no
+        refund path: a payout that is accepted and then fails has still spent the budget. Retry
+        a failed payout by creating a **new** one, never by expecting this row to move again.
+
+        Unknown fields are refused outright (`400 invalid_request`). Body limit 4 KiB.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutConfirmRequest' }
+      responses:
+        '202':
+          description: |
+            Accepted. `status` is `dispatched` (on its way) or `held` (parked for a person,
+            nothing sent). Both are success; branch on `status`, not on the HTTP code.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Idempotent-Replayed: { $ref: '#/components/headers/IdempotentReplayed' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payout' }
+        '400':
+          description: |
+            `invalid_request` (unknown field, missing `quote_id` or `transfer`, or a signed
+            transfer that does not match the quote — nothing was sent),
+            `payout_amount_above_maximum`, `amount_below_minimum`, `amount_above_maximum`,
+            `idempotency_key_required` or `idempotency_key_invalid`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '403':
+          description: |
+            `payouts_disabled`, `merchant_not_approved`, `merchant_suspended`, or
+            `identity_verification_required`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404':
+          description: |
+            `payout_quote_not_found` — the quote does not exist, has expired, has already been
+            confirmed, or is not a payout quote. Ask for a new one at
+            `POST /v1/payouts/quote`. Also `merchant_not_registered`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '409':
+          description: |
+            `profile_required`, or one of the idempotency conflicts: `idempotency_key_reuse`,
+            `idempotency_key_in_progress`, `idempotency_key_acted`.
+
+            `idempotency_key_acted` is also the answer when the payout was handed over and its
+            outcome is **not known to us**. The money may already have moved and the key is
+            held. Do **not** send it again, with this key or a new one, until you have checked
+            `GET /v1/payouts/{id}`.
+
+            This is the code to branch on. On this route a `503` always means nothing was sent;
+            a `409 idempotency_key_acted` always means check first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '413':
+          description: '`request_too_large` — the body is larger than 4 KiB.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429':
+          description: |
+            `rate_limited`, or `payout_daily_cap_exceeded` — the daily **payout** budget, not
+            the collection cap. It resets at midnight East Africa Time.
+          headers:
+            Retry-After: { $ref: '#/components/headers/RetryAfter' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503':
+          description: |
+            `rail_unavailable` — **nothing was sent**, and the quote is spent. Ask for a new
+            quote and retry shortly. Also `idempotency_unavailable`, where nothing ran at all
+            and retrying with the same key is correct.
+
+            An outcome we cannot determine is deliberately **not** this code — it answers
+            `409 idempotency_key_acted`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /v1/payouts/{id}:
+    get:
+      operationId: getPayout
+      tags: [Payouts]
+      summary: Read one of this merchant's payouts
+      description: |
+        A payout belonging to another merchant, a payout that does not exist and a malformed id
+        all answer `404 payout_not_found` with the same sentence. There is no way to tell them
+        apart.
+
+        This is the poll for a `held` payout: it stays `held` until a person releases it (→
+        `dispatched`), refuses it (→ `cancelled`), or its signed permit lapses (→ `expired`).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The payout.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payout' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '404':
+          description: '`payout_not_found` — missing, malformed id, or another merchant''s. All the same answer.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/RailUnavailable' }
   /v1/balances:
     get:
       operationId: getBalances
@@ -709,14 +1015,41 @@ paths:
         `last_error` is from a closed vocabulary (`http_503`, `timeout`, `no_callback_url`, …),
         never a raw Go error string.
 
+        ### An event is about a charge **or** about a payout
+
+        Exactly one of `charge_id` and `payout_id` is set; the other is `null`. `charge_id` was
+        once always present and is now **nullable** — it is `null` on every payout event. A
+        typed client generated from an older version of this document breaks on the first
+        payout event it receives.
+
+        Branch on `type`, and only on `type`:
+
+        | `type` | What it means | What to do |
+        | --- | --- | --- |
+        | `charge.paid` | the rail says the payer paid | — |
+        | `charge.settled` | your wallet is credited on chain | — |
+        | `charge.failed` | the collection failed | — |
+        | `payout.expired` | the payout was **not sent**; its signed permit lapsed while it was held | sign a fresh quote and **submit it again** |
+        | `payout.cancelled` | the payout was **not sent**; a person refused it | **do not** submit it again |
+
+        `payout.expired` and `payout.cancelled` both mean no money left your wallet, which is
+        exactly why they are two types and not one: one of them asks you to send money a second
+        time and the other forbids it.
+
         Scoped to the authenticated merchant by the query itself. Same opaque cursor as the
         charge list.
       parameters:
         - name: type
           in: query
           required: false
-          description: A typo here is refused rather than quietly matching nothing.
-          schema: { $ref: '#/components/schemas/EventType' }
+          description: |
+            A typo here is refused rather than quietly matching nothing. This filter accepts the
+            three **charge** types only; the payout types are not filterable and passing one is
+            `400 invalid_request`. There is no `payout_id` filter either — page the list and
+            read `payout_id`.
+          schema:
+            type: string
+            enum: [charge.paid, charge.settled, charge.failed]
         - name: status
           in: query
           required: false
@@ -1029,6 +1362,152 @@ components:
           type: string
           enum: [pending, confirmed]
           description: '`confirmed` with HTTP 200; `pending` with HTTP 202.'
+    PayoutBeneficiary:
+      type: object
+      additionalProperties: false
+      required: [phone, name]
+      properties:
+        phone:
+          type: string
+          description: |
+            The beneficiary's Kenyan mobile number, in `2547xxxxxxxx` form. This is who gets
+            paid. It is echoed back on the quote and on the payout.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: |
+            **Your** name for the person being paid, and what their M-Pesa statement shows. It
+            is never derived from the sending merchant's own profile. Required, at most 100
+            characters.
+    PayoutQuoteRequest:
+      type: object
+      additionalProperties: false
+      required: [amount_kes, beneficiary]
+      properties:
+        amount_kes:
+          type: integer
+          format: int64
+          minimum: 1
+          description: |
+            A whole number of shillings, at least 1. This is what **lands on the beneficiary**,
+            not what leaves your wallet — see `send_kes` on the response.
+        beneficiary: { $ref: '#/components/schemas/PayoutBeneficiary' }
+    EIP712Domain:
+      type: object
+      required: [name, version, chain_id, verifying_contract]
+      description: One EIP-712 domain. Sign under the right one; the chain gives no reason when you do not.
+      properties:
+        name: { type: string }
+        version: { type: string }
+        chain_id: { type: integer, format: int64 }
+        verifying_contract: { type: string }
+    PayoutQuote:
+      type: object
+      required: [quote_id, amount_kes, fee_kes, send_kes, currency, beneficiary, expires_at, value_wei, treasury_address, deadline, eip712]
+      description: |
+        A priced payout plus everything to sign. It carries no rail name, no rail quote id and
+        no order id: `quote_id` is Kakitu's own and is redeemable only at `POST /v1/payouts`.
+      properties:
+        quote_id:
+          type: string
+          description: |
+            Single-use and bound to your merchant address. Prefixed `pq_`. A quote id from
+            `POST /v1/quotes` or from an older `/ramp/*` route is not one of these and is
+            refused exactly as an id that never existed.
+        amount_kes: { type: integer, format: int64, description: Whole KES that lands on the beneficiary. }
+        fee_kes: { type: integer, format: int64, description: 'Kakitu''s fee, in whole KES.' }
+        send_kes:
+          type: integer
+          format: int64
+          description: Whole KES leaving your wallet — `amount_kes` + `fee_kes`.
+        currency: { type: string, const: KES }
+        beneficiary: { $ref: '#/components/schemas/PayoutBeneficiary' }
+        expires_at:
+          type: string
+          format: date-time
+          description: When the price stops being redeemable. After this the quote answers `payout_quote_not_found`.
+        value_wei:
+          type: string
+          description: |
+            `send_kes` in the token's smallest unit, as a decimal string. This is the number the
+            permit must be for, and `transfer.value_wei` must equal it exactly.
+        treasury_address:
+          type: string
+          description: Where the KSHS goes. `transfer.to` must be this address.
+        deadline:
+          type: integer
+          format: int64
+          description: |
+            Unix seconds: the **latest** permit deadline that will be accepted. Sign this or
+            anything earlier that is still in the future; a later one is refused after you have
+            signed.
+        eip712:
+          type: object
+          required: [permit, relay]
+          description: Both domains, because they are different and neither is guessable.
+          properties:
+            permit:
+              allOf: [{ $ref: '#/components/schemas/EIP712Domain' }]
+              description: The token's domain, for the EIP-2612 permit (`v`, `r`, `s`).
+            relay:
+              allOf: [{ $ref: '#/components/schemas/EIP712Domain' }]
+              description: The forwarder's domain, for the EIP-712 relay intent (`iv`, `ir`, `is`).
+    PayoutConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [quote_id, transfer]
+      properties:
+        quote_id:
+          type: string
+          description: The `quote_id` from `POST /v1/payouts/quote`. Redeemable once.
+        transfer:
+          allOf: [{ $ref: '#/components/schemas/TransferRequest' }]
+          description: |
+            That quote, signed. `from` must be your own address, `to` must be the quote's
+            `treasury_address`, `value_wei` must be the quote's exactly, and `deadline` must be
+            in the future and no later than the quote's. Anything else is `400 invalid_request`
+            and nothing is sent.
+    PayoutStatus:
+      type: string
+      description: |
+        Kakitu's own vocabulary, never the payment rail's.
+
+        - `quoted` — priced, nothing signed, nothing moved.
+        - `held` — signed and accepted, deliberately **not** sent, waiting for a person.
+        - `dispatched` — handed to the worker; the money is leaving.
+        - `paid` — terminal. The beneficiary has the money.
+        - `failed` — terminal. Retry by creating a **new** payout; this one never moves again.
+        - `cancelled` — terminal. A person refused a held payout. Nothing was sent. Do not
+          submit it again.
+        - `expired` — terminal. Nothing was sent and nothing can be: a held payout's signed
+          permit passed its deadline, or a quote lapsed unsigned. Sign a fresh quote and submit
+          again.
+
+        All four of `paid`, `failed`, `cancelled` and `expired` are final — unlike a charge,
+        where `failed` and `expired` can still move.
+      enum: [quoted, held, dispatched, paid, failed, cancelled, expired]
+    Payout:
+      type: object
+      required: [id, status, amount_kes, fee_kes, send_kes, currency, beneficiary, created_at]
+      description: |
+        A payout as a developer sees it. No order id, no rail name, no provider status and no
+        pricing partner's quote id — none of that is part of the contract.
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/PayoutStatus' }
+        amount_kes: { type: integer, format: int64, description: Whole KES landing on the beneficiary. }
+        fee_kes: { type: integer, format: int64 }
+        send_kes: { type: integer, format: int64, description: Whole KES leaving your wallet. }
+        currency: { type: string, const: KES }
+        beneficiary: { $ref: '#/components/schemas/PayoutBeneficiary' }
+        created_at: { type: string, format: date-time }
+        message:
+          type: string
+          description: |
+            Kakitu's own sentence about what is happening now. Present on `held` (it says the
+            payout has **not** been sent and a person will release or cancel it) and on
+            `dispatched`. Omitted otherwise. For humans — never branch on it; branch on `status`.
     Balances:
       type: object
       required: [kshs, usdc]
@@ -1140,7 +1619,12 @@ components:
         expires_at: { type: string, format: date-time }
     EventType:
       type: string
-      enum: [charge.paid, charge.settled, charge.failed]
+      description: |
+        The whole published set, as it appears on an event. `payout.expired` means the payout
+        was never sent and you should sign and submit it again; `payout.cancelled` means a
+        person refused it and you must not. The `type` query filter on `GET /v1/events` accepts
+        the three `charge.*` values only.
+      enum: [charge.paid, charge.settled, charge.failed, payout.expired, payout.cancelled]
     EventStatus:
       type: string
       description: |
@@ -1149,14 +1633,26 @@ components:
       enum: [pending, delivered, abandoned]
     Event:
       type: object
-      required: [id, type, charge_id, created_at, status, attempts, next_attempt_at, last_attempt_at, delivered_at, payload]
+      required: [id, type, charge_id, payout_id, created_at, status, attempts, next_attempt_at, last_attempt_at, delivered_at, payload]
+      description: |
+        Exactly one of `charge_id` and `payout_id` is non-null: an event is about a charge or
+        about a payout, never both and never neither.
       properties:
         id:
           type: string
           format: uuid
           description: The dedupe key. It does not change on a replay.
         type: { $ref: '#/components/schemas/EventType' }
-        charge_id: { type: string, format: uuid }
+        charge_id:
+          type: [string, 'null']
+          format: uuid
+          description: |
+            The charge this event is about. **`null` on a payout event** — this field used to be
+            always present, and a client that assumes so breaks on the first payout event.
+        payout_id:
+          type: [string, 'null']
+          format: uuid
+          description: The payout this event is about. `null` on a charge event.
         created_at: { type: string, format: date-time }
         status: { $ref: '#/components/schemas/EventStatus' }
         attempts: { type: integer }
@@ -1230,6 +1726,11 @@ components:
         - rail_unavailable
         - order_not_found
         - event_not_found
+        - payouts_disabled
+        - payout_daily_cap_exceeded
+        - payout_amount_above_maximum
+        - payout_not_found
+        - payout_quote_not_found
         - profile_required
         - identity_verification_required
         - internal
@@ -1257,6 +1758,11 @@ components:
         rail_unavailable: 503
         order_not_found: 404
         event_not_found: 404
+        payouts_disabled: 403
+        payout_daily_cap_exceeded: 429
+        payout_amount_above_maximum: 400
+        payout_not_found: 404
+        payout_quote_not_found: 404
         profile_required: 409
         identity_verification_required: 403
         internal: 500

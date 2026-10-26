@@ -1,5 +1,5 @@
 ---
-sidebar_position: 7
+sidebar_position: 8
 title: Quotes
 ---
 
@@ -81,9 +81,11 @@ HTTP 200
 
 ### There is no quote id
 
-You cannot hand a quote back to us, because there is no endpoint that takes one yet. A quote is a number you show somebody, not a reservation. When a route exists that redeems one, it will issue an id of its own and this page will say so.
+**A quote from this endpoint is a number you show somebody, not a reservation.** There is no id in the response and nothing here can be handed back to us.
 
-The reason there is no id today is not an oversight: the only id a quote has internally belongs to the pricing partner, and no partner identifier goes over this API. For the same reason nothing in the response names a rail, a treasury address or an amount to sign.
+That is not an oversight: the only id a quote has internally belongs to the pricing partner, and no partner identifier goes over this API. For the same reason nothing in the response names a rail, a treasury address or an amount to sign.
+
+If you want a price you can **act on**, that is [`POST /v1/payouts/quote`](./payouts#post-v1payoutsquote). It issues an id of its own, in its own namespace, and that id is the only thing `POST /v1/payouts` accepts. A quote from this page cannot be spent there, and neither can one from the wallet app's `/ramp/*` routes — both are refused exactly as an id that never existed.
 
 ## Errors
 

@@ -35,11 +35,13 @@ The request and response shapes below are final and will not change under you.
 | `GET /v1/limits` | Private release | [Limits](./limits) |
 | `GET /v1/events` | Private release | [Events](./events) |
 | `POST /v1/events/{id}/replay` | Private release | [Events](./events) |
+| `POST /v1/payouts/quote` | Private release · off by default per merchant | [Payouts](./payouts) |
+| `POST /v1/payouts` | Private release · off by default per merchant | [Payouts](./payouts) |
+| `GET /v1/payouts/{id}` | Private release · off by default per merchant | [Payouts](./payouts) |
 | Webhook delivery | Private release | [Webhooks](./webhooks) |
-| Payouts (paying money OUT) | Private release · off by default per merchant | — |
 | Operator approval of a merchant | A person, not an endpoint. Required before collections work. | [Going live](./going-live) |
 
-Twelve routes. They are enabled together, per merchant, once an operator activates you.
+Fifteen routes. The twelve collection-side routes are enabled together, per merchant, once an operator activates you. **The three payout routes are not**: paying money out is a second decision, off by default both globally and per merchant, and approval does not imply it. See [Payouts](./payouts#payouts-are-off-by-default).
 
 ## How it fits together
 
@@ -49,6 +51,8 @@ Twelve routes. They are enabled together, per merchant, once an operator activat
 4. Once approved you create **charges**. See [Collections](./collections).
 
 Alongside collections there is a second surface for an approved merchant: [transfers](./transfers) (send KSHS and we pay the gas), [quotes](./quotes), [orders](./orders), [balances](./balances), [limits](./limits) and your webhook [events](./events).
+
+Money going the other way — out to somebody's M-Pesa — is [payouts](./payouts), which needs its own operator decision on top of approval.
 
 ## Base URL
 

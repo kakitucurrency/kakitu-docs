@@ -235,20 +235,29 @@ The forwarder also exposes `hashRelay(owner, to, value, deadline, nonce)` as a v
 | `amount_above_maximum` | 400 | Above the largest single transfer allowed. `relay_max_per_tx_kes` in `GET /config` is that ceiling. |
 | `daily_cap_exceeded` | 429 | This wallet has used its transfer allowance for today. |
 | `rate_limited` | 429 | This merchant has reached its hourly transfer limit. Try again within the hour. |
-| `rail_unavailable` | 503 | Transfers are temporarily unavailable. Usually nothing was sent — but read the next section, because one case is different. |
-| `idempotency_key_acted` | 409 | The transfer has most likely already been delivered. **Do not send it again.** |
+| `rail_unavailable` | 503 | Transfers are temporarily unavailable. **Nothing was sent.** Retry with the same key. |
+| `idempotency_key_acted` | 409 | The transfer may already have been delivered. **Do not send it again.** |
 
 Every one of these uses a code from the closed set in [Errors](./errors).
 
-### The three answers that are not "retry"
+### 503 and 409 mean opposite things here
+
+**On this route the two statuses are a clean split, and you can rely on it.**
+
+| Answer | What it means | What to do |
+|---|---|---|
+| `503 rail_unavailable` | **Nothing was sent.** | Retry with the **same** `Idempotency-Key`. |
+| `409 idempotency_key_acted` | **The money may already have moved.** | **Check before doing anything.** |
+
+An outcome we cannot determine — the transfer reached the point where it may have been broadcast and we could not record what came back — now answers `409 idempotency_key_acted`. It used to answer `503 rail_unavailable` with wording that said the outcome was unknown, so `503` carried both readings at once and a client that did the obvious thing with a `503` could send the money twice. That ambiguity was the bug. It is gone: a `503` on this route never means an unknown outcome.
+
+### The two answers that are not "retry"
 
 Most refusals are safe to retry. These are not, and they are the ones to write code for.
 
-**`idempotency_key_acted`.** You can get this on your *first* attempt, not only on a retry. It means the relay believes this signed transfer has already been delivered — by us, or by someone else who relayed the same intent first. Do not send it again with this key **or a new one**. Check the recipient's balance, or ask support with the `request_id`.
+**`idempotency_key_acted`.** You can get this on your *first* attempt, not only on a retry. It means either that the relay believes this signed transfer has already been delivered — by us, or by someone else who relayed the same intent first — or that we handed it over and could not record the outcome. Do not send it again with this key **or a new one**. Check the recipient's balance, or ask support with the `request_id`.
 
 **`invalid_request` saying the transfer was made out of date.** Another transfer from your wallet advanced your permit nonce, so this one can no longer be delivered — and nothing was. Sign a fresh transfer and send it with a **new** `Idempotency-Key`.
-
-**`rail_unavailable` saying the outcome is not known.** The transfer reached the point where it may have been broadcast and we could not record what happened. The key is held, so a retry with it gets `idempotency_key_acted`. Check first; do not sign a replacement.
 
 ### What happens to your key on a refusal
 

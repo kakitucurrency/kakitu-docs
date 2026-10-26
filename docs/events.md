@@ -1,11 +1,11 @@
 ---
-sidebar_position: 12
+sidebar_position: 13
 title: Events
 ---
 
 # Events
 
-An event is one webhook delivery: what we sent you about a charge, when we tried, and whether it worked. These two endpoints exist because **delivery is best-effort, not guaranteed.** An endpoint that was down for a day has events marked `abandoned`, and you need to be able to see that, read what we tried to send, fix your side and ask for it again — without opening a support ticket.
+An event is one webhook delivery: what we sent you about a charge or a payout, when we tried, and whether it worked. These two endpoints exist because **delivery is best-effort, not guaranteed.** An endpoint that was down for a day has events marked `abandoned`, and you need to be able to see that, read what we tried to send, fix your side and ask for it again — without opening a support ticket.
 
 ## Delivery is at-least-once
 
@@ -13,9 +13,31 @@ An event is one webhook delivery: what we sent you about a charge, when we tried
 
 This is not a bug we intend to fix, because it cannot be fixed. Sending the request and recording "delivered" are two acts, and anything that happens between them — a timeout on our side, a crash after your `200`, a replay you asked for — means we try again. An endpoint that accepted a delivery and then had the answer lost will be rung again with the same body.
 
-**The event `id` is your dedupe key.** It is stable across every attempt and across a replay: the same event is always the same id. Key on it, ignore an id you have already processed, and you get exactly-once. Do not key on the charge id — a charge produces several events.
+**The event `id` is your dedupe key.** It is stable across every attempt and across a replay: the same event is always the same id. Key on it, ignore an id you have already processed, and you get exactly-once. Do not key on the subject id — one charge produces several events.
 
-The corollary is that **no payload is ever a delta.** Every body states the charge's whole current state, so processing a duplicate is a no-op rather than a second increment.
+The corollary is that **no payload is ever a delta.** Every body states its subject's whole current state, so processing a duplicate is a no-op rather than a second increment.
+
+## The five types
+
+A merchant's integration branches on `type` and on nothing else, so each of these is its own string rather than one type with a reason field in it.
+
+| `type` | About | What it tells you |
+|---|---|---|
+| `charge.paid` | a charge | The payer paid. |
+| `charge.settled` | a charge | The KSHS is at your address. |
+| `charge.failed` | a charge | The charge did not go through. |
+| `payout.expired` | a payout | **It was not sent. Sign and submit it again.** |
+| `payout.cancelled` | a payout | **It was not sent. A person refused it. Do not submit it again.** |
+
+### payout.expired and payout.cancelled are opposite instructions
+
+Both mean the same thing about the money: **nothing left your wallet and nothing reached the beneficiary.** They differ only in what you should do next, and they differ completely.
+
+A held payout carries a signed permit that stops being relayable after about ten minutes, and the price behind it lives less than that. A person working a review queue does not work in minutes. So a hold that nobody reaches in time lapses, and `payout.expired` is the ordinary end of one — not an edge case. The right response is a fresh quote, a fresh signature and a **new** payout.
+
+`payout.cancelled` means an operator looked at the payout and decided the money does not go. Re-signing it walks straight back into a decision a person has just taken.
+
+**The `type` is the only reliable way to tell them apart.** There is no reason field and no sentence to read, deliberately: a receiver that had to parse English to decide whether to send money a second time would eventually get it wrong. See [Payouts](./payouts#the-hold).
 
 ## What a delivery looks like
 
@@ -25,7 +47,7 @@ A `POST` to your `callback_url`, `Content-Type: application/json`, `User-Agent: 
 |---|---|
 | `Kakitu-Signature` | `t=<unix seconds>,v1=<hex HMAC-SHA256>` |
 | `Kakitu-Event-Id` | The event id. Your dedupe key. |
-| `Kakitu-Event-Type` | `charge.paid`, `charge.settled` or `charge.failed`. |
+| `Kakitu-Event-Type` | One of the five types above. |
 
 **Only the signature header is worth trusting.** The other two are a convenience, and both values are also inside the signed body; a receiver that reads them without verifying the signature has verified nothing.
 
@@ -49,6 +71,26 @@ The body:
 ```
 
 There is no payer phone number, no rail name, no partner status and no internal order id in it, and there never will be.
+
+A payout event has the same envelope with `payout` in place of `charge`:
+
+```json
+{
+  "id": "9b3d1a70-2c55-4e81-a0b7-3f6c1d2e4a89",
+  "type": "payout.expired",
+  "created_at": "2026-10-26T09:24:02Z",
+  "payout": {
+    "id": "7c2b18e4-0f2a-4a1b-9a44-1b2c3d4e5f60",
+    "status": "expired",
+    "amount_kes": 1000,
+    "fee_kes": 25,
+    "send_kes": 1025,
+    "currency": "KES"
+  }
+}
+```
+
+`amount_kes` is what would have landed on the beneficiary and `send_kes` what would have left your wallet — the same vocabulary [`GET /v1/payouts/{id}`](./payouts) uses, so you meet one set of names whether you poll or listen. It carries no beneficiary phone or name, no operator's identity and no hold reason: enough to reconcile against your own ledger before you sign again, and nothing else.
 
 ### Verifying the signature
 
@@ -96,9 +138,9 @@ GET /v1/events?status=abandoned&limit=50
 
 | Parameter | Rules |
 |---|---|
-| `type` | `charge.paid`, `charge.settled` or `charge.failed`. |
+| `type` | Any one of the five: `charge.paid`, `charge.settled`, `charge.failed`, `payout.expired`, `payout.cancelled`. |
 | `status` | `pending`, `delivered` or `abandoned`. |
-| `charge_id` | The id of one of your charges. |
+| `charge_id` | The id of one of your charges. There is no `payout_id` filter — narrow with `type=payout.expired` or `type=payout.cancelled` and match the id in the payload. |
 | `limit` | A whole number from 1 to 100. Default 20. |
 | `cursor` | `next_cursor` from the previous page, unchanged. |
 
@@ -112,6 +154,7 @@ HTTP 200
       "id": "4e7c2b18-0f2a-4a1b-9a44-1b2c3d4e5f60",
       "type": "charge.settled",
       "charge_id": "a1f0c9d2-55b1-4f3e-8a0d-77c1e2b3a4d5",
+      "payout_id": null,
       "created_at": "2026-10-26T09:14:02Z",
       "status": "abandoned",
       "attempts": 12,
@@ -128,6 +171,8 @@ HTTP 200
 
 | Field | Meaning |
 |---|---|
+| `charge_id` | The charge this event is about. **Nullable:** it is `null` on a payout event. |
+| `payout_id` | The payout this event is about. `null` on a charge event. |
 | `status` | `pending` (not yet delivered), `delivered` (your endpoint answered 2xx), `abandoned` (the 24-hour budget is spent). |
 | `attempts` | How many attempts have failed so far. |
 | `next_attempt_at` | When we will try again. **`null` unless the event is `pending`** — a next attempt that is not coming would be a lie. |
@@ -135,6 +180,16 @@ HTTP 200
 | `delivered_at` | When your endpoint accepted it. |
 | `last_error` | Why the last attempt failed. Absent if none has. See the table below. |
 | `payload` | The exact body we sent, as JSON rather than as a quoted string, so you can read it without a second parse. |
+
+:::warning charge_id is nullable now
+`charge_id` used to be present on every event, because a charge was the only thing an event
+could be about. **Exactly one of `charge_id` and `payout_id` is set**, and on a payout event it
+is `payout_id`.
+
+A client that reads `charge_id` and assumes a string breaks on the first payout event it
+receives. Check which one is set before you use it. A charge event is unchanged, so nothing
+needs doing until payouts are switched on for you — but it is worth doing before.
+:::
 
 `next_cursor` is `null` on the last page. It is an opaque string, not a page number: events arrive while you are paging, and an offset would show you the same row twice. Pass it back unchanged; anything else is `invalid_request`.
 
@@ -162,6 +217,7 @@ HTTP 202
   "id": "4e7c2b18-0f2a-4a1b-9a44-1b2c3d4e5f60",
   "type": "charge.settled",
   "charge_id": "a1f0c9d2-55b1-4f3e-8a0d-77c1e2b3a4d5",
+  "payout_id": null,
   "created_at": "2026-10-26T09:14:02Z",
   "status": "pending",
   "attempts": 0,
