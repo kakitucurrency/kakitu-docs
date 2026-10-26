@@ -54,7 +54,7 @@ Every `/v1/` endpoint answers an error with one envelope:
 
 Four of these answer the same way for a thing that does not exist and a thing that belongs to somebody else: `merchant_not_registered`, `charge_not_found`, `order_not_found` and `event_not_found`. Same status, same code, same sentence, deliberately. An error that told the two apart would turn the endpoint into a way of asking whether somebody else's id is real.
 
-No `/v1` endpoint is deployed yet (see [the status board](./intro)). The whole code set below is final and will not change under you, including the codes for endpoints you cannot call yet.
+The whole code set below is final and will not change under you. Codes are never reused and never renamed: a code you branch on today means the same thing tomorrow.
 
 ## Authentication failures
 

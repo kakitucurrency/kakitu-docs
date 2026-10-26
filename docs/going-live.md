@@ -31,6 +31,28 @@ There is one environment: `https://walletapi.kakitu.org`. There is no separate s
 - [ ] You log the `request_id` from every error.
 - [ ] Your server clock is correct (NTP). Signatures fail beyond 120 seconds of skew.
 
+## If your key is compromised
+
+There is no key rotation, and this is the part to plan for before it happens rather than
+after. The address **is** the merchant: there is no way to attach a new key to an existing
+merchant, and no way for us to disable the old one on your behalf.
+
+What to do, in this order:
+
+1. **Move the money first.** Anything sitting at that address can be spent by whoever holds
+   the key. Send it to a wallet you control, straight away.
+2. **Tell us.** Contact your Kakitu operator and ask for the merchant to be **suspended**. A
+   suspended merchant is refused everywhere — no new charge, no payout, no transfer — so an
+   attacker holding your key cannot create collections in your name.
+3. **Register again** with a key generated fresh, and be approved again. It is a new merchant
+   row: new webhook secret, and your integration must send the new address.
+
+Charges already settled are settled. They are on chain, at an address somebody else now has
+the key to, and nothing about that is reversible.
+
+Rotate on your own terms too — before an employee with production access leaves, for instance.
+The steps are the same minus the hurry.
+
 ## Changes that need an operator
 
 - Renaming the business.
