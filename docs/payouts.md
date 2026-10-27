@@ -3,6 +3,9 @@ sidebar_position: 7
 title: Payouts
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Payouts
 
 A payout sends shillings **out** — from your KSHS balance to somebody's M-Pesa. You price it, you sign it with your own key, and we hand the signed result to the rail that pays the beneficiary.
@@ -67,6 +70,53 @@ And one for afterwards:
 ```http
 GET  /v1/payouts         everything you have sent, newest first
 ```
+## Running these examples
+
+Every example on this page is **signed**. An unsigned request is `401 unauthorized`, so a
+shorter version would not be worth printing.
+
+None of them writes a fourth signer. The TypeScript, Python and PHP snippets call the complete
+programs on [Authentication](./authentication): save those three beside your script as
+`kakitu.mjs`, `kakitu.py` and `kakitu.php`, and export `KAKITU_PRIVATE_KEY` before running
+anything. cURL cannot sign by itself, so the shell examples make the same EIP-191 signature
+through one helper function that calls Foundry's `cast`.
+
+<details>
+<summary><code>kakitu.sh</code> &mdash; the shell signer every cURL example on this page calls</summary>
+
+```bash title="kakitu.sh"
+# kakitu.sh - sign a Kakitu request from the shell and send it.
+#   Needs curl, openssl and Foundry's `cast` (https://getfoundry.sh).
+#   Keep the key in the environment or a secret store: KAKITU_PRIVATE_KEY=0x...
+#   Never in a script, a ticket, or your shell history.
+KAKITU_BASE_URL=${KAKITU_BASE_URL:-https://walletapi.kakitu.org}
+
+# kakitu METHOD TARGET [BODY] [extra curl args...]
+kakitu() {
+  local method=$1 target=$2 body=${3-}
+  shift $(( $# < 3 ? $# : 3 ))
+  local ts hash addr sig
+  ts=$(date +%s)                                   # seconds, within 120s of server time
+  hash=$(printf '%s' "$body" | openssl dgst -sha256 | awk '{print $NF}')
+  addr=$(cast wallet address --private-key "$KAKITU_PRIVATE_KEY")
+  # `cast wallet sign` is EIP-191 personal_sign - the same thing the other three programs do.
+  sig=$(cast wallet sign --private-key "$KAKITU_PRIVATE_KEY" "$method $target $ts $hash")
+  # An array, not an unquoted ${body:+...}: that splits differently in bash and zsh.
+  local args=(-sS -X "$method" "$KAKITU_BASE_URL$target"
+    -H "X-Kakitu-Address: $addr"
+    -H "X-Kakitu-Timestamp: $ts"
+    -H "X-Kakitu-Signature: $sig")
+  [ -n "$body" ] && args+=(-H "Content-Type: application/json" --data-raw "$body")
+  curl "${args[@]}" "$@"
+}
+```
+
+`source kakitu.sh` once per shell, then call `kakitu METHOD TARGET [BODY] [curl args...]`.
+`TARGET` is the path plus `?query` when there is one, byte for byte as it will be sent: the
+query string is inside the signed message, so quote it and change it nowhere else.
+
+</details>
+
 
 ## POST /v1/payouts/quote
 
@@ -96,6 +146,92 @@ Unknown fields are refused with `invalid_request` rather than ignored. On a rout
 ### The beneficiary name is yours to supply
 
 **It is what the recipient sees on their M-Pesa statement, and it is taken from this request — never from your own merchant profile.** If you are paying Jane, put Jane's name here. Leaving it to be filled in from the sender's profile is exactly how a recipient ends up looking at a stranger's name against money they were expecting, and it is not something we will guess for you. Both the phone and the name are required: money must not leave without a number to send it to, and the recipient must not be shown the wrong person.
+
+<Tabs groupId="lang">
+<TabItem value="curl" label="cURL" default>
+
+```bash
+# NO Idempotency-Key on this route: a quote creates no payout and moves no money.
+kakitu POST /v1/payouts/quote \
+  '{"amount_kes":1000,"beneficiary":{"phone":"254712345678","name":"Jane Wanjiru"}}'
+```
+
+`amount_kes` is what LANDS on Jane. `send_kes` is what leaves you, and `value_wei` is that
+same number in wei &mdash; the one the permit must be for. `beneficiary.name` is taken from
+this request and never from your merchant profile.
+
+</TabItem>
+<TabItem value="ts" label="TypeScript">
+
+```ts title="payout-quote.mjs"
+import { Wallet } from "ethers";
+import { call } from "./kakitu.mjs";
+
+const wallet = new Wallet(process.env.KAKITU_PRIVATE_KEY);
+
+// NO Idempotency-Key on this route: a quote creates no payout and moves no money, so call()
+// from the Authentication page - which sends none - is exactly right here.
+const { status, body: quote } = await call(wallet, "POST", "/v1/payouts/quote", {
+  amount_kes: 1000,                                     // what LANDS on the beneficiary
+  beneficiary: { phone: "254712345678", name: "Jane Wanjiru" },   // never from your profile
+});
+
+console.log(quote.quote_id);          // "pq_..." - opaque, single-use, yours alone
+console.log(quote.send_kes);          // what leaves your wallet
+console.log(quote.value_wei);         // send_kes in wei, a STRING. Sign this, exactly.
+console.log(quote.treasury_address);  // the `to` of the transfer - NOT the beneficiary
+console.log(quote.deadline);          // the LATEST deadline that will be accepted
+```
+
+</TabItem>
+<TabItem value="py" label="Python">
+
+```python title="payout_quote.py"
+import os
+
+from eth_account import Account
+from kakitu import call
+
+account = Account.from_key(os.environ["KAKITU_PRIVATE_KEY"])
+
+# NO Idempotency-Key on this route: a quote creates no payout and moves no money, so call()
+# from the Authentication page - which sends none - is exactly right here.
+status, quote = call(account, "POST", "/v1/payouts/quote", {
+    "amount_kes": 1000,                                  # what LANDS on the beneficiary
+    "beneficiary": {"phone": "254712345678", "name": "Jane Wanjiru"},   # never from your profile
+})
+
+print(quote["quote_id"])           # "pq_..." - opaque, single-use, yours alone
+print(quote["send_kes"])           # what leaves your wallet
+print(quote["value_wei"])          # send_kes in wei, a str. Sign this, exactly.
+print(quote["treasury_address"])   # the `to` of the transfer - NOT the beneficiary
+print(quote["deadline"])           # the LATEST deadline that will be accepted
+```
+
+</TabItem>
+<TabItem value="php" label="PHP">
+
+```php title="payout-quote.php"
+<?php
+declare(strict_types=1);
+require __DIR__ . '/kakitu.php';
+
+// NO Idempotency-Key on this route: a quote creates no payout and moves no money, so
+// kakitu_call() from the Authentication page - which sends none - is exactly right here.
+[$status, $quote] = kakitu_call(getenv('KAKITU_PRIVATE_KEY'), 'POST', '/v1/payouts/quote', [
+    'amount_kes' => 1000,                                 // what LANDS on the beneficiary
+    'beneficiary' => ['phone' => '254712345678', 'name' => 'Jane Wanjiru'],  // never your profile
+]);
+
+echo $quote['quote_id'], PHP_EOL;           // "pq_..." - opaque, single-use, yours alone
+echo $quote['send_kes'], PHP_EOL;           // what leaves your wallet
+echo $quote['value_wei'], PHP_EOL;          // send_kes in wei, a string. Sign this, exactly.
+echo $quote['treasury_address'], PHP_EOL;   // the `to` of the transfer - NOT the beneficiary
+echo $quote['deadline'], PHP_EOL;           // the LATEST deadline that will be accepted
+```
+
+</TabItem>
+</Tabs>
 
 ### The response
 
@@ -169,6 +305,200 @@ Four things about the signed transfer are checked against the quote before a row
 - `to` must be the quote's `treasury_address`.
 - `value_wei` must be the quote's **exactly**. Not more, not less.
 - `deadline` must be in the future and **no later than** the quote's. Earlier is your own business; later is a signature the rail would refuse after you had already signed it.
+
+<Tabs groupId="lang">
+<TabItem value="curl" label="cURL" default>
+
+Needs `kakitu.sh` from the top of this page and `sign_transfer` from
+[transfer.sh](./transfers#a-complete-example) &mdash; a payout is signed exactly as a transfer is.
+
+```bash title="payout.sh"
+# . ./kakitu.sh && . ./transfer.sh && . ./payout.sh
+
+# 1. Price it. No Idempotency-Key: a quote creates nothing.
+Q=$(kakitu POST /v1/payouts/quote \
+     '{"amount_kes":1000,"beneficiary":{"phone":"254712345678","name":"Jane Wanjiru"}}')
+
+# The quote names both EIP-712 domains, so neither has to be guessed. Check them rather
+# than assume: a permit signed under the wrong domain fails silently.
+jq -e --argjson c "$(kakitu_cfg)" \
+  '.eip712.permit.verifying_contract == $c.kshs_contract
+   and .eip712.relay.verifying_contract == $c.forwarder' <<<"$Q" >/dev/null \
+  || { echo "the quote names contracts /config does not - stop here"; return 1; }
+
+# 2. Sign EXACTLY what the quote says: to = treasury_address (not the beneficiary),
+#    value_wei the quote's exactly, deadline no later than the quote's. 60s of headroom.
+T=$(sign_transfer "$(jq -r .treasury_address <<<"$Q")" \
+                  "$(jq -r .value_wei        <<<"$Q")" \
+                  "$(( $(jq -r .deadline <<<"$Q") - 60 ))")
+
+# 3. Confirm. Idempotency-Key is REQUIRED here: this is the call that authorises money leaving.
+kakitu POST /v1/payouts \
+  "$(jq -nc --arg q "$(jq -r .quote_id <<<"$Q")" --argjson t "$T" '{quote_id:$q, transfer:$t}')" \
+  -H "Idempotency-Key: $(uuidgen)"
+```
+
+`202` either way. `"status":"held"` means a person must look at it and **nothing has been
+sent**; `"status":"dispatched"` means the money is leaving. Branch on `status`, never on
+`message`.
+
+</TabItem>
+<TabItem value="ts" label="TypeScript">
+
+```ts title="payout.mjs"
+// node payout.mjs - needs kakitu.mjs (Authentication) and transfer.mjs (Transfers) beside it.
+import { randomUUID } from "node:crypto";
+import { Wallet } from "ethers";
+import { call, signedHeaders } from "./kakitu.mjs";
+import { config, signTransfer } from "./transfer.mjs";
+
+const BASE_URL = "https://walletapi.kakitu.org";
+const wallet = new Wallet(process.env.KAKITU_PRIVATE_KEY);
+
+// 1. Price it. No Idempotency-Key: a quote creates nothing.
+const { body: quote } = await call(wallet, "POST", "/v1/payouts/quote", {
+  amount_kes: 1000,
+  beneficiary: { phone: "254712345678", name: "Jane Wanjiru" },
+});
+
+// 2. Sign it. A payout is signed exactly like a transfer - same two signatures, same single
+// nonce - so signTransfer() from the Transfers page is reused unchanged. The quote hands you
+// both EIP-712 domains, so nothing is guessed; only the RPC URL still comes from /config.
+const cfg = {
+  chain_id: quote.eip712.permit.chain_id,
+  kshs_contract: quote.eip712.permit.verifying_contract,
+  forwarder: quote.eip712.relay.verifying_contract,
+  public_rpc_url: (await config()).public_rpc_url,
+};
+const transfer = await signTransfer(
+  wallet,
+  cfg,
+  quote.treasury_address,          // the `to` is the TREASURY, not the beneficiary
+  BigInt(quote.value_wei),         // the quote's value exactly - not more, not less
+  BigInt(quote.deadline) - 60n,    // no later than the quote's; earlier is your business
+);
+
+// 3. Confirm. Idempotency-Key is REQUIRED: this is the call that authorises money leaving.
+const raw = JSON.stringify({ quote_id: quote.quote_id, transfer });
+const headers = await signedHeaders(wallet, "POST", "/v1/payouts", raw);
+headers["Content-Type"] = "application/json";
+headers["Idempotency-Key"] = randomUUID();
+
+const res = await fetch(BASE_URL + "/v1/payouts", { method: "POST", headers, body: raw });
+const out = await res.json();
+console.log(res.status, out.status);   // 202, then "held" or "dispatched"
+
+// Branch on status, never on message. "held" means a PERSON must look at it and nothing has
+// been sent; the ordinary end of a hold is payout.expired, which means: sign and submit again.
+if (out.status === "held") console.log(out.message);
+```
+
+</TabItem>
+<TabItem value="py" label="Python">
+
+```python title="payout.py"
+# python payout.py - needs kakitu.py (Authentication) and transfer.py (Transfers) beside it.
+import json
+import os
+import uuid
+
+import requests
+from eth_account import Account
+from kakitu import BASE_URL, call, signed_headers
+from transfer import config, sign_transfer
+
+account = Account.from_key(os.environ["KAKITU_PRIVATE_KEY"])
+
+# 1. Price it. No Idempotency-Key: a quote creates nothing.
+_, quote = call(account, "POST", "/v1/payouts/quote", {
+    "amount_kes": 1000,
+    "beneficiary": {"phone": "254712345678", "name": "Jane Wanjiru"},
+})
+
+# 2. Sign it. A payout is signed exactly like a transfer - same two signatures, same single
+# nonce - so sign_transfer() from the Transfers page is reused unchanged. The quote hands you
+# both EIP-712 domains, so nothing is guessed; only the RPC URL still comes from /config.
+cfg = {
+    "chain_id": quote["eip712"]["permit"]["chain_id"],
+    "kshs_contract": quote["eip712"]["permit"]["verifying_contract"],
+    "forwarder": quote["eip712"]["relay"]["verifying_contract"],
+    "public_rpc_url": config()["public_rpc_url"],
+}
+transfer = sign_transfer(
+    account,
+    cfg,
+    quote["treasury_address"],   # the `to` is the TREASURY, not the beneficiary
+    int(quote["value_wei"]),     # the quote's value exactly - not more, not less
+    quote["deadline"] - 60,      # no later than the quote's; earlier is your business
+)
+
+# 3. Confirm. Idempotency-Key is REQUIRED: this is the call that authorises money leaving.
+raw = json.dumps({"quote_id": quote["quote_id"], "transfer": transfer},
+                 separators=(",", ":")).encode()
+headers = signed_headers(account, "POST", "/v1/payouts", raw)
+headers["Content-Type"] = "application/json"
+headers["Idempotency-Key"] = str(uuid.uuid4())
+
+res = requests.post(BASE_URL + "/v1/payouts", headers=headers, data=raw, timeout=30)
+out = res.json()
+print(res.status_code, out["status"])   # 202, then "held" or "dispatched"
+
+# Branch on status, never on message. "held" means a PERSON must look at it and nothing has
+# been sent; the ordinary end of a hold is payout.expired, which means: sign and submit again.
+if out["status"] == "held":
+    print(out["message"])
+```
+
+</TabItem>
+<TabItem value="php" label="PHP">
+
+```php title="payout.php"
+<?php
+// php payout.php - needs kakitu.php (Authentication) and transfer.php (Transfers) beside it.
+declare(strict_types=1);
+require __DIR__ . '/transfer.php';   // which itself requires kakitu.php
+
+$key = getenv('KAKITU_PRIVATE_KEY');
+
+// 1. Price it. No Idempotency-Key: a quote creates nothing.
+[, $quote] = kakitu_call($key, 'POST', '/v1/payouts/quote', [
+    'amount_kes' => 1000,
+    'beneficiary' => ['phone' => '254712345678', 'name' => 'Jane Wanjiru'],
+]);
+
+// 2. Sign it. A payout is signed exactly like a transfer - same two signatures, same single
+// nonce - so kakitu_sign_transfer() from the Transfers page is reused unchanged. The quote
+// hands you both EIP-712 domains; only the RPC URL still comes from /config.
+$cfg = [
+    'chain_id' => $quote['eip712']['permit']['chain_id'],
+    'kshs_contract' => $quote['eip712']['permit']['verifying_contract'],
+    'forwarder' => $quote['eip712']['relay']['verifying_contract'],
+    'public_rpc_url' => kakitu_config()['public_rpc_url'],
+];
+$transfer = kakitu_sign_transfer(
+    $key,
+    $cfg,
+    $quote['treasury_address'],   // the `to` is the TREASURY, not the beneficiary
+    $quote['value_wei'],          // the quote's value exactly - not more, not less
+    $quote['deadline'] - 60,      // no later than the quote's; earlier is your business
+);
+
+// 3. Confirm. Idempotency-Key is REQUIRED: this is the call that authorises money leaving.
+[$status, $out] = kakitu_post($key, '/v1/payouts',
+    ['quote_id' => $quote['quote_id'], 'transfer' => $transfer],
+    ['Idempotency-Key' => bin2hex(random_bytes(16))]);
+
+echo $status, ' ', $out['status'], PHP_EOL;   // 202, then "held" or "dispatched"
+
+// Branch on status, never on message. "held" means a PERSON must look at it and nothing has
+// been sent; the ordinary end of a hold is payout.expired, which means: sign and submit again.
+if ($out['status'] === 'held') {
+    echo $out['message'], PHP_EOL;
+}
+```
+
+</TabItem>
+</Tabs>
 
 ### The quote is single-use and yours alone
 
@@ -273,6 +603,71 @@ You will not normally see `quoted` from the API. A payout is created in it and m
 
 Your own payout, by id. Signed request, no body, no `Idempotency-Key`.
 
+<Tabs groupId="lang">
+<TabItem value="curl" label="cURL" default>
+
+```bash
+kakitu GET /v1/payouts/7c2b18e4-0f2a-4a1b-9a44-1b2c3d4e5f60 | jq -r '.status'
+```
+
+</TabItem>
+<TabItem value="ts" label="TypeScript">
+
+```ts title="get-payout.mjs"
+import { Wallet } from "ethers";
+import { call } from "./kakitu.mjs";
+
+const wallet = new Wallet(process.env.KAKITU_PRIVATE_KEY);
+const { status, body } = await call(wallet, "GET", `/v1/payouts/${process.argv[2]}`);
+
+// 404 payout_not_found covers three things at once: no such payout, another merchant's
+// payout, and a string that is not a UUID. They are indistinguishable on purpose.
+if (status === 404) throw new Error("no payout with that id");
+console.log(body.status, body.amount_kes, body.send_kes, body.beneficiary.phone);
+```
+
+</TabItem>
+<TabItem value="py" label="Python">
+
+```python title="get_payout.py"
+import os
+import sys
+
+from eth_account import Account
+from kakitu import call
+
+account = Account.from_key(os.environ["KAKITU_PRIVATE_KEY"])
+status, body = call(account, "GET", f"/v1/payouts/{sys.argv[1]}")
+
+# 404 payout_not_found covers three things at once: no such payout, another merchant's
+# payout, and a string that is not a UUID. They are indistinguishable on purpose.
+if status == 404:
+    raise SystemExit("no payout with that id")
+print(body["status"], body["amount_kes"], body["send_kes"], body["beneficiary"]["phone"])
+```
+
+</TabItem>
+<TabItem value="php" label="PHP">
+
+```php title="get-payout.php"
+<?php
+declare(strict_types=1);
+require __DIR__ . '/kakitu.php';
+
+[$status, $body] = kakitu_call(getenv('KAKITU_PRIVATE_KEY'), 'GET', '/v1/payouts/' . $argv[1]);
+
+// 404 payout_not_found covers three things at once: no such payout, another merchant's
+// payout, and a string that is not a UUID. They are indistinguishable on purpose.
+if ($status === 404) {
+    exit("no payout with that id\n");
+}
+echo $body['status'], ' ', $body['amount_kes'], ' ', $body['send_kes'], PHP_EOL;
+```
+
+</TabItem>
+</Tabs>
+
+
 ```json
 HTTP 200
 {
@@ -302,9 +697,93 @@ Your own payouts, newest first. Signed request, no body, no `Idempotency-Key`; i
 
 **It exists so that losing a payout id is not the same as losing sight of the money.** `POST /v1/payouts` hands back an id, and before this route that id was the only handle on it — one crash between our response and your own commit, or one dropped log line, and you had no way to find out what you had sent.
 
-```http
-GET /v1/payouts?status=held&created_after=2026-10-01T00:00:00Z&limit=50
+<Tabs groupId="lang">
+<TabItem value="curl" label="cURL" default>
+
+```bash
+# The query is INSIDE the signed message, so pass the whole target as one quoted argument.
+kakitu GET '/v1/payouts?status=held&created_after=2026-10-01T00:00:00Z&limit=50'
+
+# Paging. The same opaque cursor GET /v1/charges issues - one pager works for both.
+TARGET='/v1/payouts?status=held&limit=50'
+while [ -n "$TARGET" ]; do
+  PAGE=$(kakitu GET "$TARGET")
+  jq -r '.data[] | [.id, .status, .amount_kes, .send_kes] | @tsv' <<<"$PAGE"
+  CURSOR=$(jq -r '.next_cursor // empty' <<<"$PAGE")
+  [ -n "$CURSOR" ] && TARGET="/v1/payouts?status=held&limit=50&cursor=$CURSOR" || TARGET=
+done
 ```
+
+</TabItem>
+<TabItem value="ts" label="TypeScript">
+
+```ts title="list-payouts.mjs"
+import { Wallet } from "ethers";
+import { call } from "./kakitu.mjs";
+
+const wallet = new Wallet(process.env.KAKITU_PRIVATE_KEY);
+
+// No Idempotency-Key: it reads. And no merchant lookup in front of it - an unregistered
+// wallet gets an empty page here, not 404 merchant_not_registered as GET /v1/charges does.
+let target = "/v1/payouts?status=held&limit=50";
+for (;;) {
+  const { body } = await call(wallet, "GET", target);   // the query is part of the signature
+  for (const p of body.data) console.log(p.id, p.status, p.amount_kes, p.send_kes);
+  if (!body.next_cursor) break;                         // null on the last page
+  target = `/v1/payouts?status=held&limit=50&cursor=${encodeURIComponent(body.next_cursor)}`;
+}
+```
+
+</TabItem>
+<TabItem value="py" label="Python">
+
+```python title="list_payouts.py"
+import os
+from urllib.parse import quote
+
+from eth_account import Account
+from kakitu import call
+
+account = Account.from_key(os.environ["KAKITU_PRIVATE_KEY"])
+
+# No Idempotency-Key: it reads. And no merchant lookup in front of it - an unregistered
+# wallet gets an empty page here, not 404 merchant_not_registered as GET /v1/charges does.
+target = "/v1/payouts?status=held&limit=50"
+while target:
+    _, body = call(account, "GET", target)   # the query is part of the signature
+    for p in body["data"]:
+        print(p["id"], p["status"], p["amount_kes"], p["send_kes"])
+    cursor = body["next_cursor"]             # None on the last page
+    target = f"/v1/payouts?status=held&limit=50&cursor={quote(cursor)}" if cursor else None
+```
+
+</TabItem>
+<TabItem value="php" label="PHP">
+
+```php title="list-payouts.php"
+<?php
+declare(strict_types=1);
+require __DIR__ . '/kakitu.php';
+
+$key = getenv('KAKITU_PRIVATE_KEY');
+
+// No Idempotency-Key: it reads. And no merchant lookup in front of it - an unregistered
+// wallet gets an empty page here, not 404 merchant_not_registered as GET /v1/charges does.
+$target = '/v1/payouts?status=held&limit=50';
+while ($target !== null) {
+    [, $body] = kakitu_call($key, 'GET', $target);   // the query is part of the signature
+    foreach ($body['data'] as $p) {
+        echo $p['id'], ' ', $p['status'], ' ', $p['amount_kes'], ' ', $p['send_kes'], PHP_EOL;
+    }
+    $cursor = $body['next_cursor'];                  // null on the last page
+    $target = $cursor === null
+        ? null
+        : '/v1/payouts?status=held&limit=50&cursor=' . rawurlencode($cursor);
+}
+```
+
+</TabItem>
+</Tabs>
 
 | Parameter | Rules |
 |---|---|

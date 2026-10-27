@@ -3,6 +3,9 @@ sidebar_position: 13
 title: Events
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Events
 
 An event is one webhook delivery: what we sent you about a charge or a payout, when we tried, and whether it worked. These two endpoints exist because **delivery is best-effort, not guaranteed.** An endpoint that was down for a day has events marked `abandoned`, and you need to be able to see that, read what we tried to send, fix your side and ask for it again — without opening a support ticket.
@@ -271,7 +274,30 @@ A `payout.*` body never carries:
 
 The timestamp is **inside** the signed string, not merely alongside it. That is what makes it worth checking: move `t` and the signature breaks. The `.` is a separator, not decoration — without it `"1" + "23.x"` and `"12" + "3.x"` would sign identically and a replayer could shift the clock by trimming the body.
 
-```ts
+<Tabs groupId="lang">
+<TabItem value="curl" label="cURL" default>
+
+```bash
+# $HEADER is the Kakitu-Signature value, $BODY the EXACT request body. Do not pretty-print
+# or re-serialise the body first: you would then be checking a different string.
+T=${HEADER%%,*}; T=${T#t=}
+V1=${HEADER##*v1=}
+
+# The timestamp is INSIDE the signed string, which is what makes checking it worth doing.
+AGE=$(( $(date +%s) - T )); [ "${AGE#-}" -le 300 ] || { echo stale; exit 1; }
+
+EXPECTED=$(printf '%s.%s' "$T" "$BODY" \
+  | openssl dgst -sha256 -hmac "$KAKITU_WEBHOOK_SECRET" | awk '{print $NF}')
+[ "$EXPECTED" = "$V1" ] && echo ok || echo FORGERY
+```
+
+A shell cannot compare in constant time. The three programs below do, and a real receiver
+should: use one of them rather than this at the edge of a production service.
+
+</TabItem>
+<TabItem value="ts" label="TypeScript">
+
+```ts title="verify.mjs"
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 // `raw` must be the EXACT bytes of the request body. Do not parse and re-serialise
@@ -287,6 +313,67 @@ export function verify(secret, header, raw) {
 }
 ```
 
+</TabItem>
+<TabItem value="py" label="Python">
+
+```python title="verify.py"
+import hashlib
+import hmac
+import time
+
+
+def verify(secret: str, header: str, raw: bytes) -> bool:
+    """`raw` must be the EXACT bytes of the request body. Do not parse and re-serialise
+    before verifying: that reorders keys and changes whitespace, and you will then be
+    checking a different string from the one we signed.
+
+    In Flask that is request.get_data(); in Django, request.body. NOT request.json
+    re-dumped, and not a middleware's pretty-printed copy."""
+    parts = dict(p.split("=", 1) for p in header.split(",") if "=" in p)
+    try:
+        t = int(parts["t"])
+    except (KeyError, ValueError):
+        return False
+    if abs(time.time() - t) > 300:
+        return False
+    expected = hmac.new(secret.encode(), f"{t}.".encode() + raw, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, parts.get("v1", ""))
+```
+
+</TabItem>
+<TabItem value="php" label="PHP">
+
+```php title="verify.php"
+<?php
+declare(strict_types=1);
+
+/**
+ * $raw must be the EXACT bytes of the request body. Do not parse and re-serialise before
+ * verifying: that reorders keys and changes whitespace, and you will then be checking a
+ * different string from the one we signed. In PHP that is file_get_contents('php://input'),
+ * read once and kept - NOT json_encode(json_decode(...)).
+ */
+function kakitu_verify_webhook(string $secret, string $header, string $raw): bool
+{
+    $parts = [];
+    foreach (explode(',', $header) as $p) {
+        [$k, $v] = array_pad(explode('=', $p, 2), 2, '');
+        $parts[$k] = $v;
+    }
+    if (!isset($parts['t'], $parts['v1']) || !ctype_digit($parts['t'])) {
+        return false;
+    }
+    if (abs(time() - (int) $parts['t']) > 300) {
+        return false;
+    }
+    $expected = hash_hmac('sha256', $parts['t'] . '.' . $raw, $secret);
+    return hash_equals($expected, $parts['v1']);   // constant time
+}
+```
+
+</TabItem>
+</Tabs>
+
 Your webhook secret is issued once, when an operator approves you, and is never retrievable afterwards. See [Webhooks](./webhooks).
 
 ### What counts as delivered
@@ -300,14 +387,155 @@ Your webhook secret is issued once, when an operator approves you, and is never 
 It is not thrown away. It stays readable on `GET /v1/events`, and `POST /v1/events/{id}/replay` gives it a fresh budget once your endpoint is fixed. We stop at a day because an endpoint that has been down that long has a human problem, and a queue that retried forever would turn one broken integration into an unbounded backlog for everybody.
 
 Your callback URL and your secret are read **fresh on every attempt**. Fix your endpoint or rotate your secret and the next retry believes you — you do not have to wait for anything on our side.
+## Running these examples
+
+Every example on this page is **signed**. An unsigned request is `401 unauthorized`, so a
+shorter version would not be worth printing.
+
+None of them writes a fourth signer. The TypeScript, Python and PHP snippets call the complete
+programs on [Authentication](./authentication): save those three beside your script as
+`kakitu.mjs`, `kakitu.py` and `kakitu.php`, and export `KAKITU_PRIVATE_KEY` before running
+anything. cURL cannot sign by itself, so the shell examples make the same EIP-191 signature
+through one helper function that calls Foundry's `cast`.
+
+<details>
+<summary><code>kakitu.sh</code> &mdash; the shell signer every cURL example on this page calls</summary>
+
+```bash title="kakitu.sh"
+# kakitu.sh - sign a Kakitu request from the shell and send it.
+#   Needs curl, openssl and Foundry's `cast` (https://getfoundry.sh).
+#   Keep the key in the environment or a secret store: KAKITU_PRIVATE_KEY=0x...
+#   Never in a script, a ticket, or your shell history.
+KAKITU_BASE_URL=${KAKITU_BASE_URL:-https://walletapi.kakitu.org}
+
+# kakitu METHOD TARGET [BODY] [extra curl args...]
+kakitu() {
+  local method=$1 target=$2 body=${3-}
+  shift $(( $# < 3 ? $# : 3 ))
+  local ts hash addr sig
+  ts=$(date +%s)                                   # seconds, within 120s of server time
+  hash=$(printf '%s' "$body" | openssl dgst -sha256 | awk '{print $NF}')
+  addr=$(cast wallet address --private-key "$KAKITU_PRIVATE_KEY")
+  # `cast wallet sign` is EIP-191 personal_sign - the same thing the other three programs do.
+  sig=$(cast wallet sign --private-key "$KAKITU_PRIVATE_KEY" "$method $target $ts $hash")
+  # An array, not an unquoted ${body:+...}: that splits differently in bash and zsh.
+  local args=(-sS -X "$method" "$KAKITU_BASE_URL$target"
+    -H "X-Kakitu-Address: $addr"
+    -H "X-Kakitu-Timestamp: $ts"
+    -H "X-Kakitu-Signature: $sig")
+  [ -n "$body" ] && args+=(-H "Content-Type: application/json" --data-raw "$body")
+  curl "${args[@]}" "$@"
+}
+```
+
+`source kakitu.sh` once per shell, then call `kakitu METHOD TARGET [BODY] [curl args...]`.
+`TARGET` is the path plus `?query` when there is one, byte for byte as it will be sent: the
+query string is inside the signed message, so quote it and change it nowhere else.
+
+</details>
+
 
 ## GET /v1/events
 
 Your own events, newest first. Signed request, no body.
 
-```http
-GET /v1/events?status=abandoned&limit=50
+<Tabs groupId="lang">
+<TabItem value="curl" label="cURL" default>
+
+```bash
+# The query is INSIDE the signed message, so pass the whole target as one quoted argument.
+kakitu GET '/v1/events?status=abandoned&limit=50'
+
+# Everything still undelivered after a bad day, with the reason for the last attempt.
+kakitu GET '/v1/events?status=abandoned&limit=100' \
+  | jq -r '.data[] | [.id, .type, .attempts, .last_error] | @tsv'
+
+# A filter value outside its set is invalid_request, not an empty page.
+kakitu GET '/v1/events?type=charge.payed'     # 400: the typo is told to you
 ```
+
+</TabItem>
+<TabItem value="ts" label="TypeScript">
+
+```ts title="list-events.mjs"
+import { Wallet } from "ethers";
+import { call } from "./kakitu.mjs";
+
+const wallet = new Wallet(process.env.KAKITU_PRIVATE_KEY);
+
+let target = "/v1/events?status=abandoned&limit=50";
+for (;;) {
+  const { body } = await call(wallet, "GET", target);   // the query is part of the signature
+  for (const e of body.data) {
+    // charge_id is NULLABLE now: exactly one of charge_id and payout_id is set. Reading
+    // charge_id and assuming a string breaks on the first payout event you receive.
+    const subject = e.charge_id ?? e.payout_id;
+    console.log(e.id, e.type, subject, e.status, e.attempts, e.last_error ?? "");
+    // payload is the exact body we sent, already parsed - no second JSON.parse.
+    console.log(e.payload.type);
+  }
+  if (!body.next_cursor) break;
+  target = `/v1/events?status=abandoned&limit=50&cursor=${encodeURIComponent(body.next_cursor)}`;
+}
+```
+
+</TabItem>
+<TabItem value="py" label="Python">
+
+```python title="list_events.py"
+import os
+from urllib.parse import quote
+
+from eth_account import Account
+from kakitu import call
+
+account = Account.from_key(os.environ["KAKITU_PRIVATE_KEY"])
+
+target = "/v1/events?status=abandoned&limit=50"
+while target:
+    _, body = call(account, "GET", target)   # the query is part of the signature
+    for e in body["data"]:
+        # charge_id is NULLABLE now: exactly one of charge_id and payout_id is set. Reading
+        # charge_id and assuming a str breaks on the first payout event you receive.
+        subject = e["charge_id"] or e["payout_id"]
+        print(e["id"], e["type"], subject, e["status"], e["attempts"], e.get("last_error", ""))
+        # payload is the exact body we sent, already parsed - no second json.loads.
+        print(e["payload"]["type"])
+    cursor = body["next_cursor"]
+    target = f"/v1/events?status=abandoned&limit=50&cursor={quote(cursor)}" if cursor else None
+```
+
+</TabItem>
+<TabItem value="php" label="PHP">
+
+```php title="list-events.php"
+<?php
+declare(strict_types=1);
+require __DIR__ . '/kakitu.php';
+
+$key = getenv('KAKITU_PRIVATE_KEY');
+
+$target = '/v1/events?status=abandoned&limit=50';
+while ($target !== null) {
+    [, $body] = kakitu_call($key, 'GET', $target);   // the query is part of the signature
+    foreach ($body['data'] as $e) {
+        // charge_id is NULLABLE now: exactly one of charge_id and payout_id is set. Reading
+        // charge_id and assuming a string breaks on the first payout event you receive.
+        $subject = $e['charge_id'] ?? $e['payout_id'];
+        echo $e['id'], ' ', $e['type'], ' ', $subject, ' ', $e['status'], ' ',
+             $e['attempts'], ' ', ($e['last_error'] ?? ''), PHP_EOL;
+        // payload is the exact body we sent, already decoded - no second json_decode.
+        echo $e['payload']['type'], PHP_EOL;
+    }
+    $cursor = $body['next_cursor'];
+    $target = $cursor === null
+        ? null
+        : '/v1/events?status=abandoned&limit=50&cursor=' . rawurlencode($cursor);
+}
+```
+
+</TabItem>
+</Tabs>
 
 | Parameter | Rules |
 |---|---|
@@ -404,6 +632,84 @@ HTTP 202
 **`202`, not `200`: nothing has been delivered when this returns.** The worker picks the row up on its next tick. What you get back is the queued state, not a receipt.
 
 **No `Idempotency-Key` is needed.** Replay is idempotent by construction — requeuing an already-requeued event sets the same row to the same state. Calling it five times is one replay.
+
+<Tabs groupId="lang">
+<TabItem value="curl" label="cURL" default>
+
+```bash
+# No body, and NO Idempotency-Key: replay is idempotent by construction.
+kakitu POST /v1/events/4e7c2b18-0f2a-4a1b-9a44-1b2c3d4e5f60/replay
+
+# Requeue everything that was abandoned, once your endpoint is fixed.
+kakitu GET '/v1/events?status=abandoned&limit=100' | jq -r '.data[].id' \
+  | while read -r ID; do kakitu POST "/v1/events/$ID/replay" >/dev/null; done
+```
+
+</TabItem>
+<TabItem value="ts" label="TypeScript">
+
+```ts title="replay.mjs"
+import { Wallet } from "ethers";
+import { call } from "./kakitu.mjs";
+
+const wallet = new Wallet(process.env.KAKITU_PRIVATE_KEY);
+
+// No body, and NO Idempotency-Key: requeuing an already-requeued event sets the same row to
+// the same state, so calling this five times is one replay.
+const { body: page } = await call(wallet, "GET", "/v1/events?status=abandoned&limit=100");
+for (const e of page.data) {
+  const { status, body } = await call(wallet, "POST", `/v1/events/${e.id}/replay`);
+  // 202, not 200: nothing has been delivered when this returns. And the event id does not
+  // change, which is the point - your receiver can still dedupe on it.
+  console.log(status, body.id === e.id, body.status, body.attempts);   // 202 true pending 0
+}
+```
+
+</TabItem>
+<TabItem value="py" label="Python">
+
+```python title="replay.py"
+import os
+
+from eth_account import Account
+from kakitu import call
+
+account = Account.from_key(os.environ["KAKITU_PRIVATE_KEY"])
+
+# No body, and NO Idempotency-Key: requeuing an already-requeued event sets the same row to
+# the same state, so calling this five times is one replay.
+_, page = call(account, "GET", "/v1/events?status=abandoned&limit=100")
+for e in page["data"]:
+    status, body = call(account, "POST", f"/v1/events/{e['id']}/replay")
+    # 202, not 200: nothing has been delivered when this returns. And the event id does not
+    # change, which is the point - your receiver can still dedupe on it.
+    print(status, body["id"] == e["id"], body["status"], body["attempts"])
+```
+
+</TabItem>
+<TabItem value="php" label="PHP">
+
+```php title="replay.php"
+<?php
+declare(strict_types=1);
+require __DIR__ . '/kakitu.php';
+
+$key = getenv('KAKITU_PRIVATE_KEY');
+
+// No body, and NO Idempotency-Key: requeuing an already-requeued event sets the same row to
+// the same state, so calling this five times is one replay.
+[, $page] = kakitu_call($key, 'GET', '/v1/events?status=abandoned&limit=100');
+foreach ($page['data'] as $e) {
+    [$status, $body] = kakitu_call($key, 'POST', '/v1/events/' . $e['id'] . '/replay');
+    // 202, not 200: nothing has been delivered when this returns. And the event id does not
+    // change, which is the point - your receiver can still dedupe on it.
+    echo $status, ' ', var_export($body['id'] === $e['id'], true), ' ',
+         $body['status'], ' ', $body['attempts'], PHP_EOL;
+}
+```
+
+</TabItem>
+</Tabs>
 
 **The event id does not change**, which is the whole point. A receiver that dedupes on it, as the at-least-once contract requires, can tell that this is an event it may already have seen.
 

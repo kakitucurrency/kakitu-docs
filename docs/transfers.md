@@ -3,6 +3,9 @@ sidebar_position: 6
 title: Transfers
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Transfers
 
 A transfer moves KSHS from your own wallet to another address, and **Kakitu's relayer pays the gas.** You hold no ETH and you never need any.
@@ -14,6 +17,53 @@ That is the only thing we do for you. **You sign the transfer with your own key 
 An **approved** merchant, and nobody else. A wallet that has not registered gets `404 merchant_not_registered`; one that is `pending` or `rejected` gets `403 merchant_not_approved`; a suspended one gets `403 merchant_suspended`.
 
 The reason is money, not ceremony. Our relayer pays Base gas out of one small ETH balance, and when that balance empties **every transfer in the country stops**, not just this API. Addresses are free, so an open route here would be a free tap on it. See [Going live](./going-live).
+
+## Running these examples
+
+Every example on this page is **signed**. An unsigned request is `401 unauthorized`, so a
+shorter version would not be worth printing.
+
+None of them writes a fourth signer. The TypeScript, Python and PHP snippets call the complete
+programs on [Authentication](./authentication): save those three beside your script as
+`kakitu.mjs`, `kakitu.py` and `kakitu.php`, and export `KAKITU_PRIVATE_KEY` before running
+anything. cURL cannot sign by itself, so the shell examples make the same EIP-191 signature
+through one helper function that calls Foundry's `cast`.
+
+<details>
+<summary><code>kakitu.sh</code> &mdash; the shell signer every cURL example on this page calls</summary>
+
+```bash title="kakitu.sh"
+# kakitu.sh - sign a Kakitu request from the shell and send it.
+#   Needs curl, openssl and Foundry's `cast` (https://getfoundry.sh).
+#   Keep the key in the environment or a secret store: KAKITU_PRIVATE_KEY=0x...
+#   Never in a script, a ticket, or your shell history.
+KAKITU_BASE_URL=${KAKITU_BASE_URL:-https://walletapi.kakitu.org}
+
+# kakitu METHOD TARGET [BODY] [extra curl args...]
+kakitu() {
+  local method=$1 target=$2 body=${3-}
+  shift $(( $# < 3 ? $# : 3 ))
+  local ts hash addr sig
+  ts=$(date +%s)                                   # seconds, within 120s of server time
+  hash=$(printf '%s' "$body" | openssl dgst -sha256 | awk '{print $NF}')
+  addr=$(cast wallet address --private-key "$KAKITU_PRIVATE_KEY")
+  # `cast wallet sign` is EIP-191 personal_sign - the same thing the other three programs do.
+  sig=$(cast wallet sign --private-key "$KAKITU_PRIVATE_KEY" "$method $target $ts $hash")
+  # An array, not an unquoted ${body:+...}: that splits differently in bash and zsh.
+  local args=(-sS -X "$method" "$KAKITU_BASE_URL$target"
+    -H "X-Kakitu-Address: $addr"
+    -H "X-Kakitu-Timestamp: $ts"
+    -H "X-Kakitu-Signature: $sig")
+  [ -n "$body" ] && args+=(-H "Content-Type: application/json" --data-raw "$body")
+  curl "${args[@]}" "$@"
+}
+```
+
+`source kakitu.sh` once per shell, then call `kakitu METHOD TARGET [BODY] [curl args...]`.
+`TARGET` is the path plus `?query` when there is one, byte for byte as it will be sent: the
+query string is inside the signed message, so quote it and change it nowhere else.
+
+</details>
 
 ## The request
 
@@ -114,7 +164,86 @@ The chain id, the token address and the forwarder address are not constants you 
 
 ### A complete example
 
-Node 18 or newer, `npm install ethers@6`. It imports `signedHeaders` from the signer on the [Authentication](./authentication) page — save that file as `kakitu.mjs` next to this one.
+<Tabs groupId="lang">
+<TabItem value="curl" label="cURL" default>
+
+Needs Foundry's `cast`, `jq`, `curl` and `kakitu.sh` from the top of this page.
+`cast wallet sign --data` signs EIP-712 typed data; the plain form signs EIP-191.
+
+```bash title="transfer.sh"
+# transfer.sh - source it after kakitu.sh:
+#   . ./kakitu.sh && . ./transfer.sh && send_transfer 0xRecipient 1000
+
+# The chain id, the token and the forwarder come from the server, never from constants.
+kakitu_cfg() { curl -sS "${KAKITU_BASE_URL:-https://walletapi.kakitu.org}/config"; }
+
+# split 0x<130 hex> -> "r s v"
+split() { local h=${1#0x}; printf '0x%s 0x%s %d' "${h:0:64}" "${h:64:64}" "$((16#${h:128:2}))"; }
+
+# sign_transfer TO VALUE_WEI DEADLINE -> the signed transfer object, as JSON
+sign_transfer() {
+  local to=$1 value=$2 deadline=$3 cfg chain token fwd rpc from nonce permit intent
+  cfg=$(kakitu_cfg)
+  chain=$(jq -r .chain_id <<<"$cfg"); token=$(jq -r .kshs_contract <<<"$cfg")
+  fwd=$(jq -r .forwarder   <<<"$cfg"); rpc=$(jq -r .public_rpc_url <<<"$cfg")
+  from=$(cast wallet address --private-key "$KAKITU_PRIVATE_KEY")
+  # ONE nonce, read BEFORE signing, used by BOTH signatures. Read it again for every transfer.
+  nonce=$(cast call "$token" "nonces(address)(uint256)" "$from" --rpc-url "$rpc" | awk '{print $1}')
+
+  # 1. The EIP-2612 permit, in the TOKEN's domain. The spender is the FORWARDER, not the payee.
+  permit=$(cast wallet sign --private-key "$KAKITU_PRIVATE_KEY" --data "$(jq -n \
+    --argjson cid "$chain" --arg vc "$token" --arg o "$from" --arg sp "$fwd" \
+    --arg v "$value" --arg n "$nonce" --arg d "$deadline" '{
+      types: {
+        EIP712Domain: [{name:"name",type:"string"},{name:"version",type:"string"},
+                       {name:"chainId",type:"uint256"},{name:"verifyingContract",type:"address"}],
+        Permit: [{name:"owner",type:"address"},{name:"spender",type:"address"},
+                 {name:"value",type:"uint256"},{name:"nonce",type:"uint256"},
+                 {name:"deadline",type:"uint256"}]},
+      primaryType: "Permit",
+      domain: {name:"Kakitu", version:"1", chainId:$cid, verifyingContract:$vc},
+      message: {owner:$o, spender:$sp, value:$v, nonce:$n, deadline:$d}}')")
+
+  # 2. The EIP-712 intent, in the FORWARDER's domain. This is what binds the recipient.
+  intent=$(cast wallet sign --private-key "$KAKITU_PRIVATE_KEY" --data "$(jq -n \
+    --argjson cid "$chain" --arg vc "$fwd" --arg o "$from" --arg to "$to" \
+    --arg v "$value" --arg n "$nonce" --arg d "$deadline" '{
+      types: {
+        EIP712Domain: [{name:"name",type:"string"},{name:"version",type:"string"},
+                       {name:"chainId",type:"uint256"},{name:"verifyingContract",type:"address"}],
+        Relay: [{name:"owner",type:"address"},{name:"to",type:"address"},
+                {name:"value",type:"uint256"},{name:"deadline",type:"uint256"},
+                {name:"nonce",type:"uint256"}]},
+      primaryType: "Relay",
+      domain: {name:"KakituForwarder", version:"1", chainId:$cid, verifyingContract:$vc},
+      message: {owner:$o, to:$to, value:$v, deadline:$d, nonce:$n}}')")
+
+  local pr ps pv ir is iv
+  read -r pr ps pv <<<"$(split "$permit")"
+  read -r ir is iv <<<"$(split "$intent")"
+  jq -nc --arg from "$from" --arg to "$to" --arg value "$value" --argjson d "$deadline" \
+         --arg pr "$pr" --arg ps "$ps" --argjson pv "$pv" \
+         --arg ir "$ir" --arg is "$is" --argjson iv "$iv" \
+    '{from:$from, to:$to, value_wei:$value, deadline:$d,
+      v:$pv, r:$pr, s:$ps, iv:$iv, ir:$ir, is:$is}'
+}
+
+# send_transfer TO KSHS
+send_transfer() {
+  local value deadline
+  value=$(cast to-wei "$2" ether)       # KSHS has 18 decimals
+  deadline=$(( $(date +%s) + 300 ))     # 5 minutes; the cap is 10
+  # Idempotency-Key is REQUIRED here. Without it: 400 idempotency_key_required, nothing sent.
+  kakitu POST /v1/transfers "$(sign_transfer "$1" "$value" "$deadline")" \
+    -H "Idempotency-Key: $(uuidgen)"
+}
+```
+
+</TabItem>
+<TabItem value="ts" label="TypeScript">
+
+Node 18 or newer, `npm install ethers@6`. It imports `signedHeaders` from the signer on the
+[Authentication](./authentication) page &mdash; save that file as `kakitu.mjs` next to this one.
 
 ```ts title="transfer.mjs"
 // transfer.mjs - Node 18+, `npm install ethers@6`
@@ -135,16 +264,18 @@ function split(signature) {
   };
 }
 
-export async function transfer(wallet, to, kshs) {
-  // Addresses and chain id come from the server, never from a constant in your code.
-  const cfg = await (await fetch(BASE_URL + "/config")).json();
+// Addresses and chain id come from the server, never from a constant in your code.
+export async function config() {
+  return await (await fetch(BASE_URL + "/config")).json();
+}
+
+// Both signatures, over one nonce. The payouts page reuses this function unchanged.
+export async function signTransfer(wallet, cfg, to, value, deadline) {
   const provider = new JsonRpcProvider(cfg.public_rpc_url);
   const token = new Contract(cfg.kshs_contract, ["function nonces(address) view returns (uint256)"], provider);
 
   const owner = getAddress(wallet.address);
   const recipient = getAddress(to);
-  const value = BigInt(kshs) * 10n ** 18n;                       // KSHS has 18 decimals
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);  // 5 minutes; the cap is 10
   // ONE nonce, read before signing, used by BOTH signatures. Read it again for every transfer:
   // it advances each time a permit of yours is spent.
   const nonce = await token.nonces(owner);
@@ -183,7 +314,7 @@ export async function transfer(wallet, to, kshs) {
     ),
   );
 
-  const body = {
+  return {
     from: owner,
     to: recipient,
     value_wei: value.toString(),
@@ -191,11 +322,19 @@ export async function transfer(wallet, to, kshs) {
     v: permit.v, r: permit.r, s: permit.s,
     iv: intent.v, ir: intent.r, is: intent.s,
   };
+}
+
+export async function transfer(wallet, to, kshs) {
+  const cfg = await config();
+  const value = BigInt(kshs) * 10n ** 18n;                       // KSHS has 18 decimals
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);  // 5 minutes; the cap is 10
+  const body = await signTransfer(wallet, cfg, to, value, deadline);
 
   // Serialise once, sign those bytes, send those bytes. One key per logical transfer.
   const raw = JSON.stringify(body);
   const headers = await signedHeaders(wallet, "POST", "/v1/transfers", raw);
   headers["Content-Type"] = "application/json";
+  // REQUIRED. Without it: 400 idempotency_key_required, and nothing is sent.
   headers["Idempotency-Key"] = randomUUID();
 
   const res = await fetch(BASE_URL + "/v1/transfers", { method: "POST", headers, body: raw });
@@ -208,6 +347,291 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(await transfer(wallet, to, amount));
 }
 ```
+
+</TabItem>
+<TabItem value="py" label="Python">
+
+Python 3.9 or newer, `pip install "eth-account>=0.11" requests`. It imports `signed_headers`
+from the signer on the [Authentication](./authentication) page &mdash; save that file as
+`kakitu.py` next to this one. The token nonce is read over plain JSON-RPC, so there is no
+web3.py to install.
+
+```python title="transfer.py"
+"""transfer.py - Python 3.9+, `pip install "eth-account>=0.11" requests`
+   KAKITU_PRIVATE_KEY=0x... python transfer.py 0xRecipient 1000"""
+import json
+import os
+import sys
+import time
+import uuid
+
+import requests
+from eth_account import Account
+from eth_account.messages import encode_typed_data
+from kakitu import BASE_URL, signed_headers
+
+def split(signature: bytes) -> dict:
+    """A 65-byte signature as the (v, r, s) the API wants."""
+    h = bytes(signature).hex()
+    return {"r": "0x" + h[0:64], "s": "0x" + h[64:128], "v": int(h[128:130], 16)}
+
+
+def config() -> dict:
+    """Addresses and chain id come from the server, never from a constant in your code."""
+    return requests.get(BASE_URL + "/config", timeout=30).json()
+
+
+def nonce_of(rpc: str, token: str, owner: str) -> int:
+    """nonces(owner) on the KSHS token. Selector 0x7ecebe00, one address argument."""
+    call = {"to": token, "data": "0x7ecebe00" + owner[2:].lower().rjust(64, "0")}
+    res = requests.post(rpc, timeout=30, json={
+        "jsonrpc": "2.0", "id": 1, "method": "eth_call", "params": [call, "latest"],
+    }).json()
+    return int(res["result"], 16)
+
+
+def sign_typed(account, domain: dict, types: dict, message: dict) -> dict:
+    signed = account.sign_message(
+        encode_typed_data(domain_data=domain, message_types=types, message_data=message))
+    return split(signed.signature)
+
+
+def sign_transfer(account, cfg: dict, to: str, value: int, deadline: int) -> dict:
+    """Both signatures, over one nonce. The payouts page reuses this unchanged."""
+    owner = account.address
+    # ONE nonce, read before signing, used by BOTH signatures. Read it again for every
+    # transfer: it advances each time a permit of yours is spent.
+    nonce = nonce_of(cfg["public_rpc_url"], cfg["kshs_contract"], owner)
+
+    # 1. The EIP-2612 permit, in the TOKEN's domain. The spender is the forwarder.
+    permit = sign_typed(
+        account,
+        {"name": "Kakitu", "version": "1", "chainId": cfg["chain_id"],
+         "verifyingContract": cfg["kshs_contract"]},
+        # encode_typed_data builds EIP712Domain from domain_data and infers the primary
+        # type from this dict, so it holds exactly one entry and never EIP712Domain.
+        {"Permit": [
+            {"name": "owner", "type": "address"},
+            {"name": "spender", "type": "address"},
+            {"name": "value", "type": "uint256"},
+            {"name": "nonce", "type": "uint256"},
+            {"name": "deadline", "type": "uint256"},
+        ]},
+        {"owner": owner, "spender": cfg["forwarder"], "value": value,
+         "nonce": nonce, "deadline": deadline},
+    )
+
+    # 2. The EIP-712 intent, in the FORWARDER's domain. This is what binds the recipient.
+    intent = sign_typed(
+        account,
+        {"name": "KakituForwarder", "version": "1", "chainId": cfg["chain_id"],
+         "verifyingContract": cfg["forwarder"]},
+        {"Relay": [
+            {"name": "owner", "type": "address"},
+            {"name": "to", "type": "address"},
+            {"name": "value", "type": "uint256"},
+            {"name": "deadline", "type": "uint256"},
+            {"name": "nonce", "type": "uint256"},
+        ]},
+        {"owner": owner, "to": to, "value": value, "deadline": deadline, "nonce": nonce},
+    )
+
+    return {
+        "from": owner, "to": to,
+        "value_wei": str(value),          # a decimal STRING, not a number
+        "deadline": deadline,
+        "v": permit["v"], "r": permit["r"], "s": permit["s"],
+        "iv": intent["v"], "ir": intent["r"], "is": intent["s"],
+    }
+
+
+def transfer(account, to: str, kshs: int):
+    cfg = config()
+    value = int(kshs) * 10 ** 18                 # KSHS has 18 decimals
+    deadline = int(time.time()) + 300            # 5 minutes; the cap is 10
+    body = sign_transfer(account, cfg, to, value, deadline)
+
+    # Serialise once, sign those bytes, send those bytes. One key per logical transfer.
+    raw = json.dumps(body, separators=(",", ":")).encode()
+    headers = signed_headers(account, "POST", "/v1/transfers", raw)
+    headers["Content-Type"] = "application/json"
+    # REQUIRED. Without it: 400 idempotency_key_required, and nothing is sent.
+    headers["Idempotency-Key"] = str(uuid.uuid4())
+
+    res = requests.post(BASE_URL + "/v1/transfers", headers=headers, data=raw, timeout=30)
+    return res.status_code, res.json()
+
+
+if __name__ == "__main__":
+    acct = Account.from_key(os.environ["KAKITU_PRIVATE_KEY"])
+    print(transfer(acct, sys.argv[1], sys.argv[2]))
+```
+
+</TabItem>
+<TabItem value="php" label="PHP">
+
+PHP 8.1 or newer with `curl` and `gmp`,
+`composer require kornrunner/keccak simplito/elliptic-php`. It uses `kakitu_headers` from the
+signer on the [Authentication](./authentication) page &mdash; save that file as `kakitu.php`
+next to this one. There is no EIP-712 library here: the digest is assembled by hand, which is
+twenty lines and no dependency.
+
+```php title="transfer.php"
+<?php
+// transfer.php - PHP 8.1+ with ext-curl and ext-gmp.
+//   composer require kornrunner/keccak simplito/elliptic-php
+//   KAKITU_PRIVATE_KEY=0x... php transfer.php 0xRecipient 1000
+declare(strict_types=1);
+require __DIR__ . '/kakitu.php';
+
+use Elliptic\EC;
+use kornrunner\Keccak;
+
+/** A 32-byte word from a hex string (an address, or a 32-byte hash). */
+function k_word_hex(string $hex): string
+{
+    return str_pad(strtolower((string) preg_replace('/^0x/', '', $hex)), 64, '0', STR_PAD_LEFT);
+}
+
+/** A 32-byte word from a DECIMAL STRING, so 1000 KSHS (1e21 wei) survives the trip. */
+function k_word_num(string $dec): string
+{
+    return str_pad(gmp_strval(gmp_init($dec, 10), 16), 64, '0', STR_PAD_LEFT);
+}
+
+function k_text(string $s): string { return Keccak::hash($s, 256); }   // hex, unprefixed
+
+/** The EIP-712 digest: keccak(0x1901 || domainSeparator || structHash). */
+function k_digest(array $domain, string $typeString, array $words): string
+{
+    $separator = Keccak::hash(hex2bin(
+        k_text('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)')
+        . k_word_hex(k_text($domain['name']))
+        . k_word_hex(k_text($domain['version']))
+        . k_word_num((string) $domain['chainId'])
+        . k_word_hex($domain['verifyingContract'])), 256);
+    $structHash = Keccak::hash(hex2bin(k_text($typeString) . implode('', $words)), 256);
+    return Keccak::hash(hex2bin('1901' . $separator . $structHash), 256);
+}
+
+/** Sign a 32-byte digest. EIP-712, so NO personal_sign prefix - that is the other scheme. */
+function k_sign_digest(string $privateKeyHex, string $digest): array
+{
+    $ec = new EC('secp256k1');
+    $key = $ec->keyFromPrivate((string) preg_replace('/^0x/', '', $privateKeyHex), 'hex');
+    $sig = $key->sign($digest, 'hex', ['canonical' => true]);
+    return [
+        'v' => 27 + $sig->recoveryParam,
+        'r' => '0x' . str_pad($sig->r->toString(16), 64, '0', STR_PAD_LEFT),
+        's' => '0x' . str_pad($sig->s->toString(16), 64, '0', STR_PAD_LEFT),
+    ];
+}
+
+function k_address(string $privateKeyHex): string
+{
+    $ec = new EC('secp256k1');
+    $key = $ec->keyFromPrivate((string) preg_replace('/^0x/', '', $privateKeyHex), 'hex');
+    $pub = substr($key->getPublic(false, 'hex'), 2);            // drop the 04 prefix
+    return '0x' . substr(Keccak::hash(hex2bin($pub), 256), 24);
+}
+
+/** nonces(owner) on the KSHS token, over plain JSON-RPC. Selector 0x7ecebe00. */
+function k_nonce(string $rpc, string $token, string $owner): string
+{
+    $ch = curl_init($rpc);
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS => json_encode(['jsonrpc' => '2.0', 'id' => 1, 'method' => 'eth_call',
+            'params' => [['to' => $token, 'data' => '0x7ecebe00' . k_word_hex($owner)], 'latest']]),
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 30,
+    ]);
+    $res = json_decode((string) curl_exec($ch), true);
+    curl_close($ch);
+    return gmp_strval(gmp_init($res['result'], 16), 10);
+}
+
+/** Addresses and chain id come from the server, never from a constant in your code. */
+function kakitu_config(): array
+{
+    return json_decode((string) file_get_contents(KAKITU_BASE_URL . '/config'), true);
+}
+
+/** Both signatures, over ONE nonce. The payouts page reuses this unchanged. */
+function kakitu_sign_transfer(string $privateKeyHex, array $cfg, string $to,
+                              string $valueWei, int $deadline): array
+{
+    $from = k_address($privateKeyHex);
+    // ONE nonce, read before signing, used by BOTH signatures. Read it again for every
+    // transfer: it advances each time a permit of yours is spent.
+    $nonce = k_nonce($cfg['public_rpc_url'], $cfg['kshs_contract'], $from);
+
+    // 1. The EIP-2612 permit, in the TOKEN's domain. The spender is the forwarder.
+    $permit = k_sign_digest($privateKeyHex, k_digest(
+        ['name' => 'Kakitu', 'version' => '1', 'chainId' => $cfg['chain_id'],
+         'verifyingContract' => $cfg['kshs_contract']],
+        'Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)',
+        [k_word_hex($from), k_word_hex($cfg['forwarder']), k_word_num($valueWei),
+         k_word_num($nonce), k_word_num((string) $deadline)]));
+
+    // 2. The EIP-712 intent, in the FORWARDER's domain. This is what binds the recipient.
+    $intent = k_sign_digest($privateKeyHex, k_digest(
+        ['name' => 'KakituForwarder', 'version' => '1', 'chainId' => $cfg['chain_id'],
+         'verifyingContract' => $cfg['forwarder']],
+        'Relay(address owner,address to,uint256 value,uint256 deadline,uint256 nonce)',
+        [k_word_hex($from), k_word_hex($to), k_word_num($valueWei),
+         k_word_num((string) $deadline), k_word_num($nonce)]));
+
+    return [
+        'from' => $from, 'to' => $to,
+        'value_wei' => $valueWei,        // a decimal STRING, not a number
+        'deadline' => $deadline,
+        'v' => $permit['v'], 'r' => $permit['r'], 's' => $permit['s'],
+        'iv' => $intent['v'], 'ir' => $intent['r'], 'is' => $intent['s'],
+    ];
+}
+
+/** A signed POST with extra headers (the Idempotency-Key these routes require). */
+function kakitu_post(string $privateKeyHex, string $target, array $payload, array $extra = []): array
+{
+    // Encode once, sign those bytes, send those bytes.
+    $raw = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+    $headers = array_merge(kakitu_headers($privateKeyHex, 'POST', $target, $raw),
+        ['Content-Type' => 'application/json'], $extra);
+    $lines = [];
+    foreach ($headers as $k => $v) {
+        $lines[] = "$k: $v";
+    }
+    $ch = curl_init(KAKITU_BASE_URL . $target);
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true, CURLOPT_HTTPHEADER => $lines, CURLOPT_POSTFIELDS => $raw,
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 30,
+    ]);
+    $out = curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+    return [$status, json_decode((string) $out, true)];
+}
+
+function kakitu_transfer(string $privateKeyHex, string $to, string $kshs): array
+{
+    $cfg = kakitu_config();
+    $value = gmp_strval(gmp_mul(gmp_init($kshs, 10), gmp_pow(10, 18)));  // 18 decimals
+    $deadline = time() + 300;                                            // 5 min; the cap is 10
+    $body = kakitu_sign_transfer($privateKeyHex, $cfg, $to, $value, $deadline);
+    // Idempotency-Key is REQUIRED. Without it: 400 idempotency_key_required, nothing sent.
+    return kakitu_post($privateKeyHex, '/v1/transfers', $body,
+        ['Idempotency-Key' => bin2hex(random_bytes(16))]);
+}
+
+if (PHP_SAPI === 'cli' && realpath($argv[0] ?? '') === __FILE__) {
+    $key = getenv('KAKITU_PRIVATE_KEY') ?: exit("Set KAKITU_PRIVATE_KEY\n");
+    print_r(kakitu_transfer($key, $argv[1], $argv[2]));
+}
+```
+
+</TabItem>
+</Tabs>
 
 Keep the key in an environment variable or a secret store. Never in source, never in a ticket.
 

@@ -3,11 +3,167 @@ sidebar_position: 11
 title: Limits
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Limits
+
+## Running these examples
+
+Every example on this page is **signed**. An unsigned request is `401 unauthorized`, so a
+shorter version would not be worth printing.
+
+None of them writes a fourth signer. The TypeScript, Python and PHP snippets call the complete
+programs on [Authentication](./authentication): save those three beside your script as
+`kakitu.mjs`, `kakitu.py` and `kakitu.php`, and export `KAKITU_PRIVATE_KEY` before running
+anything. cURL cannot sign by itself, so the shell examples make the same EIP-191 signature
+through one helper function that calls Foundry's `cast`.
+
+<details>
+<summary><code>kakitu.sh</code> &mdash; the shell signer every cURL example on this page calls</summary>
+
+```bash title="kakitu.sh"
+# kakitu.sh - sign a Kakitu request from the shell and send it.
+#   Needs curl, openssl and Foundry's `cast` (https://getfoundry.sh).
+#   Keep the key in the environment or a secret store: KAKITU_PRIVATE_KEY=0x...
+#   Never in a script, a ticket, or your shell history.
+KAKITU_BASE_URL=${KAKITU_BASE_URL:-https://walletapi.kakitu.org}
+
+# kakitu METHOD TARGET [BODY] [extra curl args...]
+kakitu() {
+  local method=$1 target=$2 body=${3-}
+  shift $(( $# < 3 ? $# : 3 ))
+  local ts hash addr sig
+  ts=$(date +%s)                                   # seconds, within 120s of server time
+  hash=$(printf '%s' "$body" | openssl dgst -sha256 | awk '{print $NF}')
+  addr=$(cast wallet address --private-key "$KAKITU_PRIVATE_KEY")
+  # `cast wallet sign` is EIP-191 personal_sign - the same thing the other three programs do.
+  sig=$(cast wallet sign --private-key "$KAKITU_PRIVATE_KEY" "$method $target $ts $hash")
+  # An array, not an unquoted ${body:+...}: that splits differently in bash and zsh.
+  local args=(-sS -X "$method" "$KAKITU_BASE_URL$target"
+    -H "X-Kakitu-Address: $addr"
+    -H "X-Kakitu-Timestamp: $ts"
+    -H "X-Kakitu-Signature: $sig")
+  [ -n "$body" ] && args+=(-H "Content-Type: application/json" --data-raw "$body")
+  curl "${args[@]}" "$@"
+}
+```
+
+`source kakitu.sh` once per shell, then call `kakitu METHOD TARGET [BODY] [curl args...]`.
+`TARGET` is the path plus `?query` when there is one, byte for byte as it will be sent: the
+query string is inside the signed message, so quote it and change it nowhere else.
+
+</details>
 
 ## GET /v1/limits
 
 Two things: the current withdrawal band — the smallest and largest payout the rail will accept — and, if you are a registered merchant, **your own payout limits**. Signed request, no body, no `Idempotency-Key`.
+
+<Tabs groupId="lang">
+<TabItem value="curl" label="cURL" default>
+
+```bash
+kakitu GET /v1/limits
+```
+
+```bash
+# `payout` is ABSENT for a wallet that never registered as a merchant. Test for the key:
+kakitu GET /v1/limits | jq 'if has("payout") then .payout else "not a merchant" end'
+
+# remaining_today_kes is null when the counter could not be read. null is NOT zero.
+kakitu GET /v1/limits | jq -r '.payout.remaining_today_kes // "unknown"'
+```
+
+</TabItem>
+<TabItem value="ts" label="TypeScript">
+
+```ts title="limits.mjs"
+// node limits.mjs - needs kakitu.mjs from the Authentication page beside it.
+import { Wallet } from "ethers";
+import { call } from "./kakitu.mjs";
+
+const wallet = new Wallet(process.env.KAKITU_PRIVATE_KEY);
+const { body } = await call(wallet, "GET", "/v1/limits");
+
+// source is "live" or "estimated". Read max_staleness_seconds; do not hardcode 300.
+console.log(body.withdrawal.min_kes, body.withdrawal.max_kes, body.withdrawal.source);
+console.log(body.max_staleness_seconds);
+
+// `payout` is ABSENT - not null, not {} - for a wallet that never registered as a merchant.
+// `body.payout.enabled` straight off throws on an ordinary customer, which is a 200, not an
+// error condition.
+if (body.payout) {
+  const p = body.payout;
+  // remaining_today_kes is null when the counter could not be read, and null is NOT zero.
+  const remaining = p.remaining_today_kes === null ? "unknown" : p.remaining_today_kes;
+  console.log(p.enabled, p.max_kes, p.daily_cap_kes, p.hold_above_kes, remaining);
+  // "Above" is strict: a payout exactly equal to hold_above_kes is dispatched, not held.
+  const willBeHeld = (kes) => kes > p.hold_above_kes;
+  console.log(willBeHeld(p.hold_above_kes));   // false
+}
+```
+
+</TabItem>
+<TabItem value="py" label="Python">
+
+```python title="limits.py"
+# python limits.py - needs kakitu.py from the Authentication page beside it.
+import os
+
+from eth_account import Account
+from kakitu import call
+
+account = Account.from_key(os.environ["KAKITU_PRIVATE_KEY"])
+status, body = call(account, "GET", "/v1/limits")
+
+w = body["withdrawal"]
+# source is "live" or "estimated". Read max_staleness_seconds; do not hardcode 300.
+print(w["min_kes"], w["max_kes"], w["source"], body["max_staleness_seconds"])
+
+# "payout" is ABSENT - not None, not {} - for a wallet that never registered as a merchant.
+# body["payout"] straight off raises KeyError on an ordinary customer, which is a 200.
+p = body.get("payout")
+if p is not None:
+    # remaining_today_kes is None when the counter could not be read, and None is NOT zero.
+    remaining = "unknown" if p["remaining_today_kes"] is None else p["remaining_today_kes"]
+    print(p["enabled"], p["max_kes"], p["daily_cap_kes"], p["hold_above_kes"], remaining)
+    # "Above" is strict: a payout exactly equal to hold_above_kes is dispatched, not held.
+    print(p["hold_above_kes"] > p["hold_above_kes"])   # False
+```
+
+</TabItem>
+<TabItem value="php" label="PHP">
+
+```php title="limits.php"
+<?php
+// php limits.php - needs kakitu.php from the Authentication page beside it.
+declare(strict_types=1);
+require __DIR__ . '/kakitu.php';
+
+[$status, $body] = kakitu_call(getenv('KAKITU_PRIVATE_KEY'), 'GET', '/v1/limits');
+
+$w = $body['withdrawal'];
+// source is "live" or "estimated". Read max_staleness_seconds; do not hardcode 300.
+echo $w['min_kes'], ' ', $w['max_kes'], ' ', $w['source'], ' ', $body['max_staleness_seconds'], PHP_EOL;
+
+// "payout" is ABSENT - not null, not [] - for a wallet that never registered as a merchant.
+// array_key_exists, not isset: isset() is also false for a key whose value is null.
+if (array_key_exists('payout', $body)) {
+    $p = $body['payout'];
+    // remaining_today_kes is null when the counter could not be read, and null is NOT zero.
+    $remaining = $p['remaining_today_kes'] ?? 'unknown';
+    echo $p['enabled'] ? 'on' : 'off', ' ', $p['max_kes'], ' ', $p['daily_cap_kes'], ' ',
+         $p['hold_above_kes'], ' ', $remaining, PHP_EOL;
+    // "Above" is strict: a payout exactly equal to hold_above_kes is dispatched, not held.
+    $willBeHeld = fn (int $kes): bool => $kes > $p['hold_above_kes'];
+    var_dump($willBeHeld($p['hold_above_kes']));   // false
+}
+```
+
+</TabItem>
+</Tabs>
+
+The response:
 
 ```json
 HTTP 200
