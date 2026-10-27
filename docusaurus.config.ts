@@ -98,28 +98,12 @@ const config: Config = {
         },
       ],
     },
-    footer: {
-      style: 'dark',
-      links: [
-        {
-          title: 'Docs',
-          items: [
-            { label: 'Introduction', to: '/docs/intro' },
-            { label: 'Authentication', to: '/docs/authentication' },
-            { label: 'API Reference', to: '/api-reference' },
-            { label: 'Register as a merchant', to: '/signup' },
-          ],
-        },
-        {
-          title: 'Kakitu',
-          items: [
-            { label: 'Explorer', href: 'https://kakitu.org' },
-            { label: 'GitHub', href: 'https://github.com/kakitucurrency' },
-          ],
-        },
-      ],
-      copyright: `© ${new Date().getFullYear()} Kakitu. 1 KSHS = 1 KES.`,
-    },
+    // NO FOOTER. Docusaurus renders one by default and it was a two-column link list with a
+    // copyright line — the same furniture every Docusaurus site carries, which is exactly what
+    // makes a site look generated rather than made. Everything it held is reachable from the
+    // navbar or the sidebar, so it was duplication wearing a dark background.
+    //
+    // Omitting the key entirely is what removes it; an empty object still renders the bar.
     prism: {
       theme: prismThemes.github,
       darkTheme: prismThemes.dracula,
