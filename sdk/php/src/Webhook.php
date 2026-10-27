@@ -9,17 +9,23 @@ use Kakitu\Exception\SignatureVerificationException;
 /**
  * Verifies that a webhook really came from Kakitu.
  *
- * PROVISIONAL: webhook delivery is still being written on the server. This implements the
- * planned scheme (webhookout.Sign): the signature header value is
+ * The scheme is the server's own (webhookout.Sign). The `Kakitu-Signature` header carries
  *
  *     t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>" keyed with your webhook secret>
  *
- * and the header NAME is not final, so you pass the header's value in yourself. Re-check this
- * against the server once delivery ships. Webhooks are at-least-once: dedupe on the event id.
+ * The timestamp is INSIDE the signed string, not merely alongside it, so a replayer cannot shift
+ * the clock without breaking the signature.
+ *
+ * Pass the RAW body. Re-encoding the JSON first reorders keys and changes whitespace, and you
+ * would then verify a different string than the one that was signed.
+ *
+ * Delivery is AT-LEAST-ONCE: the `Kakitu-Event-Id` header (and `id` in the payload) is stable
+ * across every attempt and across a replay, and it is your dedupe key. A receiver that keys on
+ * it sees exactly-once; one that does not will double-count.
  *
  *     $event = Webhook::constructEvent(
  *         file_get_contents('php://input'),          // the RAW body, not re-encoded JSON
- *         $_SERVER['HTTP_X_KAKITU_WEBHOOK_SIGNATURE'] ?? '',   // header name provisional
+ *         $_SERVER['HTTP_KAKITU_SIGNATURE'] ?? '',
  *         getenv('KAKITU_WEBHOOK_SECRET'),
  *     );
  */

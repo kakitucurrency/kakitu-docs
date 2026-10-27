@@ -1,10 +1,17 @@
 """Webhook signature verification.
 
-PLANNED FORMAT, NOT YET VERIFIED AGAINST SERVER CODE: the outbound webhook sender
-(``webhookout``) is not written yet. This implements the format in the developer-API plan:
-the signature header value is ``t=<unix>,v1=<hex hmac-sha256 over "<t>.<raw body>">`` keyed
-with the webhook secret issued at merchant approval. The header's name is not fixed yet, so
-this helper takes the header *value*. Re-check against the server when it ships.
+The scheme is the server's own (``webhookout/signer.go``): header ``Kakitu-Signature`` carries
+``t=<unix>,v1=<hex hmac-sha256 over "<t>.<raw body>">``, keyed with the webhook secret issued at
+merchant approval. This helper takes the header *value*.
+
+The timestamp is INSIDE the signed string, not merely alongside it, so a replayer cannot shift
+the clock without breaking the signature.
+
+Pass the RAW body bytes. Re-marshalling the JSON first reorders keys and changes whitespace, and
+you would then verify a different string than the one that was signed.
+
+Delivery is AT-LEAST-ONCE: the ``Kakitu-Event-Id`` header (and ``id`` in the payload) is stable
+across every attempt and across a replay, and it is your dedupe key.
 """
 from __future__ import annotations
 

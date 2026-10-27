@@ -1,4 +1,12 @@
-/** Error codes from apiv1/errors.go (a closed set; the server never changes a code). */
+/**
+ * Error codes from apiv1/errors.go (a closed set; the server never changes a code).
+ *
+ * The PAYOUT codes are deliberately not the collection ones. `payout_daily_cap_exceeded` is a
+ * different budget from `daily_cap_exceeded`, on a different setting and a different counter:
+ * asking an operator to raise your collection cap when it is the payout cap that ran out changes
+ * nothing. Likewise `payout_amount_above_maximum` is 400, not 429 — no amount of waiting makes
+ * that payout acceptable, only a smaller one.
+ */
 export type ServerErrorCode =
   | "invalid_request"
   | "unauthorized"
@@ -21,6 +29,15 @@ export type ServerErrorCode =
   | "charge_not_found"
   | "reference_reused"
   | "rail_unavailable"
+  | "order_not_found"
+  | "event_not_found"
+  | "payouts_disabled"
+  | "payout_daily_cap_exceeded"
+  | "payout_amount_above_maximum"
+  | "payout_not_found"
+  | "payout_quote_not_found"
+  | "profile_required"
+  | "identity_verification_required"
   | "internal";
 
 /** SDK-side additions: "network_error" (no HTTP response) and "unknown" (code not in this SDK's list). */
@@ -32,7 +49,10 @@ export const SERVER_ERROR_CODES: readonly ServerErrorCode[] = [
   "idempotency_key_reuse", "idempotency_key_in_progress", "idempotency_key_acted",
   "idempotency_unavailable", "request_too_large", "amount_below_minimum", "amount_above_maximum",
   "daily_cap_exceeded", "payer_velocity_exceeded", "rate_limited", "charge_not_found",
-  "reference_reused", "rail_unavailable", "internal",
+  "reference_reused", "rail_unavailable", "order_not_found", "event_not_found",
+  "payouts_disabled", "payout_daily_cap_exceeded", "payout_amount_above_maximum",
+  "payout_not_found", "payout_quote_not_found", "profile_required",
+  "identity_verification_required", "internal",
 ];
 
 export class KakituError extends Error {

@@ -47,12 +47,24 @@ final class ErrorFactory
             ErrorCode::INVALID_REQUEST, ErrorCode::IDEMPOTENCY_KEY_REQUIRED, ErrorCode::IDEMPOTENCY_KEY_INVALID,
             ErrorCode::AMOUNT_BELOW_MINIMUM, ErrorCode::AMOUNT_ABOVE_MAXIMUM, ErrorCode::REQUEST_TOO_LARGE => InvalidRequestException::class,
             ErrorCode::MERCHANT_NOT_REGISTERED, ErrorCode::MERCHANT_NOT_APPROVED, ErrorCode::MERCHANT_SUSPENDED,
-            ErrorCode::MERCHANT_NAME_FROZEN => MerchantException::class,
+            ErrorCode::MERCHANT_NAME_FROZEN,
+            // Payouts are off for you. Which switch — the global one or yours — is deliberately
+            // not published, so there is nothing more specific to raise.
+            ErrorCode::PAYOUTS_DISABLED => MerchantException::class,
             ErrorCode::IDEMPOTENCY_KEY_REUSE, ErrorCode::IDEMPOTENCY_KEY_IN_PROGRESS, ErrorCode::IDEMPOTENCY_KEY_ACTED,
             ErrorCode::IDEMPOTENCY_UNAVAILABLE => IdempotencyException::class,
-            ErrorCode::RATE_LIMITED, ErrorCode::DAILY_CAP_EXCEEDED, ErrorCode::PAYER_VELOCITY_EXCEEDED => RateLimitException::class,
-            ErrorCode::CHARGE_NOT_FOUND => NotFoundException::class,
-            ErrorCode::REFERENCE_REUSED => ConflictException::class,
+            // PAYOUT_DAILY_CAP_EXCEEDED is a 429 like the others, but it is its OWN budget on
+            // its own counter: raising the collection cap does nothing for it. Only `errorCode`
+            // tells them apart, which is why you switch on that and never on the message.
+            ErrorCode::RATE_LIMITED, ErrorCode::DAILY_CAP_EXCEEDED, ErrorCode::PAYER_VELOCITY_EXCEEDED,
+            ErrorCode::PAYOUT_DAILY_CAP_EXCEEDED => RateLimitException::class,
+            // 400, not 429: waiting does not help, a smaller payout does.
+            ErrorCode::PAYOUT_AMOUNT_ABOVE_MAXIMUM => InvalidRequestException::class,
+            // A payout quote that is missing, expired, already spent or somebody else's is ONE
+            // answer with one set of words, on purpose.
+            ErrorCode::CHARGE_NOT_FOUND, ErrorCode::ORDER_NOT_FOUND, ErrorCode::EVENT_NOT_FOUND,
+            ErrorCode::PAYOUT_NOT_FOUND, ErrorCode::PAYOUT_QUOTE_NOT_FOUND => NotFoundException::class,
+            ErrorCode::REFERENCE_REUSED, ErrorCode::PROFILE_REQUIRED => ConflictException::class,
             default => ApiException::class,
         };
 

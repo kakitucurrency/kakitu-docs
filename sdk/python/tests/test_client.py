@@ -24,6 +24,10 @@ def nosleep(monkeypatch):
 ME = {"address": "0xA", "business_name": "Duka", "contact_email": "a@b.co", "contact_phone": "",
       "callback_url": "", "state": "pending", "daily_cap_kes": 0, "per_charge_max_kes": 0}
 
+CHARGE = {"id": "ch_1", "reference": "order-1", "amount": 500, "currency": "KES",
+          "status": "pending", "created_at": "2026-10-25T10:00:00Z", "paid_at": None,
+          "settled_at": None}
+
 
 def test_me_is_signed_and_parsed():
     seen = {}
@@ -36,24 +40,31 @@ def test_me_is_signed_and_parsed():
     assert "idempotency-key" not in seen
 
 
-def test_register_sends_idempotency_key_and_override():
+def test_register_sends_no_key_by_default_but_honours_an_explicit_one():
+    # POST /v1/merchants is an upsert and the server mounts NO idempotency on it, so the SDK
+    # sends no key. An explicit one is still passed through for a caller who wants it.
     keys = []
     def h(req):
-        keys.append(req.headers["idempotency-key"])
+        keys.append(req.headers.get("idempotency-key"))
         return httpx.Response(201, json=ME)
     c = make(h)
     c.merchants.register(business_name="Duka", contact_email="a@b.co")
     c.merchants.register(business_name="Duka", contact_email="a@b.co", idempotency_key="mine-1")
-    assert keys[1] == "mine-1" and keys[0] != "mine-1"
+    assert keys == [None, "mine-1"]
 
 
 def test_retry_5xx_keeps_same_key_and_resigns():
+    # On a route that DOES require a key: one key for the whole call, reused by every retry —
+    # that is what makes the retry safe — but a fresh signature each time, because the server
+    # refuses an identical signed request as a replay.
     calls = []
     def h(req):
         calls.append((req.headers["idempotency-key"], req.headers["x-kakitu-signature"]))
-        return httpx.Response(503, json={"error": {"code": "rail_unavailable", "message": "x", "request_id": "r"}}) if len(calls) < 3 else httpx.Response(201, json=ME)
-    make(h).merchants.register(business_name="Duka", contact_email="a@b.co")
-    assert len(calls) == 3 and len({c[0] for c in calls}) == 1
+        return httpx.Response(503, json={"error": {"code": "rail_unavailable", "message": "x", "request_id": "r"}}) if len(calls) < 3 else httpx.Response(201, json=CHARGE)
+    make(h).charges.create(amount=500, phone="0712345678", reference="order-1")
+    assert len(calls) == 3
+    assert len({c[0] for c in calls}) == 1, "the idempotency key must not change between retries"
+    assert len({c[1] for c in calls}) == 3, "each attempt must be signed afresh"
 
 
 def test_no_retry_on_4xx():

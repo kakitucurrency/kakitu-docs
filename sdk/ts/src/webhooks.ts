@@ -3,12 +3,15 @@ import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
 
 /**
- * PROVISIONAL. The webhook signing scheme is NOT in the Go source yet (no sender exists in
- * kakitu_wallet_server at the time of writing). This implements a Stripe-style scheme:
+ * Verifies a webhook delivery. The scheme is the server's own (webhookout/signer.go):
  *
  *   header  Kakitu-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, `${t}.${rawBody}`)>
  *
- * Confirm against the server before relying on it. Pass the RAW body string, not re-serialised JSON.
+ * Pass the RAW body bytes, not re-serialised JSON: re-marshalling reorders keys and changes
+ * whitespace, and you would then verify a different string than the one that was signed.
+ *
+ * Delivery is AT-LEAST-ONCE. The `Kakitu-Event-Id` header (and `id` in the payload) is stable
+ * across every attempt and across a replay — dedupe on it, or you will double-count.
  */
 export function verifyWebhookSignature(opts: {
   payload: string | Uint8Array;

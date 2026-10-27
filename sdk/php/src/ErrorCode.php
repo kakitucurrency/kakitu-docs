@@ -35,6 +35,24 @@ final class ErrorCode
     public const CHARGE_NOT_FOUND = 'charge_not_found';
     public const REFERENCE_REUSED = 'reference_reused';
     public const RAIL_UNAVAILABLE = 'rail_unavailable';
+    public const ORDER_NOT_FOUND = 'order_not_found';
+    public const EVENT_NOT_FOUND = 'event_not_found';
+
+    // The PAYOUT refusals are deliberately NOT the collection ones above, and must never be
+    // folded into them: paying money OUT is a separate permission from collecting it IN, on a
+    // separate setting and a separate counter. An integrator told DAILY_CAP_EXCEEDED when it is
+    // the payout budget that ran out will ask an operator to raise the collection cap, which
+    // changes nothing and leaves the real limit a mystery.
+    public const PAYOUTS_DISABLED = 'payouts_disabled';
+    public const PAYOUT_DAILY_CAP_EXCEEDED = 'payout_daily_cap_exceeded';
+    /** 400, not 429: no amount of waiting makes this payout acceptable, only a smaller one. */
+    public const PAYOUT_AMOUNT_ABOVE_MAXIMUM = 'payout_amount_above_maximum';
+    public const PAYOUT_NOT_FOUND = 'payout_not_found';
+    /** The ONE answer for a payout quote that does not exist, has expired, has already been
+     * spent, or belongs to another merchant. They are deliberately indistinguishable. */
+    public const PAYOUT_QUOTE_NOT_FOUND = 'payout_quote_not_found';
+    public const PROFILE_REQUIRED = 'profile_required';
+    public const IDENTITY_VERIFICATION_REQUIRED = 'identity_verification_required';
     public const INTERNAL = 'internal';
 
     // SDK-side codes (never sent by the server).
@@ -52,7 +70,11 @@ final class ErrorCode
             self::IDEMPOTENCY_KEY_IN_PROGRESS, self::IDEMPOTENCY_KEY_ACTED, self::IDEMPOTENCY_UNAVAILABLE,
             self::REQUEST_TOO_LARGE, self::AMOUNT_BELOW_MINIMUM, self::AMOUNT_ABOVE_MAXIMUM,
             self::DAILY_CAP_EXCEEDED, self::PAYER_VELOCITY_EXCEEDED, self::RATE_LIMITED,
-            self::CHARGE_NOT_FOUND, self::REFERENCE_REUSED, self::RAIL_UNAVAILABLE, self::INTERNAL,
+            self::CHARGE_NOT_FOUND, self::REFERENCE_REUSED, self::RAIL_UNAVAILABLE,
+            self::ORDER_NOT_FOUND, self::EVENT_NOT_FOUND, self::PAYOUTS_DISABLED,
+            self::PAYOUT_DAILY_CAP_EXCEEDED, self::PAYOUT_AMOUNT_ABOVE_MAXIMUM,
+            self::PAYOUT_NOT_FOUND, self::PAYOUT_QUOTE_NOT_FOUND, self::PROFILE_REQUIRED,
+            self::IDENTITY_VERIFICATION_REQUIRED, self::INTERNAL,
         ];
     }
 }

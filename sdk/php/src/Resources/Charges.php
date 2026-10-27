@@ -6,15 +6,12 @@ namespace Kakitu\Resources;
 
 use InvalidArgumentException;
 use Kakitu\Kakitu;
+use Kakitu\Pagination;
 
 /**
  * Charges: an M-Pesa prompt on a payer's phone, settled to your wallet.
  *
- * NOT YET AVAILABLE. The /v1/charges endpoints are still being written on the server. This
- * class follows the published plan (POST /v1/charges, GET /v1/charges/{id},
- * GET /v1/charges?reference=&status=&created_after=&limit=&cursor=) but those routes do not
- * exist yet, so every call will fail until they ship, and field names below are provisional.
- * Parameters are passed through untouched, so nothing here needs to change when they land.
+ * POST /v1/charges, GET /v1/charges/{id}, GET /v1/charges?reference=&status=&created_after=&limit=&cursor=
  */
 final class Charges
 {
@@ -23,12 +20,15 @@ final class Charges
     }
 
     /**
-     * NOT YET AVAILABLE. Create a charge. Sends an automatic Idempotency-Key (a fresh UUID);
-     * pass your own in $options['idempotency_key'] (for example derived from your order id) so
-     * that retrying after a crash or timeout can never charge the payer twice.
+     * Create a charge.
      *
-     * Provisional fields: amount (KES), phone (payer's M-Pesa number), reference (your order id,
-     * unique per merchant).
+     * Fields: amount (whole KES), phone (the payer's M-Pesa number), reference (your own order
+     * id, unique per merchant — reusing one gives `reference_reused`).
+     *
+     * An Idempotency-Key is REQUIRED on this route and a fresh UUID is sent for you, reused by
+     * every automatic retry. That key lives only in memory, so pass your own in
+     * $options['idempotency_key'] — derived from your order id and stored — if a retry after a
+     * crash or restart must also be safe.
      *
      * @param array<string,mixed> $params
      * @param array{idempotency_key?: string} $options
@@ -36,11 +36,11 @@ final class Charges
      */
     public function create(array $params, array $options = []): array
     {
-        return $this->client->request('POST', '/v1/charges', [], $params, $options);
+        return $this->client->request('POST', '/v1/charges', [], $params, $options + ['idempotent' => true]);
     }
 
     /**
-     * NOT YET AVAILABLE. Fetch one charge by id.
+     * Fetch one charge by id.
      *
      * @return array<string,mixed>
      */
@@ -53,7 +53,11 @@ final class Charges
     }
 
     /**
-     * NOT YET AVAILABLE. List charges. Planned filters: reference, status, created_after, limit, cursor.
+     * One page of charges, newest first. Filters: reference, status, created_after (RFC 3339),
+     * limit (1-100, default 20), cursor.
+     *
+     * Returns `{"data": [...], "next_cursor": ...}`; `next_cursor` is null on the last page and
+     * is opaque — pass it back unchanged. Use autoPagingIterator() to walk every page.
      *
      * @param array<string,scalar> $filters
      * @return array<string,mixed>
@@ -61,5 +65,16 @@ final class Charges
     public function list(array $filters = []): array
     {
         return $this->client->request('GET', '/v1/charges', $filters);
+    }
+
+    /**
+     * Walks every page, yielding one charge at a time. See {@see Pagination::autoPage()}.
+     *
+     * @param array<string,scalar> $filters
+     * @return \Generator<int, array<string,mixed>>
+     */
+    public function autoPagingIterator(array $filters = []): \Generator
+    {
+        return Pagination::autoPage(fn (array $f): array => $this->list($f), $filters);
     }
 }

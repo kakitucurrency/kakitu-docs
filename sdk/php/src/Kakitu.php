@@ -9,8 +9,15 @@ use Kakitu\Exception\ApiException;
 use Kakitu\Exception\ConnectionException;
 use Kakitu\Exception\ErrorFactory;
 use Kakitu\Exception\KakituException;
+use Kakitu\Resources\Balances;
 use Kakitu\Resources\Charges;
+use Kakitu\Resources\Events;
+use Kakitu\Resources\Limits;
 use Kakitu\Resources\Merchants;
+use Kakitu\Resources\Orders;
+use Kakitu\Resources\Payouts;
+use Kakitu\Resources\Quotes;
+use Kakitu\Resources\Transfers;
 use Kakitu\Transport\CurlTransport;
 use Kakitu\Transport\TransportInterface;
 
@@ -37,8 +44,14 @@ final class Kakitu
     public const DEFAULT_BASE_URL = 'https://walletapi.kakitu.org';
 
     public readonly Merchants $merchants;
-    /** NOT YET AVAILABLE: the server endpoints behind this are still being written. */
     public readonly Charges $charges;
+    public readonly Transfers $transfers;
+    public readonly Balances $balances;
+    public readonly Orders $orders;
+    public readonly Limits $limits;
+    public readonly Quotes $quotes;
+    public readonly Events $events;
+    public readonly Payouts $payouts;
 
     private Signer $signer;
     private string $baseUrl;
@@ -76,6 +89,13 @@ final class Kakitu
         $this->signer = new Signer($key, $options['clock'] ?? null);
         $this->merchants = new Merchants($this);
         $this->charges = new Charges($this);
+        $this->transfers = new Transfers($this);
+        $this->balances = new Balances($this);
+        $this->orders = new Orders($this);
+        $this->limits = new Limits($this);
+        $this->quotes = new Quotes($this);
+        $this->events = new Events($this);
+        $this->payouts = new Payouts($this);
     }
 
     /** Your merchant identity: the wallet address derived from the private key. */
@@ -87,9 +107,20 @@ final class Kakitu
     /**
      * Sends one signed API request, with retries. Resources use this; you rarely need to.
      *
+     * $options:
+     *   idempotency_key  a key of your own. Honoured on any route.
+     *   idempotent       true for the three routes the server REQUIRES an Idempotency-Key on
+     *                    (/v1/charges, /v1/transfers, /v1/payouts); a UUID is generated when the
+     *                    caller supplied none.
+     *
+     * The flag is deliberately NOT `$method === 'POST'`. /v1/quotes, /v1/payouts/quote and
+     * /v1/events/{id}/replay are POSTs that mount no idempotency at all, and /v1/merchants is an
+     * upsert. Sending a key everywhere would be this SDK pretending a contract is uniform when
+     * the server's is not.
+     *
      * @param array<string,scalar> $query
      * @param array<mixed>|null    $body  JSON body (null for none)
-     * @param array{idempotency_key?: string} $options
+     * @param array{idempotency_key?: string, idempotent?: bool} $options
      * @return array<string,mixed> decoded JSON
      * @throws KakituException
      */
@@ -116,9 +147,11 @@ final class Kakitu
         if ($body !== null) {
             $headers['Content-Type'] = 'application/json';
         }
-        if ($method === 'POST') {
-            // One key for the whole call, reused by every retry: that is what makes a retry safe.
-            $headers['Idempotency-Key'] = $options['idempotency_key'] ?? self::newIdempotencyKey();
+        // One key for the whole call, reused by every retry: that is what makes a retry safe.
+        if (isset($options['idempotency_key'])) {
+            $headers['Idempotency-Key'] = $options['idempotency_key'];
+        } elseif (($options['idempotent'] ?? false) === true) {
+            $headers['Idempotency-Key'] = self::newIdempotencyKey();
         }
 
         $url = $this->baseUrl . $pathAndQuery;

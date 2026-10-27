@@ -36,6 +36,26 @@ class RateLimitedError(KakituError): ...
 class ChargeNotFoundError(KakituError): ...
 class ReferenceReusedError(KakituError): ...
 class RailUnavailableError(KakituError): ...
+class OrderNotFoundError(KakituError): ...
+class EventNotFoundError(KakituError): ...
+class PayoutNotFoundError(KakituError):
+    """404. Its own code, not order_not_found: a payout is not an order, and an integrator
+    holding a payout id must not be sent looking for one."""
+class PayoutQuoteNotFoundError(KakituError):
+    """404. The ONE answer for a payout quote that does not exist, has expired, has already
+    been spent, or belongs to someone else. They are deliberately indistinguishable."""
+class PayoutsDisabledError(KakituError):
+    """403. Payouts are off for you. Which switch is off — the global one or yours — is
+    deliberately not published."""
+class PayoutLimitExceededError(KakituError):
+    """429 payout_daily_cap_exceeded. NOT daily_cap_exceeded: the payout budget is a separate
+    setting on a separate counter, so raising the collection cap changes nothing here."""
+class PayoutAmountError(KakituError):
+    """400 payout_amount_above_maximum. Not a 429: waiting does not help, a smaller payout does."""
+class ProfileRequiredError(KakituError):
+    """409. The wallet has not given Kakitu the details a ramp needs yet."""
+class IdentityVerificationRequiredError(KakituError):
+    """403. This amount needs the customer's identity checked first."""
 class InternalError(KakituError): ...
 class KakituConnectionError(KakituError):
     """Network failure after all retries. code is 'connection_error'."""
@@ -63,6 +83,15 @@ _BY_CODE: dict[str, type[KakituError]] = {
     "charge_not_found": ChargeNotFoundError,
     "reference_reused": ReferenceReusedError,
     "rail_unavailable": RailUnavailableError,
+    "order_not_found": OrderNotFoundError,
+    "event_not_found": EventNotFoundError,
+    "payouts_disabled": PayoutsDisabledError,
+    "payout_daily_cap_exceeded": PayoutLimitExceededError,
+    "payout_amount_above_maximum": PayoutAmountError,
+    "payout_not_found": PayoutNotFoundError,
+    "payout_quote_not_found": PayoutQuoteNotFoundError,
+    "profile_required": ProfileRequiredError,
+    "identity_verification_required": IdentityVerificationRequiredError,
     "internal": InternalError,
 }
 

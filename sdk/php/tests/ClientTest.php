@@ -59,7 +59,7 @@ final class ClientTest extends TestCase
         $this->assertSame($expected['X-Kakitu-Signature'], $r['headers']['X-Kakitu-Signature']);
     }
 
-    public function testPostSignsTheExactBodyBytesAndAddsAnIdempotencyKey(): void
+    public function testPostSignsTheExactBodyBytes(): void
     {
         $t = new FakeTransport();
         $params = ['business_name' => 'Wanjirũ & Sons', 'callback_url' => 'https://shop.example/hook'];
@@ -68,9 +68,20 @@ final class ClientTest extends TestCase
         $r = $t->requests[0];
         $this->assertSame('{"business_name":"Wanjirũ & Sons","callback_url":"https://shop.example/hook"}', $r['body']);
         $this->assertSame('application/json', $r['headers']['Content-Type']);
-        $this->assertMatchesRegularExpression('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/', $r['headers']['Idempotency-Key']);
+        // POST /v1/merchants is an upsert and the server mounts NO idempotency on it.
+        $this->assertArrayNotHasKey('Idempotency-Key', $r['headers']);
         $expected = (new Signer(self::KEY, fn () => self::NOW))->headers('POST', '/v1/merchants', $r['body']);
         $this->assertSame($expected['X-Kakitu-Signature'], $r['headers']['X-Kakitu-Signature']);
+    }
+
+    public function testARouteThatRequiresAKeyGetsAGeneratedUuid(): void
+    {
+        $t = new FakeTransport();
+        $this->client($t)->charges->create(['amount' => 100, 'phone' => '0712345678', 'reference' => 'o-1']);
+        $this->assertMatchesRegularExpression(
+            '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/',
+            $t->requests[0]['headers']['Idempotency-Key'],
+        );
     }
 
     public function testCallerSuppliedIdempotencyKeyIsUsed(): void
@@ -211,6 +222,17 @@ final class ClientTest extends TestCase
             'charge_not_found' => Exception\NotFoundException::class,
             'reference_reused' => Exception\ConflictException::class,
             'rail_unavailable' => Exception\ApiException::class,
+            'order_not_found' => Exception\NotFoundException::class,
+            'event_not_found' => Exception\NotFoundException::class,
+            'payout_not_found' => Exception\NotFoundException::class,
+            'payout_quote_not_found' => Exception\NotFoundException::class,
+            'payouts_disabled' => Exception\MerchantException::class,
+            // 429, but its OWN budget on its own counter: never folded into daily_cap_exceeded.
+            'payout_daily_cap_exceeded' => Exception\RateLimitException::class,
+            // 400, not 429: waiting does not help, a smaller payout does.
+            'payout_amount_above_maximum' => Exception\InvalidRequestException::class,
+            'profile_required' => Exception\ConflictException::class,
+            'identity_verification_required' => Exception\ApiException::class,
             'internal' => Exception\ApiException::class,
         ];
         $this->assertEqualsCanonicalizing(ErrorCode::all(), array_keys($expect), 'covers the closed set');
