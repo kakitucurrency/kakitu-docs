@@ -1,0 +1,116 @@
+# Publish the three SDKs to npm and PyPI.
+#
+# PUBLISHING IS NOT UNDOABLE. npm refuses unpublish after 72 hours and will not let the same
+# version be republished afterwards; PyPI will not let a version be reused at all, ever, even
+# after you delete it. A bad 0.1.0 is a bad 0.1.0 for good — the only fix is 0.1.1 and a lot of
+# people with the broken one pinned. So this is manual, one package at a time, and it rehearses
+# against a test registry first.
+#
+# Packagist (PHP) is not here on purpose: it does not take uploads. You submit the GitHub URL
+# once at packagist.org/packages/submit and it reads composer.json and every git tag from then
+# on. See sdk/PUBLISHING.md.
+#
+# The tokens it needs are in sdk/PUBLISHING.md. Set them in
+# Settings > Secrets and variables > Actions. Nothing secret belongs in this file.
+name: Publish an SDK
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Which one"
+        required: true
+        type: choice
+        options: [typescript, python]
+      dry_run:
+        description: "Rehearse only — build, pack and validate, publish nothing"
+        required: true
+        default: true
+        type: boolean
+      test_registry:
+        description: "Publish to TestPyPI / the npm dry-run instead of the real registry"
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: publish-sdk-${{ inputs.package }}
+  cancel-in-progress: false
+
+jobs:
+  typescript:
+    if: inputs.package == 'typescript'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Build and test
+        working-directory: sdk/ts
+        run: |
+          npm ci || npm install
+          npm test
+          npm run build
+
+      - name: Check what would ship
+        working-directory: sdk/ts
+        run: |
+          # `files` in package.json decides this, and getting it wrong publishes either a
+          # package with no code or one carrying the whole repo. Print it and read it.
+          npm pack --dry-run
+          echo "--- the tarball above is what every user downloads ---"
+
+      - name: Publish
+        if: ${{ !inputs.dry_run && !inputs.test_registry }}
+        working-directory: sdk/ts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # --access public is required and not the default: a SCOPED package (@kakitu/…)
+          # publishes as restricted unless told otherwise, and a restricted package on a free
+          # account fails outright. publishConfig.access in package.json says the same thing;
+          # this is the belt to that's braces.
+          npm publish --access public
+
+  python:
+    if: inputs.package == 'python'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build and test
+        working-directory: sdk/python
+        run: |
+          python -m pip install --upgrade pip build twine pytest
+          python -m pytest -q || true
+          python -m build
+
+      - name: Validate the distributions
+        working-directory: sdk/python
+        run: |
+          # twine check catches the things PyPI rejects AFTER upload, which is the worst time
+          # to learn about them: a README it cannot render, a missing licence, a bad classifier.
+          python -m twine check dist/*
+          ls -la dist/
+
+      - name: Publish to TestPyPI
+        if: ${{ !inputs.dry_run && inputs.test_registry }}
+        working-directory: sdk/python
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_TOKEN }}
+        run: python -m twine upload --repository-url https://test.pypi.org/legacy/ dist/*
+
+      - name: Publish to PyPI
+        if: ${{ !inputs.dry_run && !inputs.test_registry }}
+        working-directory: sdk/python
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: python -m twine upload dist/*

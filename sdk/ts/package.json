@@ -6,9 +6,19 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
-  "files": ["dist", "README.md"],
-  "engines": { "node": ">=18" },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
@@ -22,5 +32,26 @@
     "@types/node": "22.10.2",
     "typescript": "5.9.3",
     "vitest": "3.2.4"
-  }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kakitucurrency/kakitu-docs.git",
+    "directory": "sdk/ts"
+  },
+  "homepage": "https://developer.kakitu.org",
+  "bugs": {
+    "url": "https://github.com/kakitucurrency/kakitu-docs/issues"
+  },
+  "keywords": [
+    "kakitu",
+    "kshs",
+    "kenya",
+    "m-pesa",
+    "stablecoin",
+    "payments",
+    "base"
+  ]
 }
