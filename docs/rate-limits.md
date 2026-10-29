@@ -9,7 +9,12 @@ Limits exist to protect payers. A collection rings a real handset, so the contro
 
 ## Limits that apply to collections
 
-These apply when charges are available ([not yet](./collections)). Each is its own error code:
+[Collections](./collections) exist, but they are switched on by a Kakitu operator: your merchant
+must be approved, and collections must be enabled on the platform. While they are switched off,
+`POST /v1/charges` answers `503 rail_unavailable` and no handset is rung. Payouts are separate and
+**off by default**: payouts are enabled per merchant on request (see [Payouts](./payouts)).
+
+Once collections are on for you, these apply. Each is its own error code:
 
 | Limit | Code | HTTP |
 |---|---|---|
@@ -75,6 +80,8 @@ Do not hammer `GET /v1/merchants/me`; read it when you need it. Each signed requ
 | `POST /v1/merchants` body | 16 KiB |
 | `POST /v1/charges` body | 16 KiB |
 | `POST /v1/quotes` body | 4 KiB |
+| `POST /v1/payouts/quote` and `POST /v1/payouts` body | 4 KiB |
+| `POST /v1/transfers` body | 1 MiB (the general limit below) |
 | Signed requests in general | 1 MiB |
 | `Idempotency-Key` | 255 characters |
 | `reference` | 128 characters |

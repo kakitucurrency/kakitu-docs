@@ -4,8 +4,11 @@ Accept M-Pesa payments through the Kakitu developer API. Kakitu authenticates by
 
 ## 60-second quickstart
 
+> **SDKs are being published — until then, sign requests directly (see [Authentication](https://developer.kakitu.org/docs/authentication) for complete signers) or copy the reference signer from this sdk/ folder.**
+> `pip install kakitu` does not work today; install from this folder instead.
+
 ```bash
-pip install -e .   # Python 3.10+
+pip install -e .   # Python 3.10+, run inside sdk/python
 export KAKITU_PRIVATE_KEY=0xYOUR_PRIVATE_KEY_HERE   # placeholder: use a secret store in production
 ```
 

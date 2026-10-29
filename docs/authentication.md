@@ -52,6 +52,13 @@ POST /v1/merchants 1758240002 7a4c4c0f0333102cffe5a64621024fe6d094cbcc71d771c251
 
 ## Complete examples
 
+:::note SDKs
+SDKs are being published — until then, sign requests directly (example below) or copy the
+reference signer from the [`sdk/` folder](https://github.com/kakitucurrency/kakitu-docs/tree/main/sdk).
+Do not `npm install @kakitu/sdk`, `pip install kakitu` or `composer require kakitu/kakitu-php` yet:
+none of those packages exists on its registry.
+:::
+
 Each of these is a whole program: it builds the message, signs it, sends the request and prints the answer. Each reads the key from `KAKITU_PRIVATE_KEY`. Do not put a key in source code or paste one into a support ticket, and make it a key generated for this integration rather than your personal wallet's — see [why a separate key](./quickstart#why-a-separate-key).
 
 <Tabs groupId="lang">

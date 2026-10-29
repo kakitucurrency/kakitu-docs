@@ -84,7 +84,7 @@ If you have not written the signing code yet, **[register in your browser](/sign
 
 | Field | Type | Rules |
 |---|---|---|
-| `business_name` | string, required | 1 to 100 characters. No control, invisible or text-direction characters (they would be rendered in a payer's M-Pesa prompt). |
+| `business_name` | string, required | 1 to 100 characters. No control, invisible or text-direction characters. This is the name an operator vets; it is **not** shown in the payer's M-Pesa prompt. |
 | `contact_email` | string, required | A plain address such as `a@b.co`. `Name <a@b.co>` is refused. At most 254 characters. |
 | `contact_phone` | string, optional | At most 20 characters: digits, `+`, spaces and hyphens only. |
 | `callback_url` | string, optional | See [callback URLs](#callback-urls). |
@@ -222,7 +222,7 @@ Why: an omitted or misspelt field must never silently wipe a webhook URL and sto
 
 ### business_name is frozen
 
-Once a merchant is past `pending`, `business_name` cannot be changed through the API. A request with a different name is refused with `409 merchant_name_frozen` and **nothing in that request is saved**. Why: the payer reads this name in the M-Pesa prompt when deciding whether to type a PIN, so it is fixed after vetting. A rename needs an operator: write to kakitu@kakitu.org.
+Once a merchant is past `pending`, `business_name` cannot be changed through the API. A request with a different name is refused with `409 merchant_name_frozen` and **nothing in that request is saved**. Why: it is the name an operator vetted, so it is fixed after vetting. It is **not** what the payer sees when deciding whether to type a PIN: the M-Pesa PIN prompt is issued by our payment partner and shows the partner's name, not yours. A rename needs an operator: write to kakitu@kakitu.org.
 
 Resubmitting the **same** name with new contact details is fine.
 

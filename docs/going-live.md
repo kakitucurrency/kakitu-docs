@@ -9,11 +9,11 @@ There is one environment: `https://walletapi.kakitu.org`. There is no separate s
 
 ## Why a person approves you
 
-**A collection rings a stranger's handset with a real M-Pesa PIN prompt, showing your business name.** If anyone could start those, the API would be a way to phish people. So every merchant is reviewed by a Kakitu operator before collections work. This is manual, deliberately.
+**A collection rings a stranger's handset with a real M-Pesa PIN prompt.** If anyone could start those, the API would be a way to phish people. So every merchant is reviewed by a Kakitu operator before collections work. This is manual, deliberately.
 
 ## The path
 
-1. **Register** with `POST /v1/merchants`. Use the business name you want payers to see; it is frozen after review.
+1. **Register** with `POST /v1/merchants`. Use your real trading name; it is frozen after review. (It is not shown in the M-Pesa prompt: the M-Pesa PIN prompt is issued by our payment partner and shows the partner's name, not yours.)
 2. **Write to kakitu@kakitu.org** with your wallet address and what you sell. Expect questions.
 3. **Approval.** An operator sets your state to `approved`, sets your limits, and issues your **webhook secret**. The secret is shown **once**. Store it in a secret manager at once; it cannot be retrieved later.
 4. **Confirm** with `GET /v1/merchants/me` that `state` is `approved`.

@@ -112,7 +112,7 @@ HTTP 201
 Registration is instant, and it only ever creates a `pending` merchant. You cannot set `state`, limits or a webhook secret from the request. See [Merchants](./merchants) for every field and rule.
 
 :::warning Choose business_name carefully
-The business name is what a payer reads in their M-Pesa prompt, so it is frozen once an operator has reviewed you. See [Merchants](./merchants#business_name-is-frozen).
+The business name is what an operator vets, so it is frozen once you have been reviewed. It is not shown in the payer's M-Pesa prompt: the M-Pesa PIN prompt is issued by our payment partner and shows the partner's name, not yours. See [Merchants](./merchants#business_name-is-frozen).
 :::
 
 ## 5. Ask for approval

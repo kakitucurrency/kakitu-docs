@@ -60,7 +60,7 @@ function validate(d: Details): Partial<Record<keyof Details, string>> {
 
   const name = d.business_name.trim();
   if (!name) {
-    errors.business_name = 'Required. This is the name the payer sees in the M-Pesa prompt.';
+    errors.business_name = 'Required. This is the name Kakitu reviews your account under.';
   } else if (name.length > 100) {
     errors.business_name = 'At most 100 characters.';
   } else if (FORBIDDEN_NAME_CHARS.test(name)) {
@@ -540,8 +540,9 @@ function SignupFlow() {
               required
             />
             <small className={styles.hint}>
-              Your payers read this name in the M-Pesa prompt before they type their PIN. It is
-              fixed once your account has been reviewed, so give the name customers know.
+              Your real trading name. It is fixed once your account has been reviewed. (The
+              M-Pesa PIN prompt is issued by our payment partner and shows their name, not this
+              one.)
             </small>
             {fieldErrors.business_name && (
               <span className={styles.fieldError}>{fieldErrors.business_name}</span>

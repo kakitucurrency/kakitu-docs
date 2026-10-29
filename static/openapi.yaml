@@ -177,8 +177,10 @@ paths:
         round-trips a merchant object does not break. Any other unknown field is refused with
         `400 invalid_request` naming the key.
 
-        `business_name` is frozen once the merchant is past `pending`, because payers read it in
-        their M-Pesa prompt. Submitting a different name then answers `409 merchant_name_frozen`
+        `business_name` is frozen once the merchant is past `pending`, because it is the name an
+        operator vetted. It is **not** shown in the payer's M-Pesa prompt: that prompt is issued
+        by our payment partner and shows the partner's name. Submitting a different name then
+        answers `409 merchant_name_frozen`
         and the message states whether anything was saved.
 
         Body limit 16 KiB. **No `Idempotency-Key` required.**
@@ -1458,8 +1460,9 @@ components:
           minLength: 1
           maxLength: 100
           description: |
-            At most 100 characters. No control, invisible or text-direction characters — payers
-            read this in their M-Pesa prompt. Frozen once the merchant is past `pending`.
+            At most 100 characters. No control, invisible or text-direction characters. It is the
+            name an operator vets; it does not appear in the M-Pesa prompt, which shows the
+            payment partner's name. Frozen once the merchant is past `pending`.
         contact_email:
           type: string
           maxLength: 254
@@ -1885,6 +1888,10 @@ components:
             channel:
               type: string
               enum: [mobile_money, buy_goods, paybill]
+              description: >-
+                `mobile_money` pays an M-Pesa number, `buy_goods` a till, `paybill` a paybill
+                (which also needs `reference`). Any other value, `mpesa` included, is
+                `400 invalid_request`.
             number:
               type: string
               description: The mobile number, till number or paybill number.

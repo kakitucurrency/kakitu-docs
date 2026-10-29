@@ -72,7 +72,7 @@ kakitu POST /v1/quotes '{"type":"deposit","amount_kes":1000,"phone":"25470000000
 
 # A withdrawal: amount_kes is what must LAND, and beneficiary is required.
 kakitu POST /v1/quotes \
-  '{"type":"withdrawal","amount_kes":500,"beneficiary":{"channel":"mpesa","number":"254712345678","reference":"inv-77"}}'
+  '{"type":"withdrawal","amount_kes":500,"beneficiary":{"channel":"mobile_money","number":"254712345678"}}'
 ```
 
 No `Idempotency-Key` on either one: a quote creates nothing, so there is nothing to protect.
@@ -105,7 +105,7 @@ const deposit = await call(wallet, "POST", "/v1/quotes", {
 const withdrawal = await call(wallet, "POST", "/v1/quotes", {
   type: "withdrawal",
   amount_kes: 500,             // what must LAND; we price backwards from here
-  beneficiary: { channel: "mpesa", number: "254712345678", reference: "inv-77" },
+  beneficiary: { channel: "mobile_money", number: "254712345678" },
 });
 
 // rate_kes_per_usdc is a STRING. A typed client that declares it `number` fails on this
@@ -142,7 +142,7 @@ _, deposit = call(account, "POST", "/v1/quotes", {
 _, withdrawal = call(account, "POST", "/v1/quotes", {
     "type": "withdrawal",
     "amount_kes": 500,           # what must LAND; we price backwards from here
-    "beneficiary": {"channel": "mpesa", "number": "254712345678", "reference": "inv-77"},
+    "beneficiary": {"channel": "mobile_money", "number": "254712345678"},
 })
 
 # rate_kes_per_usdc is a str. Decimal(...) it; a model that declares it float is wrong.
@@ -176,7 +176,7 @@ $key = getenv('KAKITU_PRIVATE_KEY');
 [, $withdrawal] = kakitu_call($key, 'POST', '/v1/quotes', [
     'type' => 'withdrawal',
     'amount_kes' => 500,         // what must LAND; we price backwards from here
-    'beneficiary' => ['channel' => 'mpesa', 'number' => '254712345678', 'reference' => 'inv-77'],
+    'beneficiary' => ['channel' => 'mobile_money', 'number' => '254712345678'],
 ]);
 
 // rate_kes_per_usdc is a string. Leave it one, or use bcmath. (float) loses precision.
@@ -197,6 +197,9 @@ var_dump(array_key_exists('quote_id', $deposit));   // false
 | `amount_kes` | integer, required | Whole shillings, at least 1. What it means depends on `type` — see below. |
 | `phone` | string | The payer's number, for a deposit. |
 | `beneficiary` | object | **Required for a withdrawal.** `{ "channel": …, "number": …, "reference": … }`. |
+| `beneficiary.channel` | string | Exactly one of `mobile_money` (an M-Pesa number, `2547…`), `buy_goods` (a till number, 4 to 10 digits) or `paybill` (a paybill number, 4 to 10 digits). Anything else, `mpesa` included, is `400 invalid_request`. |
+| `beneficiary.number` | string | The phone number, till number or paybill number, as the channel requires. |
+| `beneficiary.reference` | string | The account reference. **Required for `paybill`** (1 to 40 of letters, digits, space, `.`, `_`, `-`); not used by the other two channels. |
 
 **`amount_kes` is the number you care about, and it sits on a different side of the fee for each type.**
 

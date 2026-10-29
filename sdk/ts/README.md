@@ -4,8 +4,12 @@ Accept M-Pesa payments through Kakitu. The Kakitu API authenticates every reques
 
 ## 60-second quickstart
 
+> **SDKs are being published — until then, sign requests directly (see [Authentication](https://developer.kakitu.org/docs/authentication) for complete signers) or copy the reference signer from this sdk/ folder.**
+> `npm install @kakitu/sdk` answers 404 today; install from this folder instead.
+
 ```bash
-npm install @kakitu/sdk
+# from a checkout of kakitu-docs: build this folder and install it by path
+(cd sdk/ts && npm ci && npm run build) && npm install ./sdk/ts
 export KAKITU_PRIVATE_KEY=0x...   # your wallet key: use a secret store, never source code
 ```
 

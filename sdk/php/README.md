@@ -7,8 +7,13 @@ wallet's private key. This SDK does that for you. You never build a signature, a
 
 ## 60-second quickstart
 
+> **SDKs are being published — until then, sign requests directly (see [Authentication](https://developer.kakitu.org/docs/authentication) for complete signers) or copy the reference signer from this sdk/ folder.**
+> `composer require kakitu/kakitu-php` answers 404 on Packagist today; install from this folder instead.
+
 ```bash
-composer require kakitu/kakitu-php
+# from a checkout of kakitu-docs: point Composer at this folder
+composer config repositories.kakitu path ./sdk/php
+composer require kakitu/kakitu-php:@dev
 ```
 
 Put your wallet private key in an environment variable or your host's secret store. Never in code,

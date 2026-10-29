@@ -14,7 +14,9 @@ A collection (a *charge*) asks a payer's phone to approve an M-Pesa payment. Whe
 
 **Collections only work for an approved merchant.** A `pending`, `rejected` or `suspended` merchant is refused (`merchant_not_approved` or `merchant_suspended`, both 403) before anything else happens.
 
-The reason is plain: a collection **rings a stranger's handset with a real M-Pesa PIN prompt**, showing your business name. Without a human check, the endpoint would be a phishing tool. So a Kakitu operator reviews every merchant first. See [Going live](./going-live).
+The reason is plain: a collection **rings a stranger's handset with a real M-Pesa PIN prompt**. That prompt is issued by our payment partner and shows the partner's name, not yours, so the payer has to recognise the amount and the moment, not your brand. Without a human check, the endpoint would be a phishing tool. So a Kakitu operator reviews every merchant first. See [Going live](./going-live).
+
+Collections must also be switched on for the platform by an operator. While they are off, `POST /v1/charges` answers `503 rail_unavailable` and no handset is rung; ask kakitu@kakitu.org when they will be on for you.
 
 ## Running these examples
 
