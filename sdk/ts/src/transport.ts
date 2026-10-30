@@ -29,15 +29,39 @@ export interface RequestSpec {
   safeToRetry: boolean;
 }
 
-/** Query string exactly as it is both signed and sent (leading "?" only when non-empty). */
+/**
+ * RFC 3986 percent-encoding. encodeURIComponent leaves ! ' ( ) * alone, and fetch's URL parser
+ * then escapes ' in a query on its own, so the bytes on the wire stopped matching the bytes
+ * signed and a reference like "O'Brien" came back 401 bad_signature.
+ */
+export function encodeRfc3986(s: string): string {
+  return encodeURIComponent(s).replace(/[!'()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+}
+
+/** Query string (leading "?" only when non-empty). */
 export function buildQueryString(q?: RequestSpec["query"]): string {
   if (!q) return "";
   const parts: string[] = [];
   for (const [k, v] of Object.entries(q)) {
     if (v === undefined) continue;
-    parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
+    parts.push(`${encodeRfc3986(k)}=${encodeRfc3986(String(v))}`);
   }
   return parts.length ? "?" + parts.join("&") : "";
+}
+
+/**
+ * The request target as fetch will send it, and as the server will verify it.
+ *
+ * Both come from one WHATWG URL parse — the same parser fetch applies — so nothing fetch
+ * normalises can make them disagree. The server (auth/wallet.go RequestPath) signs Go's
+ * url.Path, which is the percent-DECODED path, plus the raw query exactly as received; so a
+ * path id that needed escaping is signed decoded, and the query is signed as sent.
+ */
+export function requestTarget(path: string, qs: string): { wire: string; signed: string } {
+  const u = new URL(path + qs, "https://kakitu.invalid");
+  let decoded = u.pathname;
+  try { decoded = decodeURIComponent(u.pathname); } catch { /* not valid UTF-8: the server will refuse it anyway */ }
+  return { wire: u.pathname + u.search, signed: decoded + u.search };
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -64,8 +88,7 @@ export class Transport {
     const rand = o.random ?? Math.random;
     const maxRetries = o.maxRetries ?? 3;
 
-    const qs = buildQueryString(spec.query);
-    const signedPath = spec.path + qs;
+    const { wire, signed: signedPath } = requestTarget(spec.path, buildQueryString(spec.query));
     // Serialise once; these exact bytes are hashed AND sent.
     const bodyBytes = spec.body === undefined ? new Uint8Array(0) : utf8ToBytes(JSON.stringify(spec.body));
 
@@ -98,7 +121,7 @@ export class Transport {
           signal: AbortSignal.timeout(o.timeoutMs ?? 30000),
         };
         if (spec.body !== undefined) init.body = bodyBytes as unknown as BodyInit;
-        res = await doFetch(this.baseUrl + signedPath, init);
+        res = await doFetch(this.baseUrl + wire, init);
       } catch (e) {
         netErr = e;
       }

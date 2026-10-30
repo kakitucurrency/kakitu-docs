@@ -156,7 +156,9 @@ final class Kakitu
 
         $url = $this->baseUrl . $pathAndQuery;
         // The server verifies the path it receives. If base_url carries a prefix, that is part of it.
-        $signedTarget = (string) parse_url($url, PHP_URL_PATH);
+        // It verifies Go's url.Path, which is percent-DECODED, so an escaped path id is signed
+        // decoded; the query is signed exactly as sent.
+        $signedTarget = rawurldecode((string) parse_url($url, PHP_URL_PATH));
         $rawQuery = parse_url($url, PHP_URL_QUERY);
         if (is_string($rawQuery) && $rawQuery !== '') {
             $signedTarget .= '?' . $rawQuery;

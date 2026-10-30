@@ -292,6 +292,40 @@ final class ClientTest extends TestCase
         $this->assertStringEndsWith('/v1/charges/ch%2F1%202', $t->requests[0]['url']);
     }
 
+    /**
+     * Regression: the server verifies Go's url.Path — the percent-DECODED path — plus the raw
+     * query as received (auth/wallet.go RequestPath). Signing the escaped path made any id that
+     * needed escaping a 401 bad_signature instead of the 404 the server means to answer.
+     */
+    public function testEscapedPathIdIsSignedAsTheServerReadsIt(): void
+    {
+        $t = new FakeTransport();
+        $this->client($t)->charges->get('ch/1 2é');
+        $r = $t->requests[0];
+        $this->assertStringEndsWith('/v1/charges/ch%2F1%202%C3%A9', $r['url']);
+        $expected = (new Signer(self::KEY, fn () => self::NOW))->headers('GET', '/v1/charges/ch/1 2é');
+        $this->assertSame($expected['X-Kakitu-Signature'], $r['headers']['X-Kakitu-Signature']);
+    }
+
+    public function testEscapedPathIdOnAPostIsSignedDecoded(): void
+    {
+        $t = new FakeTransport();
+        $this->client($t)->events->replay('evt 1');
+        $r = $t->requests[0];
+        $expected = (new Signer(self::KEY, fn () => self::NOW))->headers('POST', '/v1/events/evt 1/replay', $r['body'] ?? '');
+        $this->assertSame($expected['X-Kakitu-Signature'], $r['headers']['X-Kakitu-Signature']);
+    }
+
+    public function testQueryWithQuoteCharactersIsSignedAsSent(): void
+    {
+        $t = new FakeTransport(FakeTransport::json(200, ['data' => [], 'next_cursor' => null]));
+        $this->client($t)->charges->list(['reference' => "O'Brien (shop)!*"]);
+        $r = $t->requests[0];
+        $query = (string) parse_url($r['url'], PHP_URL_QUERY);
+        $expected = (new Signer(self::KEY, fn () => self::NOW))->headers('GET', '/v1/charges?' . $query);
+        $this->assertSame($expected['X-Kakitu-Signature'], $r['headers']['X-Kakitu-Signature']);
+    }
+
     public function testClientDumpDoesNotLeakTheKey(): void
     {
         ob_start();

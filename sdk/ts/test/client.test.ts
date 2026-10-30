@@ -69,6 +69,44 @@ describe("client signing on the wire", () => {
   });
 });
 
+// What the server verifies (auth/wallet.go RequestPath): Go's url.Path — the PERCENT-DECODED
+// path — plus "?" and RawQuery exactly as received. And what it receives is not the string we
+// hand to fetch but what fetch's WHATWG URL parser makes of it, which escapes ' in a query.
+function serverSignedPath(sentUrl: string): string {
+  const u = new URL(sentUrl);
+  return decodeURIComponent(u.pathname) + u.search;
+}
+function expectServerAccepts(c: Call, method: string) {
+  const h = c.init.headers as Record<string, string>;
+  const body = (c.init.body as Uint8Array | undefined) ?? new Uint8Array(0);
+  expect(h["X-Kakitu-Signature"]).toBe(
+    signMessage(parsePrivateKey(vectors.privateKey),
+      buildMessage(method, serverSignedPath(c.url), h["X-Kakitu-Timestamp"]!, body)));
+}
+
+describe("signs what the server sees (regressions)", () => {
+  it("a query value with ' ! ( ) * signs the bytes fetch actually sends", async () => {
+    const { k, calls } = harness([json(200, { data: [], next_cursor: null })]);
+    await k.charges.list({ reference: "O'Brien (shop)!*" });
+    expectServerAccepts(calls[0]!, "GET");
+    // RFC 3986 escaping, so the URL is stable under fetch's own parsing.
+    expect(calls[0]!.url).toBe("https://example.test/v1/charges?reference=O%27Brien%20%28shop%29%21%2A");
+  });
+
+  it("a path id that needs escaping is signed decoded, as the server reads it", async () => {
+    const { k, calls } = harness([json(200, { id: "x" })]);
+    await k.charges.get("ab c/é");
+    expect(calls[0]!.url).toBe("https://example.test/v1/charges/ab%20c%2F%C3%A9");
+    expectServerAccepts(calls[0]!, "GET");
+  });
+
+  it("a POST with an escaped path id is signed decoded too", async () => {
+    const { k, calls } = harness([json(200, { id: "e" })]);
+    await k.events.replay("evt 1");
+    expectServerAccepts(calls[0]!, "POST");
+  });
+});
+
 describe("idempotency", () => {
   it("auto-generates a key and reuses it across retries; override wins", async () => {
     const a = harness([json(503, env("rail_unavailable")), json(201, { id: "c" })]);

@@ -87,8 +87,11 @@ jobs:
       - name: Build and test
         working-directory: sdk/python
         run: |
-          python -m pip install --upgrade pip build twine pytest
-          python -m pytest -q || true
+          python -m pip install --upgrade pip build twine
+          # Install the package itself with its test extra: the tests import `kakitu`, and
+          # without it they fail on collection. A failing suite must stop the publish.
+          python -m pip install -e ".[test]"
+          python -m pytest -q
           python -m build
 
       - name: Validate the distributions

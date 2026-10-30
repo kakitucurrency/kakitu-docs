@@ -138,3 +138,34 @@ def test_webhook_verify():
         verify_webhook(body, hdr, "shhh", now=1700009999)
     with pytest.raises(WebhookVerificationError):
         verify_webhook(body, "garbage", "shhh")
+
+
+def _server_signed_path(req):
+    # What auth/wallet.go verifies: Go's url.Path (percent-DECODED) + "?" + RawQuery as received.
+    from urllib.parse import unquote
+    path, _, query = req.url.raw_path.decode().partition("?")
+    return unquote(path) + ("?" + query if query else "")
+
+
+def _assert_server_accepts(req, method, body=b""):
+    from kakitu.signing import build_message
+    from eth_account import Account
+    from eth_account.messages import encode_defunct
+    msg = build_message(method, _server_signed_path(req), req.headers["x-kakitu-timestamp"], body)
+    rec = Account.recover_message(encode_defunct(text=msg), signature=req.headers["x-kakitu-signature"])
+    assert rec == req.headers["x-kakitu-address"]
+
+
+def test_escaped_path_id_is_signed_as_the_server_reads_it():
+    def h(req):
+        assert req.url.raw_path == b"/v1/charges/ch%2F1%202%C3%A9"
+        _assert_server_accepts(req, "GET")
+        return httpx.Response(200, json=CHARGE)
+    make(h).charges.get("ch/1 2é")
+
+
+def test_query_with_quote_characters_is_signed_as_sent():
+    def h(req):
+        _assert_server_accepts(req, "GET")
+        return httpx.Response(200, json={"data": []})
+    make(h).charges.list(reference="O'Brien (shop)!*")
