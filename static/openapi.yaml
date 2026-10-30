@@ -1,24 +1,50 @@
 openapi: 3.1.0
 info:
   title: Kakitu developer API
-  version: 0.3.0
-  summary: Collect M-Pesa payments and be credited in KSHS at your own wallet address.
+  version: 0.3.1
+  summary: Register a business, move KSHS, and (when they open) collect and pay out by M-Pesa.
+  license:
+    name: MIT
+    identifier: MIT
   description: |
-    Kakitu is a Kenyan shilling stablecoin (KSHS). The developer API lets a business collect an
-    M-Pesa payment from a payer and be credited in KSHS **at its own wallet address**. Kakitu is
-    non-custodial: it never holds the merchant's money and never holds the merchant's key.
+    Kakitu is a Kenyan shilling stablecoin (KSHS). The developer API lets a business register
+    its own wallet address, send KSHS with Kakitu paying the gas, read prices, balances and
+    orders, and — once they open — collect an M-Pesa payment credited in KSHS **at its own wallet
+    address** and pay out to M-Pesa. Kakitu is non-custodial: it never holds the merchant's
+    money and never holds the merchant's key.
+
+    ## What is open today
+
+    **M-Pesa collections and payouts are not open.** `POST /v1/charges` answers
+    `503 rail_unavailable` before anything is written (nobody is prompted, the reference stays
+    free), and the two payout-sending routes answer `403`. The live way for a business to be
+    paid is a plain KSHS transfer to its address — the Kakitu extension's `pay()`, a `kakitu:`
+    link or a QR code — verified on chain by the merchant. See
+    https://developer.kakitu.org/docs/intro.
 
     ## Access
 
-    The developer API is in private release. Registration is open to anyone; a Kakitu operator
-    activates each merchant before it can collect or pay out.
+    The developer API is in private release. Registration is open to anyone. Only the routes
+    that move money check approval: `POST /v1/charges` and `POST /v1/transfers` refuse a
+    merchant that is not `approved`, and so do `POST /v1/payouts/quote` and `POST /v1/payouts`.
+    Every other route needs a signed request and nothing more.
 
     **Payouts are off by default.** They are governed by two switches that are ANDed: a global
     one for the whole platform, and a per-merchant one on your own record. Both are an
-    operator's decision and neither can be turned on through this API. Until both are on, every
-    payout route answers `403 payouts_disabled` — and which of the two is off is deliberately
-    not revealed. Collecting is a separate permission from paying out, with its own caps and its
-    own counter; being approved to collect does not enable payouts.
+    operator's decision and neither can be turned on through this API. Until both are on, the
+    two routes that price and send a payout answer an approved merchant with
+    `403 payouts_disabled` — and which of the two is off is deliberately not revealed. A
+    merchant that is not approved gets `403 merchant_not_approved` first. The two read routes,
+    `GET /v1/payouts` and `GET /v1/payouts/{id}`, never answer `payouts_disabled`. Collecting
+    is a separate permission from paying out, with its own caps and its own counter; being
+    approved to collect does not enable payouts.
+
+    ## Trying requests from this page
+
+    The "Try it" console on the API reference **cannot sign requests**: every route except
+    `GET /config` needs an EIP-191 signature made with your wallet key, which a browser form
+    has no way to produce. Sent from here, they answer `401`. Use the signers on
+    https://developer.kakitu.org/docs/authentication or an SDK.
 
     The request and response shapes in this document are final.
 
@@ -41,7 +67,8 @@ info:
     ```
 
     - `{METHOD}` is upper-case.
-    - `{path}` is the URL path. The raw query string is appended, prefixed with `?`,
+    - `{path}` is the URL path as the server decodes it (an escaped `%20` in a path segment
+      is signed as a space). The raw query string is appended, prefixed with `?`,
       **byte-for-byte as sent**, and only when it is non-empty.
     - `{timestamp}` is the same value as the `X-Kakitu-Timestamp` header.
     - `{sha256hex(body)}` is lowercase hex SHA-256 over the **raw** request body. For a request
@@ -85,7 +112,7 @@ info:
 
     ## Idempotency
 
-    Three of the six `POST` routes require an `Idempotency-Key` header; three do not.
+    Three of the seven `POST` routes require an `Idempotency-Key` header; four do not.
 
     | Route | `Idempotency-Key` |
     | --- | --- |
@@ -114,20 +141,45 @@ info:
       with the same key.
 
     A body larger than 1 MiB on a route behind this middleware is `413 request_too_large`
-    (individual handlers impose smaller limits of their own — see each route).
+    (individual handlers impose smaller limits of their own — see each route;
+    `POST /v1/transfers` answers an over-size body with `400 invalid_request`).
 
     ## Rate limiting
 
-    Responses from the `/v1` chain carry:
+    There are three limiters, and a request meets them in this order.
+
+    **1. Per caller IP, on every route.** Before the signature is checked, the platform counts
+    requests per IP address (100 a minute by default; configuration). Every response carries
+    its headers:
+
+    - `X-RateLimit-Limit` — requests allowed per minute from this IP.
+    - `X-RateLimit-Remaining` — how many are left.
+    - `X-RateLimit-Reset` — unix time, in seconds, when the window resets.
+
+    Over it answers `429` with `Retry-After: 60` and the **older body shape**, not the
+    envelope: `{"error": "too_many_requests"}`. Many integrations behind one egress IP share
+    this allowance.
+
+    **2. Per authenticated address, on every `/v1` route.** Responses from the `/v1` chain
+    carry:
 
     - `RateLimit-Limit` — requests allowed in the current one-minute window.
     - `RateLimit-Remaining` — how many are left, never below 0.
     - `RateLimit-Reset` — seconds until the window rolls over.
 
     Over the limit answers `429 rate_limited` and adds `Retry-After` (same value as
-    `RateLimit-Reset`). The limiter keys on the **authenticated address**, never on IP, so your
-    egress IP and your neighbours' do not matter. It fails open: if its backing store is down
-    you are not throttled, and reads keep working.
+    `RateLimit-Reset`). It fails open: if its backing store is down you are not throttled, and
+    reads keep working.
+
+    **3. `POST /v1/quotes`: 30 a minute per address.** A second, process-local limit that holds
+    even when the shared store is down, because every quote is a live partner call. Over it
+    answers `429 rate_limited` with `Retry-After` (seconds left in the minute). It is not
+    reflected in the `RateLimit-*` headers.
+
+    `Retry-After` is guaranteed on those three 429s only. The money caps —
+    `daily_cap_exceeded`, `payer_velocity_exceeded`, `payout_daily_cap_exceeded`, and the
+    `rate_limited` answers from the charges-per-minute cap, the payer prompt limit and the
+    hourly transfer cap — may come without it.
 
     ## Resources belonging to someone else
 
@@ -143,17 +195,41 @@ security:
 tags:
   - name: Merchants
     description: Register the signing wallet as a business and read its record.
+  - name: Public
+    description: Unauthenticated platform configuration.
   - name: Charges
-    description: Collect an M-Pesa payment and be credited in KSHS.
+    description: Collect an M-Pesa payment and be credited in KSHS. Not open yet — answers `503 rail_unavailable`.
   - name: Transfers
     description: Gasless KSHS transfers signed by the caller.
   - name: Payouts
-    description: Send shillings to a beneficiary's M-Pesa. Off by default; enabled per merchant by an operator.
+    description: Send shillings to a beneficiary's M-Pesa. Not open yet; off by default and enabled per merchant by an operator.
   - name: Reads
     description: Balances, orders, limits and prices.
   - name: Events
     description: Webhook delivery history and replay.
 paths:
+  /config:
+    get:
+      operationId: getConfig
+      tags: [Public]
+      summary: Read public chain configuration, limits and prices
+      description: |
+        Unauthenticated: no signature, no headers. Not part of `/v1` and not under the `/v1`
+        error envelope or per-address limiter; only the per-IP limiter applies. The KSHS
+        contract to verify payments against, the per-transfer ceiling, the cash-out band and
+        the live fee schedule are all here.
+      security: []
+      responses:
+        '200':
+          description: The configuration.
+          headers:
+            X-RateLimit-Limit: { $ref: '#/components/headers/XRateLimitLimit' }
+            X-RateLimit-Remaining: { $ref: '#/components/headers/XRateLimitRemaining' }
+            X-RateLimit-Reset: { $ref: '#/components/headers/XRateLimitReset' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicConfig' }
+        '429': { $ref: '#/components/responses/PerIPRateLimited' }
   /v1/merchants:
     post:
       operationId: registerMerchant
@@ -178,8 +254,9 @@ paths:
         `400 invalid_request` naming the key.
 
         `business_name` is frozen once the merchant is past `pending`, because it is the name an
-        operator vetted. It is **not** shown in the payer's M-Pesa prompt: that prompt is issued
-        by our payment partner and shows the partner's name. Submitting a different name then
+        operator vetted. It is also passed to the payment partner as the account-holder name on
+        a collection, so a payer **may** see it in the M-Pesa prompt; what the prompt displays
+        is the partner's decision. Submitting a different name then
         answers `409 merchant_name_frozen`
         and the message states whether anything was saved.
 
@@ -272,6 +349,14 @@ paths:
         The server-owned fields `id`, `status`, `currency`, `created_at`, `paid_at` and
         `settled_at` are accepted and dropped; any other unknown field is `400 invalid_request`.
 
+        **Not open yet.** While collections are switched off this route answers
+        `503 rail_unavailable` before anything is written.
+
+        **The merchant is credited less than `amount`.** `amount` is what the payer is asked for;
+        the KSHS minted to the merchant is what the payment partner's USDC buys at Kakitu's rate
+        net of the mint spread — never more than `amount`, usually a little less. The credited
+        figure is not in this response or the webhook today; read it on chain.
+
         Body limit 16 KiB. **`Idempotency-Key` is REQUIRED.** Retrying with the same key replays
         the first response and the payer's handset rings exactly once.
       parameters:
@@ -329,6 +414,8 @@ paths:
           description: |
             `rate_limited`, `daily_cap_exceeded` (the merchant's daily collection cap) or
             `payer_velocity_exceeded` (this payer has been prompted too often today).
+            `Retry-After` is sent only with the shared per-minute limit; the charges-per-minute
+            cap, the daily cap and the payer limit may come without it.
           headers:
             Retry-After: { $ref: '#/components/headers/RetryAfter' }
           content:
@@ -336,7 +423,17 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '500': { $ref: '#/components/responses/Internal' }
         '503':
-          description: '`rail_unavailable` (collections are temporarily unavailable) or `idempotency_unavailable`.'
+          description: |
+            `rail_unavailable` or `idempotency_unavailable`.
+
+            While collections are switched off, `rail_unavailable` comes before anything is
+            written: nobody is prompted and the `reference` stays free.
+
+            Once they are on, `rail_unavailable` can also come **after** the charge row was
+            written and the rail was asked to prompt the payer. Then the `reference` is consumed
+            and the handset **may already have rung**. Do not retry with a new `reference`
+            until `GET /v1/charges?reference=…` shows no charge for the old one; if one exists,
+            follow it instead of prompting the payer again.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -492,7 +589,7 @@ paths:
             `invalid_request` — a malformed or unusable signed transfer, a `from` that is not the
             authenticated address, a transfer the chain says would revert (nothing was sent), or
             a permit that another transfer from the same wallet has made out of date (nothing was
-            delivered; sign fresh and use a NEW key). Also `amount_below_minimum`,
+            delivered; sign fresh and use a NEW key), or a body over 4 KiB. Also `amount_below_minimum`,
             `amount_above_maximum`, `idempotency_key_required` and `idempotency_key_invalid`.
           content:
             application/json:
@@ -523,12 +620,18 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '413':
-          description: '`request_too_large` — the body is larger than 1 MiB.'
+          description: |
+            `request_too_large` — the body is larger than 1 MiB. A body over **4 KiB** (and up
+            to 1 MiB) is refused earlier with `400 invalid_request`: the signed transfer is read
+            with a 4 KiB limit.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '429':
-          description: '`rate_limited` (the merchant''s hourly transfer cap) or `daily_cap_exceeded` (this wallet''s daily transfer limit).'
+          description: |
+            `rate_limited` (the merchant's hourly transfer cap, or the shared per-minute limit)
+            or `daily_cap_exceeded` (this wallet's daily transfer limit). `Retry-After` is sent
+            only with the per-minute limit; the hourly and daily caps may come without it.
           headers:
             Retry-After: { $ref: '#/components/headers/RetryAfter' }
           content:
@@ -626,9 +729,9 @@ paths:
         '401': { $ref: '#/components/responses/AuthFailure' }
         '403':
           description: |
-            `payouts_disabled` (payouts are not switched on for this merchant — contact support),
-            `merchant_not_approved`, `merchant_suspended`, or
-            `identity_verification_required`.
+            `merchant_not_approved` or `merchant_suspended` (checked first), then
+            `payouts_disabled` (payouts are not switched on — today they are off for every
+            merchant), or `identity_verification_required`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -638,7 +741,12 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '409':
-          description: '`profile_required` — this wallet has no profile yet.'
+          description: |
+            `profile_required` — this wallet has no profile (phone number and name), which the
+            cash-out partner needs. There is no `/v1` route for it: save one with the wallet's
+            own `POST /profile` (same signature headers; body
+            `{"phone": "2547XXXXXXXX", "first_name": "…", "last_name": "…"}`) or in the Kakitu
+            app.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -652,7 +760,8 @@ paths:
             `rate_limited`, or `payout_daily_cap_exceeded` — this merchant's daily **payout**
             budget is spent; it resets at midnight East Africa Time. This is deliberately not
             `daily_cap_exceeded`, which is the separate **collection** cap: raising that one
-            would change nothing here.
+            would change nothing here. `Retry-After` is sent only with the shared per-minute
+            `rate_limited`.
           headers:
             Retry-After: { $ref: '#/components/headers/RetryAfter' }
           content:
@@ -696,13 +805,20 @@ paths:
         - `transfer.deadline` must be in the future and **no later than** the quote's
           `deadline`. Earlier is your own business.
 
-        Anything else is `400 invalid_request` and nothing is sent.
+        Anything else is `400 invalid_request` and nothing is sent — **but the quote and the
+        day's budget are already spent.** This route accepts the quote id (spending it, and
+        counting the amount against the daily payout cap) **before** it compares the signed
+        transfer with it. A mismatched signature therefore costs the quote and that much
+        budget; get a new quote and sign exactly what it says.
 
         ### 202 means accepted, and there are two kinds of accepted
 
         This route answers **202** in both successful cases — read `status`:
 
-        - `status: "dispatched"` — handed to the worker; the money is on its way.
+        - `status: "dispatched"` — handed to the worker; the money is on its way. **Today this
+          may be the last status the API reports**: the rail's outcome is not yet carried back
+          onto the payout, so it can stay `dispatched`, and there is no `payout.paid` or
+          `payout.failed` event.
         - `status: "held"` — **a normal, expected answer and not an error.** A payout above the
           merchant's hold threshold is accepted but parked for a person to look at. Nothing has
           been sent. `message` says so. Poll `GET /v1/payouts/{id}` for the outcome.
@@ -716,8 +832,8 @@ paths:
 
         ### The daily budget is spent here
 
-        The per-merchant daily payout cap is counted at this moment, once, and there is no
-        refund path: a payout that is accepted and then fails has still spent the budget. Retry
+        The per-merchant daily payout cap is counted at this moment, once — before the signed
+        transfer is checked — and there is no refund path: a payout that is accepted and then fails has still spent the budget. Retry
         a failed payout by creating a **new** one, never by expecting this row to move again.
 
         Unknown fields are refused outright (`400 invalid_request`). Body limit 4 KiB.
@@ -747,15 +863,16 @@ paths:
             `invalid_request` (unknown field, missing `quote_id` or `transfer`, or a signed
             transfer that does not match the quote — nothing was sent),
             `payout_amount_above_maximum`, `amount_below_minimum`, `amount_above_maximum`,
-            `idempotency_key_required` or `idempotency_key_invalid`.
+            `idempotency_key_required` or `idempotency_key_invalid`. A signed transfer that does
+            not match the quote has still spent the quote and the day's budget.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '401': { $ref: '#/components/responses/AuthFailure' }
         '403':
           description: |
-            `payouts_disabled`, `merchant_not_approved`, `merchant_suspended`, or
-            `identity_verification_required`.
+            `merchant_not_approved` or `merchant_suspended` (checked first), then
+            `payouts_disabled`, or `identity_verification_required`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -769,8 +886,9 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '409':
           description: |
-            `profile_required`, or one of the idempotency conflicts: `idempotency_key_reuse`,
-            `idempotency_key_in_progress`, `idempotency_key_acted`.
+            `profile_required` (no profile yet: save one with `POST /profile`, see
+            `POST /v1/payouts/quote`), or one of the idempotency conflicts:
+            `idempotency_key_reuse`, `idempotency_key_in_progress`, `idempotency_key_acted`.
 
             `idempotency_key_acted` is also the answer when the payout was handed over and its
             outcome is **not known to us**. The money may already have moved and the key is
@@ -790,7 +908,8 @@ paths:
         '429':
           description: |
             `rate_limited`, or `payout_daily_cap_exceeded` — the daily **payout** budget, not
-            the collection cap. It resets at midnight East Africa Time.
+            the collection cap. It resets at midnight East Africa Time. `Retry-After` is sent
+            only with the shared per-minute `rate_limited`.
           headers:
             Retry-After: { $ref: '#/components/headers/RetryAfter' }
           content:
@@ -887,6 +1006,9 @@ paths:
 
         This is the poll for a `held` payout: it stays `held` until a person releases it (→
         `dispatched`), refuses it (→ `cancelled`), or its signed permit lapses (→ `expired`).
+
+        A `dispatched` payout may stay `dispatched`: the rail's outcome is not yet projected back
+        onto it, so `paid` and `failed` are not reported today.
       parameters:
         - name: id
           in: path
@@ -920,6 +1042,9 @@ paths:
       description: |
         Reads the caller's own KSHS and USDC balances from the chain. An address with no history
         holds zero; that is an answer, not an error.
+
+        `kshs.amount_kes` is whole shillings, **rounded down**: a balance of 99.99 KSHS reads
+        `99`. A chain read that fails answers `500 internal`, not `503`; retry shortly.
 
         Both balances state their `network`. KSHS v2 is an ERC-20 on Base — a customer has
         already lost money sending a token to a Kakitu address on the wrong chain, so the chain
@@ -1030,6 +1155,10 @@ paths:
         and there is no route today that would redeem one.
 
         Unknown fields are refused outright (`400 invalid_request`). Body limit 4 KiB.
+
+        **30 quotes a minute per address**, on top of the shared per-minute limit, enforced
+        even when the shared limiter's store is down. Over it: `429 rate_limited` with
+        `Retry-After`. It is not reflected in the `RateLimit-*` headers.
       requestBody:
         required: true
         content:
@@ -1062,7 +1191,12 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '409':
-          description: '`profile_required` — this wallet has no profile yet.'
+          description: |
+            `profile_required` — this wallet has no profile (phone number and name), which the
+            cash-out partner needs. There is no `/v1` route for it: save one with the wallet's
+            own `POST /profile` (same signature headers; body
+            `{"phone": "2547XXXXXXXX", "first_name": "…", "last_name": "…"}`) or in the Kakitu
+            app.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -1355,7 +1489,20 @@ components:
       description: Seconds until the current window rolls over.
       schema: { type: integer }
     RetryAfter:
-      description: Seconds to wait before retrying. Same value as `RateLimit-Reset`.
+      description: |
+        Seconds to wait before retrying. Sent with the shared per-minute `rate_limited` (same
+        value as `RateLimit-Reset`), the quote limit and the per-IP `too_many_requests`. **May
+        be absent** on the other 429s listed with it; do not assume it is there.
+      required: false
+      schema: { type: integer }
+    XRateLimitLimit:
+      description: The per-IP limiter's allowance per minute. Present on every response.
+      schema: { type: integer }
+    XRateLimitRemaining:
+      description: Requests left from this IP in the current window.
+      schema: { type: integer }
+    XRateLimitReset:
+      description: Unix time, in seconds, when the per-IP window resets.
       schema: { type: integer }
     IdempotentReplayed:
       description: Present and `true` when this is the stored response of an earlier request with the same `Idempotency-Key`.
@@ -1406,8 +1553,9 @@ components:
   responses:
     WebhookAccepted:
       description: |
-        Any 2xx, and nothing else, counts as delivered. Answer as soon as you have stored the
-        event and do your work afterwards — a receiver that processes before answering turns a
+        Any 2xx, and nothing else, counts as delivered, **within 10 seconds**: an attempt that
+        has not answered by then is a `timeout` failure and is retried. Answer as soon as you
+        have stored the event and do your work afterwards — a receiver that processes before answering turns a
         slow job into a retry. The response body is read to a bound and discarded.
     WebhookRejected:
       description: |
@@ -1430,15 +1578,35 @@ components:
               - $ref: '#/components/schemas/AuthError'
               - $ref: '#/components/schemas/ErrorEnvelope'
     RateLimited:
-      description: '`rate_limited` — too many requests from this address in the current minute.'
+      description: |
+        `rate_limited` — too many requests from this address in the current minute (the
+        envelope). Or, from the per-IP limiter in front of every route, `too_many_requests` in
+        the older shape `{"error": "too_many_requests"}`. Branch on whether `error` is a string
+        or an object.
       headers:
         Retry-After: { $ref: '#/components/headers/RetryAfter' }
         RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
         RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
         RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+        X-RateLimit-Limit: { $ref: '#/components/headers/XRateLimitLimit' }
+        X-RateLimit-Remaining: { $ref: '#/components/headers/XRateLimitRemaining' }
+        X-RateLimit-Reset: { $ref: '#/components/headers/XRateLimitReset' }
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/ErrorEnvelope'
+              - $ref: '#/components/schemas/TooManyRequests'
+    PerIPRateLimited:
+      description: '`too_many_requests` from the per-IP limiter, in the older body shape.'
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+        X-RateLimit-Limit: { $ref: '#/components/headers/XRateLimitLimit' }
+        X-RateLimit-Remaining: { $ref: '#/components/headers/XRateLimitRemaining' }
+        X-RateLimit-Reset: { $ref: '#/components/headers/XRateLimitReset' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/TooManyRequests' }
     Internal:
       description: '`internal` — something went wrong on our side. The message is always the same sentence; quote `request_id` to support.'
       content:
@@ -1460,9 +1628,10 @@ components:
           minLength: 1
           maxLength: 100
           description: |
-            At most 100 characters. No control, invisible or text-direction characters. It is the
-            name an operator vets; it does not appear in the M-Pesa prompt, which shows the
-            payment partner's name. Frozen once the merchant is past `pending`.
+            1 to 100 characters. No control, invisible or text-direction characters. It is the
+            name an operator vets, and it is passed to the payment partner as the
+            account-holder name on a collection, so a payer may see it in the M-Pesa prompt.
+            Frozen once the merchant is past `pending`.
         contact_email:
           type: string
           maxLength: 254
@@ -1520,7 +1689,8 @@ components:
       description: |
         Kakitu's own vocabulary, never the payment rail's. `pending` created, nothing sent yet;
         `prompted` the payer's handset has been rung; `paid` the rail says the payer paid;
-        `settled` the merchant's wallet is credited on chain. `settled` and `cancelled` are
+        `settled` the merchant's wallet is credited on chain (with the KSHS minted for the
+        payment, which is less than `amount`). `settled` and `cancelled` are
         terminal; `failed` and `expired` are not, because a late completion can still arrive.
       enum: [pending, prompted, paid, settled, failed, expired, cancelled]
     ChargeRequest:
@@ -1605,16 +1775,18 @@ components:
         phone:
           type: string
           description: |
-            The beneficiary's Kenyan mobile number, in `2547xxxxxxxx` form. This is who gets
-            paid. It is echoed back on the quote and on the payout.
+            The beneficiary's Kenyan mobile number: `254`, then `7` or `1`, then eight digits.
+            No `+`, no leading `0`. This is who gets paid. It is echoed back on the quote and on
+            the payout.
+          pattern: '^254[17]\d{8}$'
         name:
           type: string
           minLength: 1
-          maxLength: 100
           description: |
             **Your** name for the person being paid, and what their M-Pesa statement shows. It
             is never derived from the sending merchant's own profile. Required, at most 100
-            characters.
+            **bytes** of UTF-8 after trimming — a non-ASCII letter counts two or more, so
+            fewer than 100 such characters fit.
     PayoutQuoteRequest:
       type: object
       additionalProperties: false
@@ -1761,7 +1933,7 @@ components:
           type: object
           required: [amount_kes, network]
           properties:
-            amount_kes: { type: integer, format: int64, description: Whole shillings. }
+            amount_kes: { type: integer, format: int64, description: 'Whole shillings, rounded down. A fraction of a shilling is not shown.' }
             network: { type: string, description: 'The chain the balance is on, e.g. `base`.' }
         usdc:
           type: object
@@ -2242,6 +2414,46 @@ components:
         profile_required: 409
         identity_verification_required: 403
         internal: 500
+    TooManyRequests:
+      type: object
+      description: |
+        The per-IP limiter's 429 body. It is NOT the standard error envelope: `error` is a
+        string, and there is no `request_id` or `message`.
+      required: [error]
+      properties:
+        error: { type: string, const: too_many_requests }
+    PublicConfig:
+      type: object
+      description: |
+        Public chain configuration and live limits and prices. Every value can change without
+        a release; read it rather than hard-coding it. Fields not listed may be added.
+      properties:
+        chain_id: { type: integer, description: 'Base mainnet, `8453`.' }
+        kshs_contract: { type: string, description: The KSHS ERC-20 contract on Base. Verify payments against its `Transfer` logs. }
+        forwarder: { type: string, description: The gasless-transfer forwarder. }
+        usdc_contract: { type: string }
+        treasury_address: { type: string }
+        public_rpc_url: { type: string }
+        relay_max_per_tx_kes: { type: integer, description: 'Largest single KSHS transfer Kakitu relays, in whole shillings.' }
+        deposit_max_per_order_usd: { type: integer }
+        deposit_min_per_order_usd: { type: integer }
+        withdraw_max_per_order_kes: { type: integer, description: 'Largest single cash-out to M-Pesa, in shillings that land. Live from the cash-out partner.' }
+        withdraw_min_per_order_kes: { type: integer, description: Smallest single cash-out to M-Pesa. `0` means not known. }
+        directory_bucket_hex: { type: integer }
+        directory_max_buckets: { type: integer }
+        min_supported_build: { type: integer }
+        latest_build: { type: integer }
+        store_url_android: { type: string }
+        store_url_ios: { type: string, description: Empty while there is no listing. }
+        mint_rate_kes_per_usdc: { type: string, description: 'A decimal string, e.g. "131". Not a JSON number.' }
+        mint_spread_bps: { type: integer }
+        agent_fee_bps: { type: integer }
+        agent_fee_cap_kshs: { type: integer }
+        agency_mode: { type: string }
+        platform_fee_bps: { type: integer, description: "Kakitu's share of an agent's counter fee. Not charged on wallet-to-wallet payments." }
+        platform_fee_cap_kshs: { type: integer }
+        agent_min_float_usdc: { type: integer }
+        order_expiry_minutes: { type: integer }
     AuthError:
       type: object
       description: |
