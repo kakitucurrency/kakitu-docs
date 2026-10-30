@@ -266,9 +266,9 @@ If you want a price you can **act on**, that is [`POST /v1/payouts/quote`](./pay
 | `unauthorized` | 401 | The request was not signed. |
 | `amount_below_minimum` | 400 | Under the band. `GET /v1/limits` shows it. |
 | `amount_above_maximum` | 400 | Over the band. |
-| `profile_required` | 409 | This wallet has no profile yet. It must be completed before a quote can be priced. |
+| `profile_required` | 409 | This wallet has no profile yet: a phone number and name, which the cash-out partner needs on every order. There is no `/v1` route for it; save one with `POST /profile` or in the Kakitu app. See [Cash out](./cash-out#2-a-profile-once). |
 | `identity_verification_required` | 403 | This amount needs the customer's identity verified first. |
-| `rate_limited` | 429 | Too many requests from this wallet. |
+| `rate_limited` | 429 | Too many requests from this wallet: the shared per-minute limit, or the **30 quotes a minute** this route allows on its own. `Retry-After` says how long to wait. |
 | `rail_unavailable` | 503 | Pricing is temporarily unavailable. Retry shortly. |
 | `internal` | 500 | Something went wrong on our side. Quote the `request_id`; do not retry in a loop. |
 

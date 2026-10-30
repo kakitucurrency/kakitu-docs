@@ -1,6 +1,6 @@
 # Kakitu Python SDK
 
-Accept M-Pesa payments through the Kakitu developer API. Kakitu authenticates by **signing every request with your wallet key**, not with a bearer token. This SDK does the signing for you, so you never build a signature, a timestamp or a body hash yourself.
+A client for the Kakitu developer API. M-Pesa collections and payouts are not open yet ([status](https://developer.kakitu.org/docs/intro)); registration, transfers and the reads work today. Kakitu authenticates by **signing every request with your wallet key**, not with a bearer token. This SDK does the signing for you, so you never build a signature, a timestamp or a body hash yourself.
 
 ## 60-second quickstart
 
@@ -8,7 +8,10 @@ Accept M-Pesa payments through the Kakitu developer API. Kakitu authenticates by
 > `pip install kakitu` does not work today; install from this folder instead.
 
 ```bash
-pip install -e .   # Python 3.10+, run inside sdk/python
+# Python 3.10+. Straight from git:
+pip install "kakitu @ git+https://github.com/kakitucurrency/kakitu-docs#subdirectory=sdk/python"
+# or, from a checkout, inside sdk/python:
+pip install -e .
 export KAKITU_PRIVATE_KEY=0xYOUR_PRIVATE_KEY_HERE   # placeholder: use a secret store in production
 ```
 

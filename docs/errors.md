@@ -53,7 +53,7 @@ Every `/v1/` endpoint answers an error with one envelope:
 | `payout_amount_above_maximum` | 400 | Over the largest single payout allowed for this merchant. |
 | `payout_not_found` | 404 | No such payout for this merchant. See [Payouts](./payouts). |
 | `payout_quote_not_found` | 404 | The payout quote does not exist, has expired, or has already been spent. |
-| `profile_required` | 409 | This wallet has no profile yet. It must be completed before a quote can be priced. |
+| `profile_required` | 409 | This wallet has no profile yet: a phone number and name, which the cash-out partner needs on every order. There is no `/v1` route for it; save one with `POST /profile` or in the Kakitu app. See [Cash out](./cash-out#2-a-profile-once). |
 | `identity_verification_required` | 403 | The amount needs the customer's identity verified first. |
 | `internal` | 500 | Something went wrong on our side. Quote the request_id. |
 

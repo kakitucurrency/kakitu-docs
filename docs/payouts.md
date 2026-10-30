@@ -8,13 +8,17 @@ import TabItem from '@theme/TabItem';
 
 # Payouts
 
+:::warning Payouts are not open
+Payouts are switched off for every merchant today. To take your own takings out, [cash out](./cash-out) from the Kakitu app.
+:::
+
 A payout sends shillings **out** — from your KSHS balance to somebody's M-Pesa. You price it, you sign it with your own key, and we hand the signed result to the rail that pays the beneficiary.
 
 It is the opposite direction from [collections](./collections), and it is deliberately not the same object with the sign flipped. A charge is money arriving; a payout is money leaving, and the permissions, the caps and the counters behind the two are separate from end to end.
 
 ## Payouts are off by default
 
-**Read this before you write any of it.** Payouts are off for everybody until an operator switches them on, and off for your merchant until an operator switches them on for you. Both switches must be on. While either is off, every route on this page answers:
+**Read this before you write any of it.** Payouts are off for everybody until an operator switches them on, and off for your merchant until an operator switches them on for you. Both switches must be on. While either is off, the two routes that price and send a payout — `POST /v1/payouts/quote` and `POST /v1/payouts` — answer an approved merchant with:
 
 ```json
 HTTP 403
@@ -28,6 +32,8 @@ HTTP 403
 ```
 
 Being `approved` is not enough. Approval lets you collect; it does not let you pay out. These are two decisions, taken by a person, and the second is not implied by the first — write to **kakitu@kakitu.org** and ask for payouts specifically.
+
+A merchant that is not approved gets `403 merchant_not_approved` first, before the switches are looked at. The two **read** routes, `GET /v1/payouts` and `GET /v1/payouts/{id}`, never answer `payouts_disabled`: see [who can call these](#who-can-call-these).
 
 One code covers both switches on purpose. Which of the two is off is an operator's business, and an endpoint that told you would let anyone probe how the platform is configured.
 
@@ -53,7 +59,7 @@ The daily payout budget resets at **midnight East Africa Time**, not UTC.
 
 **You do not have to discover your own numbers by being refused.** [`GET /v1/limits`](./limits#payout-limits) publishes them: your per-payout maximum, your daily cap, what is left of today's budget, and the threshold above which a payout is [held](#the-hold). They are read from the same place the refusals above read them, so they cannot disagree.
 
-The budget is checked twice: at quote time, so you learn you are over it **before** you sign anything, and again when you confirm, which is the call that actually spends it. A payout that is accepted and then fails has still spent the day's budget — there is no refund path, because a counter that could be refunded is a counter that can be raced.
+The budget is checked twice: at quote time, so you learn you are over it **before** you sign anything, and again when you confirm, which is the call that actually spends it — before the signed transfer is checked ([why that matters](#the-quote-is-single-use-and-yours-alone)). A payout that is accepted and then fails has still spent the day's budget — there is no refund path, because a counter that could be refunded is a counter that can be raced.
 
 ## The shape of it
 
@@ -138,8 +144,8 @@ Content-Type: application/json
 | Field | Type | Rules |
 |---|---|---|
 | `amount_kes` | integer, required | A whole number of shillings, at least 1. It is what **lands on the beneficiary**, not what leaves you. |
-| `beneficiary.phone` | string, required | A Kenyan mobile number as `2547xxxxxxxx`. |
-| `beneficiary.name` | string, required | The person being paid. See below. |
+| `beneficiary.phone` | string, required | A Kenyan mobile number, `254` then `7` or `1` then eight digits: `^254[17]\d{8}$`. No `+`, no leading `0`. |
+| `beneficiary.name` | string, required | The person being paid, 1 to 100 **bytes** after trimming (a non-ASCII letter takes two or more). See below. |
 
 Unknown fields are refused with `invalid_request` rather than ignored. On a route that authorises money leaving, a mistyped field name must be a refusal and not an instruction that was silently dropped. The body is limited to 4 KiB (`request_too_large`, 413).
 
@@ -517,6 +523,8 @@ HTTP 404
 
 They are indistinguishable on purpose. An error that told them apart would say whether another merchant's quote id is real.
 
+**The quote, and that much of the day's budget, are spent before your signature is checked.** `POST /v1/payouts` accepts the quote id first and only then compares the signed transfer with it. A transfer that does not match — wrong `from`, `to`, `value_wei` or `deadline` — is `400 invalid_request` with nothing sent, but the quote is used up and the amount counts against today's cap. Get a new quote, sign exactly what it says, and check your signing code before you retry in a loop.
+
 **A quote id from anywhere else is refused the same way.** `POST /v1/quotes` issues no id at all — it prices a number for you to show somebody — and the wallet app's older `/ramp/*` quotes carry ids that mean nothing here. This route has its own ids in their own namespace, so a quote minted outside it is refused exactly as one that never existed. That is the whole reason this route exists instead of a `type: "payout"` on `/v1/quotes`: a quote obtained from a route with no merchant, no approval and no payout cap behind it must not be spendable at a confirm that has all three. It is also what stops one quote being replayed past the caps.
 
 ### The response
@@ -577,7 +585,7 @@ That is not the same as a person saying no. If an operator refuses a held payout
 |---|---|---|
 | `quoted` | no | Priced, nothing signed, nothing moved. |
 | `held` | no | Signed and accepted, deliberately **not** sent. Waiting for a person. |
-| `dispatched` | no | Handed to the worker. The money is leaving. |
+| `dispatched` | no | Handed to the worker. The money is leaving. **Today this may be the last status you see**: see below. |
 | `paid` | **yes** | The beneficiary has the money. |
 | `failed` | **yes** | It did not go through. |
 | `cancelled` | **yes** | A person refused it. Nothing was sent. **Do not re-submit.** |
@@ -594,6 +602,13 @@ quoted ──► held ──► dispatched ──► paid
 ```
 
 Three things that are refused and worth knowing are refused: a `paid` payout can never be dispatched again, nothing can skip `dispatched` to reach `paid`, and a `cancelled` payout cannot be revived by a late caller.
+
+:::warning `dispatched` may be final as far as the API reports today
+The server does not yet carry the rail's outcome back onto a payout. A dispatched payout stays
+`dispatched` in `GET /v1/payouts/{id}`, and there is no `payout.paid` or `payout.failed` event.
+Treat `dispatched` as "handed over, outcome not reported", confirm with the beneficiary, and ask
+support with the payout id if one goes missing. This is one of the reasons payouts are not open.
+:::
 
 **All four terminal states really are final.** This is where a payout differs from a [charge](./collections#status) on purpose: a `failed` charge can still turn out to have been paid, because it is our projection of a rail's word about money coming in. A payout row is the **authority** for money going out, so re-opening one would let a late message send a second disbursement against a budget that was only ever charged once. A retry is always a **new payout**, never this one moving again — which also means the amount is counted against your cap again.
 
@@ -861,7 +876,7 @@ Read it. **That sentence is the only place a hold is explained to you**, and a p
 | `request_too_large` | 413 | The body is over 4 KiB. |
 | `amount_below_minimum` | 400 | Under the rail's band. [`GET /v1/limits`](./limits) shows it. |
 | `amount_above_maximum` | 400 | Over the rail's band. |
-| `profile_required` | 409 | This wallet has no profile yet. |
+| `profile_required` | 409 | This wallet has no profile yet: a phone number and name, which the cash-out partner needs on every order. There is no `/v1` route for it; save one with `POST /profile` or in the Kakitu app. See [Cash out](./cash-out#2-a-profile-once). |
 | `identity_verification_required` | 403 | This amount needs identity verification first. |
 | `rate_limited` | 429 | Too many requests from this wallet. |
 | `rail_unavailable` | 503 | Pricing is temporarily unavailable, or we could not count your budget. Nothing was priced. Retry shortly. |

@@ -1,6 +1,6 @@
 # @kakitu/sdk (TypeScript)
 
-Accept M-Pesa payments through Kakitu. The Kakitu API authenticates every request by signing it with your wallet key instead of using a bearer token. This SDK does the signing, so you never build a signature, a timestamp or a header yourself.
+A client for the Kakitu developer API. M-Pesa collections and payouts are not open yet ([status](https://developer.kakitu.org/docs/intro)); registration, transfers and the reads work today. The Kakitu API authenticates every request by signing it with your wallet key instead of using a bearer token. This SDK does the signing, so you never build a signature, a timestamp or a header yourself.
 
 ## 60-second quickstart
 
@@ -8,8 +8,11 @@ Accept M-Pesa payments through Kakitu. The Kakitu API authenticates every reques
 > `npm install @kakitu/sdk` answers 404 today; install from this folder instead.
 
 ```bash
-# from a checkout of kakitu-docs: build this folder and install it by path
-(cd sdk/ts && npm ci && npm run build) && npm install ./sdk/ts
+# npm cannot install from a subfolder of a git repository, and dist/ is not committed,
+# so clone, build a tarball, and install that
+git clone --depth 1 https://github.com/kakitucurrency/kakitu-docs
+(cd kakitu-docs/sdk/ts && npm ci && npm run build && npm pack)
+npm install ./kakitu-docs/sdk/ts/kakitu-sdk-0.1.0.tgz
 export KAKITU_PRIVATE_KEY=0x...   # your wallet key: use a secret store, never source code
 ```
 

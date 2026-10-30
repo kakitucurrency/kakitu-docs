@@ -9,6 +9,12 @@ The Kakitu Wallet Chrome extension lets a website **sign a customer in** with th
 and **take a KSHS payment** from them, with no API key in your front end. The relayer pays the
 Base gas, so your customer needs KSHS and nothing else.
 
+:::note Installing the extension
+The extension is **not on the Chrome Web Store yet**; the listing is coming soon. Until it is,
+most of your customers will not have it, so always offer the [phone flow](#pay-with-kakitu-on-a-phone)
+beside a **Pay with Kakitu** button, and build for `getKakituWallet()` resolving `null`.
+:::
+
 This page is the website side. Nothing here uses the signed `/v1` API: a merchant can accept
 extension payments before, or without, registering as a [merchant](./merchants).
 

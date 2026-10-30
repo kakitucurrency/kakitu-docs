@@ -7,25 +7,39 @@ title: Going live
 
 There is one environment: `https://walletapi.kakitu.org`. There is no separate sandbox for the developer API yet. Registering a merchant is safe, because a `pending` merchant can do nothing that costs money.
 
+## What is live, and what is not
+
+| | Status today |
+|---|---|
+| Being paid in KSHS at your address (`pay()`, `kakitu:` links, QR) | **Live.** Needs no registration. See [the quickstart](./quickstart#2-take-a-payment). |
+| [Cashing out](./cash-out) to M-Pesa from the Kakitu app | **Live**, within the [limits](./pricing). |
+| Registering, reading, [transfers](./transfers) once approved | **Live.** |
+| M-Pesa collections (`POST /v1/charges`) | **Not open.** Answers `503 rail_unavailable`; nobody is prompted. |
+| Payouts (`POST /v1/payouts/quote`, `POST /v1/payouts`) | **Not open.** Off for every merchant. |
+
+Approval does not change the last two rows. We will say here, and write to approved merchants, when they open.
+
 ## Why a person approves you
 
-**A collection rings a stranger's handset with a real M-Pesa PIN prompt.** If anyone could start those, the API would be a way to phish people. So every merchant is reviewed by a Kakitu operator before collections work. This is manual, deliberately.
+**A collection rings a stranger's handset with a real M-Pesa PIN prompt, and a transfer spends gas we pay for.** If anyone could start those, the API would be a way to phish people and drain our relayer. So every merchant is reviewed by a Kakitu operator before either works. This is manual, deliberately.
 
 ## The path
 
-1. **Register** with `POST /v1/merchants`. Use your real trading name; it is frozen after review. (It is not shown in the M-Pesa prompt: the M-Pesa PIN prompt is issued by our payment partner and shows the partner's name, not yours.)
+1. **Register** with `POST /v1/merchants`. Use your real trading name; it is frozen after review, and it is passed to our payment partner as the account-holder name on a collection, so a payer may see it in their M-Pesa prompt.
 2. **Write to kakitu@kakitu.org** with your wallet address and what you sell. Expect questions.
 3. **Approval.** An operator sets your state to `approved`, sets your limits, and issues your **webhook secret**. The secret is shown **once**. Store it in a secret manager at once; it cannot be retrieved later.
 4. **Confirm** with `GET /v1/merchants/me` that `state` is `approved`.
-5. **Collect.** Create [charges](./collections).
+5. **Use it.** [Transfers](./transfers) work at once. [Charges](./collections) will work when collections open.
 
-Paying money **out** is a separate request and a separate decision: approval does not switch payouts on. Ask for them by name. See [Payouts](./payouts#payouts-are-off-by-default).
+Paying money **out** through the API is a separate request and a separate decision: approval does not switch payouts on, and they are not open for anyone yet. See [Payouts](./payouts#payouts-are-off-by-default). To get your own takings out today, [cash out](./cash-out) from the app.
 
 ## Checklist before you take real payments
 
-- [ ] The key you registered was generated for this integration, not exported from your personal wallet ([why](./quickstart#why-a-separate-key)).
+- [ ] The wallet you registered was generated for this business, not your personal wallet ([why](./quickstart#why-a-separate-wallet)).
 - [ ] Your private key is in a secret manager or environment variable, not in code, not in git.
-- [ ] You keep a backup of that key. It is both your credential and where your money lands. Losing it loses both.
+- [ ] The 12-word recovery phrase is written down and stored offline. It is both your credential and where your money lands. Losing it loses both.
+- [ ] You have imported the phrase into the Kakitu app and [cashed out](./cash-out) a small amount, so you know the way out works before you need it.
+- [ ] You verify every payment on chain, and never accept a screenshot.
 - [ ] Your `callback_url` is https, public, and punycode if non-ASCII.
 - [ ] You generate a fresh `Idempotency-Key` per logical charge and reuse it only to retry that charge.
 - [ ] You generate a unique `reference` per charge and a new one after a refused charge.

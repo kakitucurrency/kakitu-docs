@@ -4,6 +4,8 @@ const sidebars: SidebarsConfig = {
   docs: [
     'intro',
     'quickstart',
+    'cash-out',
+    'pricing',
     'authentication',
     'merchants',
     'collections',

@@ -1,6 +1,6 @@
 # Kakitu PHP SDK
 
-Accept M-Pesa payments settled in KES stablecoin, from any PHP 8.1+ site (WooCommerce, Laravel, plain PHP).
+A PHP 8.1+ client for the Kakitu developer API, usable from Laravel, Symfony or plain PHP. There is no WooCommerce plugin; this is a library you call from your own code. M-Pesa collections and payouts are not open yet (see [the introduction](https://developer.kakitu.org/docs/intro)).
 
 Kakitu authenticates by **request signing**, not a bearer token: every request is signed with your
 wallet's private key. This SDK does that for you. You never build a signature, a timestamp or a header.
@@ -11,8 +11,10 @@ wallet's private key. This SDK does that for you. You never build a signature, a
 > `composer require kakitu/kakitu-php` answers 404 on Packagist today; install from this folder instead.
 
 ```bash
-# from a checkout of kakitu-docs: point Composer at this folder
-composer config repositories.kakitu path ./sdk/php
+# Composer cannot install from a subfolder of a git repository, so clone it and point
+# Composer at the folder
+git clone --depth 1 https://github.com/kakitucurrency/kakitu-docs
+composer config repositories.kakitu path ./kakitu-docs/sdk/php
 composer require kakitu/kakitu-php:@dev
 ```
 

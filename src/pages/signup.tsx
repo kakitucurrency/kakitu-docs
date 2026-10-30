@@ -431,9 +431,10 @@ function SignupFlow() {
     <div className={styles.page}>
       <h1>Register as a Kakitu merchant</h1>
       <p className={styles.lede}>
-        Collect M-Pesa payments and be paid in KSHS straight to your own wallet. This page
-        creates the wallet that is both your API credential and your settlement address, and
-        submits your registration for review. It takes about two minutes.
+        Be paid in KSHS straight to your own wallet, and register it with the developer API. This
+        page creates the wallet that is both your API credential and the address you are paid
+        at, and submits your registration for review. It takes about two minutes. (M-Pesa
+        collections through the API are not open yet; you can accept KSHS today.)
       </p>
 
       <ol className={styles.steps}>
@@ -540,9 +541,9 @@ function SignupFlow() {
               required
             />
             <small className={styles.hint}>
-              Your real trading name. It is fixed once your account has been reviewed. (The
-              M-Pesa PIN prompt is issued by our payment partner and shows their name, not this
-              one.)
+              Your real trading name. It is fixed once your account has been reviewed. It is
+              passed to our payment partner as the account-holder name on an M-Pesa collection,
+              so payers may see it in their PIN prompt.
             </small>
             {fieldErrors.business_name && (
               <span className={styles.fieldError}>{fieldErrors.business_name}</span>
@@ -723,12 +724,14 @@ function SignupFlow() {
 
                 {secretsRef.current.phrase && (
                   <details className={styles.disclosure}>
-                    <summary>Show the same key as 12 words (easier to write on paper)</summary>
+                    <summary>Show the 12-word recovery phrase (write this down: you need it to cash out)</summary>
                     <div className={styles.secretBlock}>
                       <p className={styles.footnote} style={{ marginTop: '0.5rem' }}>
                         This phrase and the private key above are the <em>same secret</em> in two
-                        forms. Saving one is enough. Anyone who reads either one controls the
-                        money.
+                        forms. Keep the phrase: it is what opens this wallet in the Kakitu app,
+                        which is how you <Link to="/docs/cash-out">cash out to M-Pesa</Link>. The
+                        app cannot import the private key. Anyone who reads either one controls
+                        the money.
                       </p>
                       <pre className={`${styles.secret} ${styles.phrase}`}>
                         {secretsRef.current.phrase}
@@ -759,9 +762,9 @@ function SignupFlow() {
                 }}
               />
               <span>
-                I have saved the private key somewhere safe. I understand Kakitu does not have a
-                copy and cannot recover it, and that whoever holds it controls the money that
-                settles to this address.
+                I have saved the private key and the 12-word recovery phrase somewhere safe. I
+                understand Kakitu does not have a copy and cannot recover them, and that whoever
+                holds either one controls the money paid to this address.
               </span>
             </label>
             {savedConfirmed && !keyVisible && (

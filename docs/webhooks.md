@@ -88,6 +88,8 @@ Because retries run for up to 24 hours, a body can arrive after its subject has 
 
 ## What you must answer
 
+**Answer within 10 seconds.** We wait 10 seconds for your response; after that the attempt is a `timeout` and is retried. Acknowledge first and do the work afterwards.
+
 **A `2xx`, and nothing else counts as delivered.** A `3xx` is a failure and the redirect is not followed — following one would carry a body signed for your host to a host the signature was never meant for.
 
 Answer as soon as you have stored the event and do your work afterwards. A receiver that finishes its processing before answering turns a slow job into a retry, and a retry into a duplicate.

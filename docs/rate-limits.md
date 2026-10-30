@@ -46,7 +46,7 @@ This one **fails closed**: if we cannot count, we refuse. A limit on our own mon
 
 ## Requests per minute
 
-Every `/v1` endpoint is also counted per minute, keyed on **your authenticated address** — not your IP. An IP bucket would be meaningless for a server-side integration: one busy merchant behind one egress IP would throttle itself while a hundred merchants across a cloud provider would not be limited at all.
+Every `/v1` endpoint is also counted per minute, keyed on **your authenticated address**.
 
 Three headers come back on every `/v1` response:
 
@@ -60,16 +60,32 @@ Over the limit you get `429 rate_limited`, plus **`Retry-After`** in seconds, an
 
 Unlike the money controls, this one **fails open**: if our counter is unavailable your request goes through. It protects us from load; it is not a safety control, and a Redis outage must not stop you reading your own charges.
 
-## Other 429s
+### Quotes: 30 a minute
 
-The platform also has a per-IP limiter in front of everything, including `/v1`. It answers with the **older error shape** and a `Retry-After`:
+`POST /v1/quotes` has a second, tighter limit of its own: **30 a minute per address**, counted on our side even when the shared counter is down, because every quote is a live call to a pricing partner. Over it you get `429 rate_limited` with `Retry-After` set to the seconds left in the minute. It does not appear in the `RateLimit-*` headers, which describe the shared limit only.
+
+## The per-IP limit in front of everything
+
+Before any of the above, the platform counts requests **per caller IP**, across every route including `/v1` and before your signature is checked. Its allowance is configuration (100 a minute by default). It sets its own headers on every response:
+
+| Header | Meaning |
+|---|---|
+| `X-RateLimit-Limit` | Requests allowed per minute from this IP. |
+| `X-RateLimit-Remaining` | How many are left. |
+| `X-RateLimit-Reset` | Unix time, in seconds, when the window resets. |
+
+Over it you get the **older error shape**, not the `/v1` envelope, with `Retry-After: 60`:
 
 ```json
 HTTP 429
 { "error": "too_many_requests" }
 ```
 
-Branch on whether `error` is a string or an object, as on the [Errors](./errors#authentication-failures) page.
+Branch on whether `error` is a string or an object, as on the [Errors](./errors#authentication-failures) page. This is the limit that bites when many integrations share one egress IP, or one integration polls hard from one: spread reads out, and ask us if a legitimate workload needs more.
+
+## Retry-After
+
+`Retry-After` is sent with three 429s only: the shared per-minute limit (the one the `RateLimit-*` headers describe), the 30-a-minute quote limit, and the per-IP `too_many_requests`. **Every other 429 may come without it**: `daily_cap_exceeded`, `payer_velocity_exceeded`, `payout_daily_cap_exceeded`, and the `rate_limited` answers that come from the charges-per-minute cap, the payer prompt limit or the hourly transfer cap. When it is missing, do not retry in a loop: a daily cap resets at a known time (midnight UTC for transfers, midnight East Africa Time for payouts), and the hourly transfer cap within the hour.
 
 Do not hammer `GET /v1/merchants/me`; read it when you need it. Each signed request must also be unique (see [replays](./authentication#time-and-replay)), so a tight retry loop that resends an identical request in the same second fails with `replay` rather than being rate limited.
 
@@ -81,10 +97,10 @@ Do not hammer `GET /v1/merchants/me`; read it when you need it. Each signed requ
 | `POST /v1/charges` body | 16 KiB |
 | `POST /v1/quotes` body | 4 KiB |
 | `POST /v1/payouts/quote` and `POST /v1/payouts` body | 4 KiB |
-| `POST /v1/transfers` body | 1 MiB (the general limit below) |
+| `POST /v1/transfers` body | 4 KiB. Larger is `400 invalid_request`, not `413` |
 | Signed requests in general | 1 MiB |
 | `Idempotency-Key` | 255 characters |
 | `reference` | 128 characters |
 | `limit` on a list endpoint | 1 to 100, default 20 |
 
-A body over its endpoint's limit is `413 request_too_large`. A body over 1 MiB is refused during authentication, before it reaches the endpoint at all.
+A body over its endpoint's limit is `413 request_too_large`, except on `POST /v1/transfers`, where it is `400 invalid_request`. A body over 1 MiB is refused during authentication, before it reaches the endpoint at all.

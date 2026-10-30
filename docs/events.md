@@ -27,7 +27,7 @@ A merchant's integration branches on `type` and on nothing else, so each of thes
 | `type` | About | What it tells you |
 |---|---|---|
 | `charge.paid` | a charge | The payer paid. |
-| `charge.settled` | a charge | The KSHS is at your address. |
+| `charge.settled` | a charge | The KSHS is at your address: the amount minted for this payment, which is less than `charge.amount`. |
 | `charge.failed` | a charge | The charge did not go through. |
 | `payout.expired` | a payout | **It was not sent. Sign and submit it again.** |
 | `payout.cancelled` | a payout | **It was not sent. A person refused it. Do not submit it again.** |
@@ -115,7 +115,7 @@ The KSHS is at your address on chain. This is the event to release goods on.
 |---|---|---|
 | `charge.id` | string, UUID | **Always.** |
 | `charge.reference` | string | **Always, and never empty.** |
-| `charge.amount` | integer | **Always.** Whole shillings. |
+| `charge.amount` | integer | **Always.** Whole shillings the payer was asked for. **Not** what you were credited: the KSHS minted to you is less, by our partner's fee and our spread. See [below](#charges-and-payouts-name-their-amounts-differently). |
 | `charge.currency` | string | **Always** `"KES"`. |
 | `charge.status` | string | **Always** `"settled"` on this type. |
 | `charge.paid_at` | string, RFC 3339 UTC | **Always a timestamp on this type**, never `null`. If the charge jumped straight to settled without a `charge.paid` ever being raised, this is the moment it settled. |
@@ -241,11 +241,12 @@ A `payout.*` body carries no `held_at`, `dispatched_at` or `paid_at`, because no
 
 | | Charge | Payout |
 |---|---|---|
-| What was asked for / what lands | `amount` | `amount_kes` |
+| What was asked for (charge) / what lands on the beneficiary (payout) | `amount` | `amount_kes` |
+| What reaches your wallet | *not in the payload* — less than `amount`; read the mint on chain | — |
 | Kakitu's fee | *not in the payload* | `fee_kes` |
 | What leaves your wallet | *not in the payload* | `send_kes` |
 
-This is not a slip to be tidied up later: each payload uses the names its own API already uses, so you meet one vocabulary whether you poll [`GET /v1/charges`](./collections) or [`GET /v1/payouts/{id}`](./payouts), or listen. A charge has no fee field in the webhook because a collection's fee is not part of what the merchant is told here.
+This is not a slip to be tidied up later: each payload uses the names its own API already uses, so you meet one vocabulary whether you poll [`GET /v1/charges`](./collections) or [`GET /v1/payouts/{id}`](./payouts), or listen. A charge has no fee or credited field today, so do not book `amount` as revenue: the KSHS that reaches your wallet is smaller, by our payment partner's fee and the mint spread (`mint_spread_bps` in `GET /config`). Read the credited figure from the mint `Transfer` to your address. See [Pricing, limits and settlement](./pricing).
 
 ### What is never in a payload
 

@@ -8,15 +8,23 @@ import TabItem from '@theme/TabItem';
 
 # Collections
 
-A collection (a *charge*) asks a payer's phone to approve an M-Pesa payment. When they pay, the shilling amount is credited as KSHS to your merchant wallet.
+A collection (a *charge*) asks a payer's phone to approve an M-Pesa payment. When they pay, your merchant wallet is credited in KSHS.
+
+**You are credited less than `amount`.** `amount` is what the payer is asked for. Our payment partner converts those shillings to USDC at its rate and takes its fee, and we mint KSHS against the USDC that arrives, at our rate net of the mint spread (`mint_spread_bps` in [`GET /config`](https://walletapi.kakitu.org/config)). The KSHS minted to you is the credit: never more than `amount`, and usually a little less. Neither the charge nor its webhook carries the credited figure today; read it from the mint `Transfer` to your address on chain. See [Pricing, limits and settlement](./pricing).
+
+:::warning Collections are not open yet
+Collections are switched off for every merchant. `POST /v1/charges` answers `503 rail_unavailable`
+and nobody is prompted. This page documents the final shapes so you can build against them; to
+be paid today, accept KSHS directly (see the [quickstart](./quickstart#2-take-a-payment)).
+:::
 
 ## Operator approval is required
 
 **Collections only work for an approved merchant.** A `pending`, `rejected` or `suspended` merchant is refused (`merchant_not_approved` or `merchant_suspended`, both 403) before anything else happens.
 
-The reason is plain: a collection **rings a stranger's handset with a real M-Pesa PIN prompt**. That prompt is issued by our payment partner and shows the partner's name, not yours, so the payer has to recognise the amount and the moment, not your brand. Without a human check, the endpoint would be a phishing tool. So a Kakitu operator reviews every merchant first. See [Going live](./going-live).
+The reason is plain: a collection **rings a stranger's handset with a real M-Pesa PIN prompt**. That prompt is issued by our payment partner. We pass your `business_name` to the partner as the account-holder name, and the prompt **may** show it, but what the prompt displays is the partner's decision: the payer must be able to recognise the amount and the moment, not only a name. Without a human check, the endpoint would be a phishing tool. So a Kakitu operator reviews every merchant first. See [Going live](./going-live).
 
-Collections must also be switched on for the platform by an operator. While they are off, `POST /v1/charges` answers `503 rail_unavailable` and no handset is rung; ask kakitu@kakitu.org when they will be on for you.
+Collections must also be switched on for the platform by an operator. While they are off, `POST /v1/charges` answers `503 rail_unavailable` before anything is written: no handset is rung, no charge row exists, and the `reference` stays free.
 
 ## Running these examples
 
@@ -423,7 +431,7 @@ The list is scoped to your merchant in the query itself, not by a filter we reme
 | `pending` | Created, nothing sent yet. |
 | `prompted` | The payer's handset has been rung. |
 | `paid` | The rail says the payer paid. |
-| `settled` | Your wallet has been credited on chain. Final. |
+| `settled` | Your wallet has been credited on chain with the KSHS minted for this payment, which is less than `amount` ([why](./pricing#fees)). Final. |
 | `failed` | The attempt did not complete. |
 | `expired` | The charge ran out of time. |
 | `cancelled` | Cancelled. Final. |
@@ -446,6 +454,12 @@ A charge only moves forward. `pending` can also stay `pending` if the rail accep
 If the payment rail refuses a charge **before** a handset is rung (for example `amount_below_minimum`, `amount_above_maximum`, or `rate_limited` for too many prompts to that payer), the key is released and you may reuse it. But the charge row and its `reference` were already written, so that **reference is now closed**. A retry must use **the same key and a new `reference`**, otherwise you get `409 reference_reused`. The error message says "retry with a new reference" when this applies.
 
 Refusals made earlier, by Kakitu's own checks (not approved, malformed request, a reference you already used, your daily cap, per-charge maximum or per-minute rate), write no charge row, so the reference stays free. Fix the cause and retry.
+
+### A 503 after the rail was asked
+
+Once collections are on, `503 rail_unavailable` can also come **after** the charge row was written and the rail was asked to prompt the payer. Then the `reference` is consumed, and the payer's handset **may already have rung**: a rail that times out cannot tell us whether its prompt went out.
+
+So **do not answer a `503` by retrying with a new `reference`** until you have checked. Read `GET /v1/charges?reference=<your reference>`: if a charge comes back, that attempt exists and may still be paid; follow its status rather than prompting the payer again. Only when no charge exists for that reference is a fresh attempt safe.
 
 ### idempotency_key_acted
 

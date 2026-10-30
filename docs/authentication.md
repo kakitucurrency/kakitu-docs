@@ -27,7 +27,7 @@ The signature is an **EIP-191 `personal_sign`** signature over exactly this stri
 ```
 
 - `METHOD` is upper case.
-- `path` is the URL path. If there is a query string, append `?` and the query **exactly as sent, byte for byte**. If there is none, add no `?`.
+- `path` is the URL path **as the server decodes it**: an escaped character in a path segment (`%20`) is signed as the character it stands for. You rarely meet this, because every id we issue is plain ASCII. If there is a query string, append `?` and the query **exactly as sent, byte for byte**. If there is none, add no `?`.
 - `timestamp` is the same string you put in `X-Kakitu-Timestamp`.
 - `sha256hex(body)` is the lowercase hex SHA-256 of the **raw request body bytes**. For `GET` and `DELETE`, and for any request with no body, it is the SHA-256 of the empty string: `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
 
@@ -53,13 +53,27 @@ POST /v1/merchants 1758240002 7a4c4c0f0333102cffe5a64621024fe6d094cbcc71d771c251
 ## Complete examples
 
 :::note SDKs
-SDKs are being published — until then, sign requests directly (example below) or copy the
-reference signer from the [`sdk/` folder](https://github.com/kakitucurrency/kakitu-docs/tree/main/sdk).
-Do not `npm install @kakitu/sdk`, `pip install kakitu` or `composer require kakitu/kakitu-php` yet:
-none of those packages exists on its registry.
+The SDKs are not on npm, PyPI or Packagist yet: `npm install @kakitu/sdk`, `pip install kakitu`
+and `composer require kakitu/kakitu-php` all fail. Install them from this repository instead, or
+sign requests directly with the programs below.
+
+```bash
+# Python
+pip install "kakitu @ git+https://github.com/kakitucurrency/kakitu-docs#subdirectory=sdk/python"
+
+# TypeScript: npm cannot install from a subfolder of a git repo, so build a tarball
+git clone --depth 1 https://github.com/kakitucurrency/kakitu-docs
+(cd kakitu-docs/sdk/ts && npm ci && npm run build && npm pack)
+npm install ./kakitu-docs/sdk/ts/kakitu-sdk-0.1.0.tgz
+
+# PHP: Composer cannot either, so point it at the folder
+git clone --depth 1 https://github.com/kakitucurrency/kakitu-docs
+composer config repositories.kakitu path ./kakitu-docs/sdk/php
+composer require kakitu/kakitu-php:@dev
+```
 :::
 
-Each of these is a whole program: it builds the message, signs it, sends the request and prints the answer. Each reads the key from `KAKITU_PRIVATE_KEY`. Do not put a key in source code or paste one into a support ticket, and make it a key generated for this integration rather than your personal wallet's — see [why a separate key](./quickstart#why-a-separate-key).
+Each of these is a whole program: it builds the message, signs it, sends the request and prints the answer. Run on its own, each makes one read-only call, `GET /v1/merchants/me`; import its `call` function to make others, as the [quickstart](./quickstart#4-register) does to register. Each reads the key from `KAKITU_PRIVATE_KEY`. Do not put a key in source code or paste one into a support ticket, and make it a key generated for this integration rather than your personal wallet's — see [why a separate wallet](./quickstart#why-a-separate-wallet).
 
 <Tabs groupId="lang">
 <TabItem value="ts" label="TypeScript" default>
@@ -104,13 +118,8 @@ export async function call(wallet, method, target, body) {
 // Run it: KAKITU_PRIVATE_KEY=0x... node kakitu.mjs
 if (import.meta.url === `file://${process.argv[1]}`) {
   const wallet = new Wallet(process.env.KAKITU_PRIVATE_KEY);
+  // Read-only: a 404 merchant_not_registered here means your signature verified.
   console.log(await call(wallet, "GET", "/v1/merchants/me"));
-  console.log(
-    await call(wallet, "POST", "/v1/merchants", {
-      business_name: "Mama Njeri Groceries",
-      contact_email: "njeri@example.com",
-    }),
-  );
 }
 ```
 
@@ -167,11 +176,8 @@ def call(account, method, target, payload=None):
 if __name__ == "__main__":
     # KAKITU_PRIVATE_KEY=0x... python kakitu.py
     account = Account.from_key(os.environ["KAKITU_PRIVATE_KEY"])
+    # Read-only: a 404 merchant_not_registered here means your signature verified.
     print(call(account, "GET", "/v1/merchants/me"))
-    print(call(account, "POST", "/v1/merchants", {
-        "business_name": "Mama Njeri Groceries",
-        "contact_email": "njeri@example.com",
-    }))
 ```
 
 Run: `KAKITU_PRIVATE_KEY=0x... python kakitu.py`
@@ -262,11 +268,8 @@ function kakitu_call(string $privateKeyHex, string $method, string $target, ?arr
 // Run it: KAKITU_PRIVATE_KEY=0x... php kakitu.php
 if (PHP_SAPI === 'cli' && realpath($argv[0] ?? '') === __FILE__) {
     $key = getenv('KAKITU_PRIVATE_KEY') ?: exit("Set KAKITU_PRIVATE_KEY\n");
+    // Read-only: a 404 merchant_not_registered here means your signature verified.
     print_r(kakitu_call($key, 'GET', '/v1/merchants/me'));
-    print_r(kakitu_call($key, 'POST', '/v1/merchants', [
-        'business_name' => 'Mama Njeri Groceries',
-        'contact_email' => 'njeri@example.com',
-    ]));
 }
 ```
 
