@@ -8,7 +8,7 @@ import TabItem from '@theme/TabItem';
 
 # Events
 
-An event is one webhook delivery: what we sent you about a charge or a payout, when we tried, and whether it worked. These two endpoints exist because **delivery is best-effort, not guaranteed.** An endpoint that was down for a day has events marked `abandoned`, and you need to be able to see that, read what we tried to send, fix your side and ask for it again — without opening a support ticket.
+An event is one webhook delivery: what we sent you about a charge, a payment you received, a payout or your own payout controls, when we tried, and whether it worked. These two endpoints exist because **delivery is best-effort, not guaranteed.** An endpoint that was down for a day has events marked `abandoned`, and you need to be able to see that, read what we tried to send, fix your side and ask for it again — without opening a support ticket.
 
 ## Delivery is at-least-once
 
@@ -20,7 +20,7 @@ This is not a bug we intend to fix, because it cannot be fixed. Sending the requ
 
 The corollary is that **no payload is ever a delta.** Every body states its subject's whole current state, so processing a duplicate is a no-op rather than a second increment.
 
-## The five types
+## The thirteen types
 
 A merchant's integration branches on `type` and on nothing else, so each of these is its own string rather than one type with a reason field in it.
 
@@ -29,18 +29,34 @@ A merchant's integration branches on `type` and on nothing else, so each of thes
 | `charge.paid` | a charge | The payer paid. |
 | `charge.settled` | a charge | The KSHS is at your address: the amount minted for this payment, which is less than `charge.amount`. |
 | `charge.failed` | a charge | The charge did not go through. |
-| `payout.expired` | a payout | **It was not sent. Sign and submit it again.** |
-| `payout.cancelled` | a payout | **It was not sent. A person refused it. Do not submit it again.** |
+| `transfer.received` | a payment | KSHS arrived at your address on chain, from anybody, by any route. Carries the payer's `reference` if they sent one. |
+| `payout.approved` | a payout | **A person said yes. Quote and sign it now**, before `payout.approval_expires_at`. |
+| `payout.rejected` | a payout | **A person said no. Do not ask again.** Nothing was signed or sent. |
+| `payout.expired` | a payout | **It was not sent. Ask again with a new payout.** An approval nobody signed in time, or a held payout whose signature lapsed. |
+| `payout.cancelled` | a payout | **It was not sent. A person refused it. Do not submit it again.** Kept for events already written; a refusal now arrives as `payout.rejected`. |
+| `payout.paid` | a payout | The beneficiary has the money. |
+| `payout.failed` | a payout | It did not reach the beneficiary. A retry is a new payout. |
+| `payout_destination.added` | your controls | **Somebody holding your key saved a new place to pay.** It can be paid from `destination.active_at`. If that was not you, remove it and replace your key before then. |
+| `payout_destination.removed` | your controls | A saved place came off your list. |
+| `payout_lock.changed` | your controls | **The payout lock moved.** It went on, or somebody asked for it to come off. |
 
-### payout.expired and payout.cancelled are opposite instructions
+The last three are the alarm for your own payout controls: if you did not make the change, somebody else holds your key.
 
-Both mean the same thing about the money: **nothing left your wallet and nothing reached the beneficiary.** They differ only in what you should do next, and they differ completely.
+### The approve-first events
 
-A held payout carries a signed permit that stops being relayable after about ten minutes, and the price behind it lives less than that. A person working a review queue does not work in minutes. So a hold that nobody reaches in time lapses, and `payout.expired` is the ordinary end of one — not an edge case. The right response is a fresh quote, a fresh signature and a **new** payout.
+A payout above your `hold_above_kes` asks a person **before** you sign: you `POST /v1/payouts/requests`, and the answer comes as an event. [Payouts](./payouts#approve-first) has the whole sequence.
 
-`payout.cancelled` means an operator looked at the payout and decided the money does not go. Re-signing it walks straight back into a decision a person has just taken.
+- **`payout.approved`** is the instruction to go: quote with the `payout_id`, sign, submit, before `payout.approval_expires_at`.
+- **`payout.rejected`** is the instruction to stop. It can also follow `payout.approved`, if an operator takes the yes back before you have signed. Nothing was sent.
+- **`payout.expired`** after an approval means you did not sign before it lapsed. Nothing was sent. The answer is a new request.
 
-**The `type` is the only reliable way to tell them apart.** There is no reason field and no sentence to read, deliberately: a receiver that had to parse English to decide whether to send money a second time would eventually get it wrong. See [Payouts](./payouts#the-hold).
+### `payout.expired`, `payout.cancelled` and `payout.rejected`
+
+All three mean the same thing about the money: **nothing left your wallet and nothing reached the beneficiary.** They differ only in what you should do next.
+
+`payout.expired` asks you to try again with a **new** payout: a fresh request, quote and signature. `payout.cancelled` and `payout.rejected` both mean a person looked at the payout and decided the money does not go. Re-submitting walks straight back into a decision a person has just taken.
+
+**The `type` is the only reliable way to tell them apart.** There is no reason field and no sentence to read, deliberately: a receiver that had to parse English to decide whether to send money a second time would eventually get it wrong. See [Payouts](./payouts#approve-first).
 
 ## What a delivery looks like
 
@@ -50,7 +66,7 @@ A `POST` to your `callback_url`, `Content-Type: application/json`, `User-Agent: 
 |---|---|
 | `Kakitu-Signature` | `t=<unix seconds>,v1=<hex HMAC-SHA256>` |
 | `Kakitu-Event-Id` | The event id. Your dedupe key. |
-| `Kakitu-Event-Type` | One of the five types above. |
+| `Kakitu-Event-Type` | One of the thirteen types above. |
 
 **Only the signature header is worth trusting.** The other two are a convenience, and both values are also inside the signed body; a receiver that reads them without verifying the signature has verified nothing.
 
@@ -61,16 +77,19 @@ Every body is the same four-field envelope wrapped around **one** subject object
 | Field | Type | Present |
 |---|---|---|
 | `id` | string, UUID | **Always.** The event id — the same value as `Kakitu-Event-Id`, and the same on every retry and every replay. Your dedupe key. |
-| `type` | string | **Always.** One of the five. |
+| `type` | string | **Always.** One of the thirteen. |
 | `created_at` | string, RFC 3339 UTC to the second | **Always.** When the event was *raised*, not when it was delivered or when you received it. |
 | `charge` | object | On `charge.paid`, `charge.settled` and `charge.failed`. |
-| `payout` | object | On `payout.expired` and `payout.cancelled`. |
+| `transfer` | object | On `transfer.received`. |
+| `payout` | object | On the six `payout.*` types: `approved`, `rejected`, `expired`, `cancelled`, `paid`, `failed`. |
+| `destination` | object | On `payout_destination.added` and `payout_destination.removed`. |
+| `payout_lock` | object | On `payout_lock.changed`. |
 
-Three things are true of every one of the five bodies, and your receiver can rely on all three:
+Three things are true of every one of the thirteen bodies, and your receiver can rely on all three:
 
 **A payload is never a delta.** It is the subject's **state at the time the event was raised**, stated in full, every time. Nothing in it is an increment, a difference or a patch. That is what makes a duplicate delivery a no-op rather than a second count.
 
-**A charge event has no `payout` key at all, and a payout event has no `charge` key.** The key is *absent*, not present-with-`null`. Do not branch on which key you can see — branch on `type`.
+**Only the subject that the event is about is present.** A charge event has no `payout` key at all, a payout event has no `charge` key, and so on. The key is *absent*, not present-with-`null`. Do not branch on which key you can see — branch on `type`.
 
 **The subject's `status` always restates `type`.** `charge.paid` always carries `"status": "paid"`, `payout.cancelled` always carries `"status": "cancelled"`, and so on. It is there so the subject object reads correctly on its own; it tells you nothing `type` did not.
 
@@ -89,6 +108,8 @@ The rail says the payer paid. The KSHS is not at your address yet — wait for `
 | `charge.status` | string | **Always.** Always `"paid"` on this type. |
 | `charge.paid_at` | string, RFC 3339 UTC | **Always a timestamp on this type**, never `null`. |
 | `charge.settled_at` | `null` | **Always `null` on this type.** The key is present and its value is `null`; nothing has settled yet. |
+| `charge.fee_kes` | integer | **Always a number on this type.** What the collection cost, in whole shillings. |
+| `charge.credited_kes` | integer | **Always a number on this type.** What reaches your wallet: `charge.amount` less `charge.fee_kes`. |
 
 ```json
 {
@@ -102,7 +123,9 @@ The rail says the payer paid. The KSHS is not at your address yet — wait for `
     "currency": "KES",
     "status": "paid",
     "paid_at": "2026-10-26T09:13:44Z",
-    "settled_at": null
+    "settled_at": null,
+    "fee_kes": 15,
+    "credited_kes": 485
   }
 }
 ```
@@ -120,6 +143,8 @@ The KSHS is at your address on chain. This is the event to release goods on.
 | `charge.status` | string | **Always** `"settled"` on this type. |
 | `charge.paid_at` | string, RFC 3339 UTC | **Always a timestamp on this type**, never `null`. If the charge jumped straight to settled without a `charge.paid` ever being raised, this is the moment it settled. |
 | `charge.settled_at` | string, RFC 3339 UTC | **Always a timestamp on this type**, never `null`. It equals the envelope's `created_at`. |
+| `charge.fee_kes` | integer | **Always a number on this type.** What the collection cost, in whole shillings. |
+| `charge.credited_kes` | integer | **Always a number on this type.** What reached your wallet: `charge.amount` less `charge.fee_kes`. |
 
 ```json
 {
@@ -133,7 +158,9 @@ The KSHS is at your address on chain. This is the event to release goods on.
     "currency": "KES",
     "status": "settled",
     "paid_at": "2026-10-26T09:13:44Z",
-    "settled_at": "2026-10-26T09:14:02Z"
+    "settled_at": "2026-10-26T09:14:02Z",
+    "fee_kes": 15,
+    "credited_kes": 485
   }
 }
 ```
@@ -151,6 +178,8 @@ The collection did not go through, or a payment that had gone through was refund
 | `charge.status` | string | **Always** `"failed"` on this type. |
 | `charge.paid_at` | string or `null` | **May be either.** `null` for a charge that never got as far as paid — the ordinary case. A **timestamp** for a charge that was paid and then refunded, and that timestamp is when it was paid, not when it failed. Read this field if you need to tell a refund from a payment that never arrived. |
 | `charge.settled_at` | `null` | **Always `null` on this type.** A settled charge never fails. |
+| `charge.fee_kes` | `null` | **Always `null` on this type.** Nothing was credited. |
+| `charge.credited_kes` | `null` | **Always `null` on this type.** Nothing was credited. |
 
 ```json
 {
@@ -164,16 +193,136 @@ The collection did not go through, or a payment that had gone through was refund
     "currency": "KES",
     "status": "failed",
     "paid_at": null,
-    "settled_at": null
+    "settled_at": null,
+    "fee_kes": null,
+    "credited_kes": null
   }
 }
 ```
 
 **There is no reason, code or message on a `charge.failed`.** Why a collection failed is a rail's word about a payer, and it is not part of this contract. If you need to tell "never paid" from "paid and refunded", `paid_at` is the field that answers it.
 
+### `transfer.received`
+
+**KSHS arrived at your address.** This is the notification for a payment made with `pay()`, a `kakitu:` link, a QR code or any wallet: it is raised from the chain, for a transfer **to** your address, whoever sent it and by whatever route. Mints and burns are never announced. Only an approved merchant receives it.
+
+| Field | Type | Present |
+|---|---|---|
+| `transfer.tx_hash` | string | **Always.** The transaction on Base. |
+| `transfer.log_index` | integer | **Always.** Which `Transfer` log in that transaction. With `tx_hash` it names the payment. |
+| `transfer.from` | string | **Always.** The payer's address. |
+| `transfer.to` | string | **Always.** Your address. |
+| `transfer.amount_kes` | string | **Always.** The exact amount as a decimal **string**, such as `"99.5"`, not whole shillings: a KES 99.50 invoice must not read as 99. |
+| `transfer.value_wei` | string | **Always.** The same amount in the token's smallest unit. A string, because it does not fit a JSON number. |
+| `transfer.block_number` | integer | **Always.** |
+| `transfer.observed_at` | string, RFC 3339 UTC | **Always.** When we saw it on chain. |
+| `transfer.reference` | string | **Only when the payer sent one.** The key is absent otherwise. 1 to 64 characters from `[A-Za-z0-9._:-]`. |
+
+```json
+{
+  "id": "0e5f7a21-3c46-4d89-b0a2-6d1e9f8c7b53",
+  "type": "transfer.received",
+  "created_at": "2026-11-07T08:21:09Z",
+  "transfer": {
+    "tx_hash": "0x9f3c…",
+    "log_index": 4,
+    "from": "0x2b7e…",
+    "to": "0x58a1…",
+    "amount_kes": "1250",
+    "value_wei": "1250000000000000000000",
+    "block_number": 24310987,
+    "observed_at": "2026-11-07T08:21:09Z",
+    "reference": "ORD-1042"
+  }
+}
+```
+
+**A reference is the payer's claim, not proof.** Anybody can send KSHS to your address with any reference they like, including one that belongs to somebody else's order. Before you release goods, check the amount and the recipient against the order the reference names, and match each order to one transfer. The reference tells you which order to look at; it does not tell you the order is paid.
+
+**Do not release on a payment that is not in this event.** A screenshot of a payer's phone is not a payment.
+
+### `payout.approved`
+
+**A person said yes. Quote and sign it now.**
+
+| Field | Type | Present |
+|---|---|---|
+| `payout.id` | string, UUID | **Always.** The `payout_id` to quote with. |
+| `payout.status` | string | **Always** `"approved"` on this type. |
+| `payout.amount_kes` | integer | **Always.** Whole shillings that will land on the beneficiary. |
+| `payout.fee_kes` | integer | **Always `0` on this type.** A request is priced when you quote it. |
+| `payout.send_kes` | integer | **Always `0` on this type.** Set by the quote. |
+| `payout.currency` | string | **Always** `"KES"`. |
+| `payout.approval_expires_at` | string, RFC 3339 UTC | **Only on this type.** Sign and submit before this, or the approval lapses and you will receive `payout.expired`. |
+
+```json
+{
+  "id": "5d2c8e10-6a17-4f93-8b40-1e7a9c3d2f68",
+  "type": "payout.approved",
+  "created_at": "2026-11-07T09:02:11Z",
+  "payout": {
+    "id": "7c2b18e4-0f2a-4a1b-9a44-1b2c3d4e5f60",
+    "status": "approved",
+    "amount_kes": 9000,
+    "fee_kes": 0,
+    "send_kes": 0,
+    "currency": "KES",
+    "approval_expires_at": "2026-11-08T09:02:11Z"
+  }
+}
+```
+
+### `payout.rejected`
+
+**A person said no. Do not ask again.** The body has the same six payout fields, with `status` reading `"rejected"` and no `approval_expires_at`. Nothing was signed, nothing was sent and none of the day's budget was spent.
+
+### `payout.paid` and `payout.failed`
+
+`payout.paid`: **the beneficiary has the money.** `payout.failed`: **it did not reach the beneficiary, and a retry is a new payout.** The same six payout fields, with `status` reading `"paid"` or `"failed"`. Neither is raised for an outcome nobody knows: a payout whose result is not known stays `dispatched`, and you read it with [`GET /v1/payouts/{id}`](./payouts#get-v1payoutsid).
+
+### `payout_destination.added` and `payout_destination.removed`
+
+About your own saved payout destinations. A destination is named by its type and the end of its number; the holder's name stays out.
+
+| Field | Type | Present |
+|---|---|---|
+| `destination.id` | string, UUID | **Always.** The id to `DELETE` it with. |
+| `destination.type` | string | **Always.** `phone`, `till`, `paybill` or `bank`. |
+| `destination.ending` | string | **Always.** The last four characters of the number, enough to recognise your own. |
+| `destination.active_at` | string, RFC 3339 UTC | **On `payout_destination.added` only.** The moment it can first be paid. |
+
+```json
+{
+  "id": "2a9c4e71-5b08-4d63-9f12-8c7d6e5a4b30",
+  "type": "payout_destination.added",
+  "created_at": "2026-11-07T10:00:00Z",
+  "destination": { "id": "c3d4…", "type": "till", "ending": "3456", "active_at": "2026-11-08T10:00:00Z" }
+}
+```
+
+**If you did not save that destination, somebody else holds your key.** Remove it before `active_at`, with [`DELETE /v1/payout-destinations/{id}`](./payouts#saved-destinations-and-the-lock), and replace the key.
+
+### `payout_lock.changed`
+
+| Field | Type | Present |
+|---|---|---|
+| `payout_lock.locked` | boolean | **Always `true`.** Asking to unlock leaves the lock on until `unlocks_at`. |
+| `payout_lock.unlocks_at` | string, RFC 3339 UTC | **Only while an unlock is pending.** Its absence says the lock is on and not coming off. |
+
+```json
+{
+  "id": "8b1d3f55-7c29-4e04-a6b8-0d9e1f2a3c47",
+  "type": "payout_lock.changed",
+  "created_at": "2026-11-07T11:00:00Z",
+  "payout_lock": { "locked": true, "unlocks_at": "2026-11-08T11:00:00Z" }
+}
+```
+
+If somebody asked for the lock to come off and it was not you, turn it on again: that cancels the unlock at once. The lock controls where your **cash-outs** can go. It does not stop KSHS transfers to other wallets.
+
 ### `payout.expired`
 
-**The payout was not sent. Sign a fresh quote and submit it again.**
+**The payout was not sent. Ask again with a new payout.** Either an approval went unsigned past `approval_expires_at`, or a held payout's signature passed its deadline.
 
 | Field | Type | Present |
 |---|---|---|
@@ -202,7 +351,7 @@ The collection did not go through, or a payment that had gone through was refund
 
 ### `payout.cancelled`
 
-**The payout was not sent. A person refused it. Do not submit it again.**
+**The payout was not sent. A person refused it. Do not submit it again.** A refusal now arrives as `payout.rejected`; this type stays for events already written.
 
 The body is the same six fields as `payout.expired`, with `status` reading `"cancelled"`. The amounts are what the payout was worth, so you can reconcile it against your own ledger and close it out.
 
@@ -242,11 +391,11 @@ A `payout.*` body carries no `held_at`, `dispatched_at` or `paid_at`, because no
 | | Charge | Payout |
 |---|---|---|
 | What was asked for (charge) / what lands on the beneficiary (payout) | `amount` | `amount_kes` |
-| What reaches your wallet | *not in the payload* — less than `amount`; read the mint on chain | — |
-| Kakitu's fee | *not in the payload* | `fee_kes` |
+| What reaches your wallet | `credited_kes`, `null` until paid | — |
+| Kakitu's fee | `fee_kes`, `null` until paid | `fee_kes` |
 | What leaves your wallet | *not in the payload* | `send_kes` |
 
-This is not a slip to be tidied up later: each payload uses the names its own API already uses, so you meet one vocabulary whether you poll [`GET /v1/charges`](./collections) or [`GET /v1/payouts/{id}`](./payouts), or listen. A charge has no fee or credited field today, so do not book `amount` as revenue: the KSHS that reaches your wallet is smaller, by our payment partner's fee and the mint spread (`mint_spread_bps` in `GET /config`). Read the credited figure from the mint `Transfer` to your address. See [Pricing, limits and settlement](./pricing).
+This is not a slip to be tidied up later: each payload uses the names its own API already uses, so you meet one vocabulary whether you poll [`GET /v1/charges`](./collections) or [`GET /v1/payouts/{id}`](./payouts), or listen. Do not book a charge's `amount` as revenue: the KSHS that reaches your wallet is `credited_kes`, smaller by the collection's cost (`fee_kes`). Both are `null` until the charge is paid, and cleared again if a paid charge is refunded. See [Pricing, limits and settlement](./pricing).
 
 ### What is never in a payload
 
@@ -263,8 +412,8 @@ A `charge.*` body never carries:
 
 A `payout.*` body never carries:
 
-- the beneficiary's phone number or name (they are on [`GET /v1/payouts/{id}`](./payouts), under `beneficiary`, but never on the wire to your endpoint);
-- the identity of the operator who cancelled it, or the reason they recorded;
+- the beneficiary's number, account or name (they are on [`GET /v1/payouts/{id}`](./payouts), under `beneficiary`, but never on the wire to your endpoint);
+- the identity of the operator who decided it, or the reason they recorded;
 - the rail name, the pricing partner's quote id, the signed permit or its deadline.
 
 **If your integration needs the payer's number, it will never arrive in a webhook.** Hold it on your side against your own `reference` and match on that; `reference` is on every `charge.*` body for exactly this purpose. There is a test in the server that asserts, by literal string, that a payer phone number, a payer address, a rail name, a partner status and an internal order id are absent from a rendered charge payload — so this is a property of the build, not a convention.
@@ -540,9 +689,9 @@ while ($target !== null) {
 
 | Parameter | Rules |
 |---|---|
-| `type` | Any one of the five: `charge.paid`, `charge.settled`, `charge.failed`, `payout.expired`, `payout.cancelled`. |
+| `type` | Any one of the thirteen: `charge.paid`, `charge.settled`, `charge.failed`, `transfer.received`, `payout.approved`, `payout.rejected`, `payout.expired`, `payout.cancelled`, `payout.paid`, `payout.failed`, `payout_destination.added`, `payout_destination.removed`, `payout_lock.changed`. |
 | `status` | `pending`, `delivered` or `abandoned`. |
-| `charge_id` | The id of one of your charges. There is no `payout_id` filter — narrow with `type=payout.expired` or `type=payout.cancelled` and match the id in the payload. |
+| `charge_id` | The id of one of your charges. There is no `payout_id` filter — narrow with a `type` such as `payout.expired` and match the id in the payload. |
 | `limit` | A whole number from 1 to 100. Default 20. |
 | `cursor` | `next_cursor` from the previous page, unchanged. |
 
@@ -564,7 +713,7 @@ HTTP 200
       "last_attempt_at": "2026-10-27T08:40:11Z",
       "delivered_at": null,
       "last_error": "http_502",
-      "payload": { "id": "4e7c2b18-0f2a-4a1b-9a44-1b2c3d4e5f60", "type": "charge.settled", "created_at": "2026-10-26T09:14:02Z", "charge": { "id": "a1f0c9d2-55b1-4f3e-8a0d-77c1e2b3a4d5", "reference": "order-1042", "amount": 500, "currency": "KES", "status": "settled", "paid_at": "2026-10-26T09:13:44Z", "settled_at": "2026-10-26T09:14:02Z" } }
+      "payload": { "id": "4e7c2b18-0f2a-4a1b-9a44-1b2c3d4e5f60", "type": "charge.settled", "created_at": "2026-10-26T09:14:02Z", "charge": { "id": "a1f0c9d2-55b1-4f3e-8a0d-77c1e2b3a4d5", "reference": "order-1042", "amount": 500, "currency": "KES", "status": "settled", "paid_at": "2026-10-26T09:13:44Z", "settled_at": "2026-10-26T09:14:02Z", "fee_kes": 15, "credited_kes": 485 } }
     }
   ],
   "next_cursor": "MjAyNi0xMC0yNlQwOToxNDowMloucy4u"
@@ -573,8 +722,8 @@ HTTP 200
 
 | Field | Meaning |
 |---|---|
-| `charge_id` | The charge this event is about. **Nullable:** it is `null` on a payout event. |
-| `payout_id` | The payout this event is about. `null` on a charge event. |
+| `charge_id` | The charge this event is about. **Nullable:** it is `null` on every event that is not about a charge. |
+| `payout_id` | The payout this event is about. `null` on every event that is not about a payout. **Both are `null` on `transfer.received` and on the three controls events**: read the id from `payload`. |
 | `status` | `pending` (not yet delivered), `delivered` (your endpoint answered 2xx), `abandoned` (the 24-hour budget is spent). |
 | `attempts` | How many attempts have failed so far. |
 | `next_attempt_at` | When we will try again. **`null` unless the event is `pending`** — a next attempt that is not coming would be a lie. |
@@ -585,12 +734,11 @@ HTTP 200
 
 :::warning charge_id is nullable now
 `charge_id` used to be present on every event, because a charge was the only thing an event
-could be about. **Exactly one of `charge_id` and `payout_id` is set**, and on a payout event it
-is `payout_id`.
+could be about. **At most one of `charge_id` and `payout_id` is set**, and on `transfer.received`
+and the three controls events neither is.
 
-A client that reads `charge_id` and assumes a string breaks on the first payout event it
-receives. Check which one is set before you use it. A charge event is unchanged, so nothing
-needs doing until payouts are switched on for you — but it is worth doing before.
+A client that reads `charge_id` and assumes a string breaks on the first event that is not about
+a charge. Check which one is set before you use it, and read the subject from `payload`.
 :::
 
 `next_cursor` is `null` on the last page. It is an opaque string, not a page number: events arrive while you are paging, and an offset would show you the same row twice. Pass it back unchanged; anything else is `invalid_request`.

@@ -10,9 +10,10 @@ and **take a KSHS payment** from them, with no API key in your front end. The re
 Base gas, so your customer needs KSHS and nothing else.
 
 :::note Installing the extension
-The extension is **not on the Chrome Web Store yet**; the listing is coming soon. Until it is,
-most of your customers will not have it, so always offer the [phone flow](#pay-with-kakitu-on-a-phone)
-beside a **Pay with Kakitu** button, and build for `getKakituWallet()` resolving `null`.
+The extension is on the [Chrome Web Store](https://chromewebstore.google.com/detail/ebcjlgfjbbgoldipdhbcmciebdiadifg)
+(extension id `ebcjlgfjbbgoldipdhbcmciebdiadifg`). It is Chrome only, and most of your customers
+will still not have it, so always offer the [phone flow](#pay-with-kakitu-on-a-phone) beside a
+**Pay with Kakitu** button, and build for `getKakituWallet()` resolving `null`.
 :::
 
 This page is the website side. Nothing here uses the signed `/v1` API: a merchant can accept
@@ -202,7 +203,7 @@ you: it is a standard signature and you check it like any other.
 await kakitu.pay({
   to: string;          // REQUIRED. your 0x address
   amountKes: string;   // REQUIRED. a STRING of shillings: "1250" or "1250.50", at most 2 places
-  reference?: string;  // your order reference, at most 64 characters, shown and echoed back
+  reference?: string;  // your order reference: 1 to 64 of A-Z a-z 0-9 . _ : -, shown, sent with the payment and echoed back
   memo?: string;       // one line for the customer, at most 140 characters, not on chain
   chargeId?: string;   // opaque, carried for your reconciliation only
 })
@@ -226,10 +227,19 @@ await kakitu.pay({
 - Every promise settles only when the customer acts. An approval nobody answers rejects with
   `TIMEOUT` after three minutes. One approval per site at a time.
 
-**A resolved `pay()` is not proof of payment.** Confirm on Base from your server: a `Transfer`
-log on the KSHS contract (`kshs_contract` in `GET https://walletapi.kakitu.org/config`), to your
-address, for at least the amount *your server* priced, in a mined block, matched to exactly one
-order.
+**The `reference` travels with the payment.** It is sent to the relay beside the signed transfer
+(it is not itself signed), and it reaches you on the transfer row ([`GET /transfers`](./transfers#get-transfers))
+and in the [`transfer.received`](./events#transferreceived) webhook. A `reference` outside the
+allowed characters or length rejects `pay()` with `INVALID_PARAMS` before the customer sees anything, so a
+bad order number cannot cost them an approval.
+
+**A reference is the payer's claim, not proof.** Anybody can pay your address with any reference.
+Use it to find the order, then check the amount and the recipient against that order.
+
+**A resolved `pay()` is not proof of payment.** If you are an approved merchant, wait for
+`transfer.received`; either way, confirm on Base from your server: a `Transfer` log on the KSHS
+contract (`kshs_contract` in `GET https://walletapi.kakitu.org/config`), to your address, for at
+least the amount *your server* priced, in a mined block, matched to exactly one order.
 
 ## Errors
 
@@ -297,9 +307,17 @@ to the confirm screen when their balance covers it), and they approve with their
 Use medium or higher error correction and leave a quiet zone around it; the whole link is under
 90 characters, so any QR library's automatic sizing produces a small code.
 
-**What the link does not carry.** There is no reference or memo field: the app reads the address
-and `amount` and ignores everything else. Match the payment to the order on your server, the same
-way as for `pay()`: watch Base for a `Transfer` to your address for that amount (a per-order
-amount, or a fresh receiving address per order, makes the match unambiguous). If the app is not
-installed, the link does nothing, so show a store link beside it (`store_url_android` and
-`store_url_ios` in `GET /config`).
+**A reference.** Add `&ref=<reference>` (1 to 64 of `A-Z a-z 0-9 . _ : -`) and a Kakitu app that
+reads it sends it with the payment, so it reaches you in `transfer.received` as with `pay()`. An
+app that does not read `ref` ignores it and still pays, and then there is no reference on the
+transfer: match it the way you would without one. There is no memo field.
+
+```text
+kakitu:0x9858EfFD232B4033E47d90003D41EC34EcaEda94?amount=1250000000000000000000&ref=ORD-1042
+```
+
+As with `pay()`, **a reference is the payer's claim, not proof**: check the amount and the
+recipient against the order, and match each order to one transfer (a per-order amount, or a fresh
+receiving address per order, makes the match unambiguous). If the app is not installed, the link
+does nothing, so show a store link beside it (`store_url_android` and `store_url_ios` in
+`GET /config`).

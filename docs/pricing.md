@@ -23,7 +23,7 @@ are not published in `/config`. Figures below were read on 30 October 2026.
 | Cashing out KSHS to M-Pesa (number, till or paybill) | You | Our burn spread plus the cash-out partner's charge, shown before you confirm | Spread: 30 bps **default**, not in `/config`. The full fee: a withdrawal [quote](./quotes) or the app's confirm screen |
 | Buying KSHS with USDC or M-Pesa | The buyer | The mint spread, plus the partner's charge for M-Pesa | `mint_spread_bps`: **30** (0.30%), and `mint_rate_kes_per_usdc`: **131** |
 | Cash in or out at a Kakitu agent | The customer | The agent fee, of which Kakitu's platform fee is a part | `agent_fee_bps` **100** (1%), capped at `agent_fee_cap_kshs` **150**; `platform_fee_bps` **20** (0.20%), capped at `platform_fee_cap_kshs` **30** |
-| M-Pesa collections (`POST /v1/charges`) | — | **Not open.** When open, you are credited less than `amount`: the partner's fee and the mint spread come off | — |
+| M-Pesa collections (`POST /v1/charges`) | The merchant | **Not open.** When open, you are credited less than `amount`: the collection partner's fee and the mint spread come off | `fee_kes` and `credited_kes` on the charge and its webhooks, `null` until it is paid. `credited_kes` is `amount` less `fee_kes` |
 
 **The platform fee is not a fee on merchant payments.** `platform_fee_bps` is Kakitu's share of an agent's counter fee, paid inside the agent fee, never on top of it. A payment from a customer's wallet to yours carries no fee at all.
 
@@ -38,13 +38,14 @@ are not published in `/config`. Figures below were read on 30 October 2026.
 | Relayed transfers per sending address per day (UTC) | **50** (**default**) | — |
 | Relayed transfers per day, all wallets together | 5,000 (**default**) | — |
 | One cash-out to M-Pesa | **KES 20 to KES 33,333** | `withdraw_min_per_order_kes`, `withdraw_max_per_order_kes` in `/config`, live from the partner |
-| One purchase of KSHS (deposit) | up to **USD 99** | `deposit_max_per_order_usd` in `/config` |
+| One purchase of KSHS (deposit), and so one M-Pesa collection | up to **USD 99**, about **KES 13,000** at the current buying rate | `deposit_max_per_order_usd` in `/config` |
 | How long a quoted price holds | 10 minutes for agent orders | `order_expiry_minutes` in `/config` |
 
 What these mean for a business:
 
 - **The 50-a-day count is on the sender.** Receiving payments does not use it. Your own cash-outs and transfers from the business wallet do: each is one relayed transfer. A busy shop cashing out many small amounts a day will meet it; cash out fewer, larger amounts.
 - **A sale above KES 50,000 is more than one transfer.** The payer's wallet refuses a single transfer over the ceiling (`LIMIT_EXCEEDED` from `pay()`, `amount_above_maximum` from the API).
+- **An M-Pesa collection is capped lower: about KES 13,000.** The collection partner's per-order ceiling (`deposit_max_per_order_usd`, USD 99) binds before your own `per_charge_max_kes` (70,000 by default) does, and a charge over it is `amount_above_maximum`. The figure in shillings moves with the buying rate; read the dollar cap.
 - **Taking out more than KES 33,333 is several withdrawals**, each priced on its own.
 - **When the day's relayer budget is spent, every relayed transfer stops** until 00:00 UTC, for everyone. It is sized not to be reached by ordinary trade.
 

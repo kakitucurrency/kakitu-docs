@@ -94,6 +94,7 @@ Idempotency-Key: 8ab0f6c4-6c38-4f0e-9a7e-6b0a2f6b1d33
 | `deadline` | integer, required | Unix time in **seconds** when the signature stops being valid. It must be in the future and **at most 10 minutes ahead**. Outside that: `invalid_request`. |
 | `v`, `r`, `s` | uint8, string, string | The **EIP-2612 permit** signature. `r` and `s` are `0x` plus 32 bytes (64 hex characters). |
 | `iv`, `ir`, `is` | uint8, string, string | The **EIP-712 intent** signature, in the same shape. |
+| `reference` | string, optional | Your note on the payment, such as an order number: **1 to 64 characters from `A-Z a-z 0-9 . _ : -`**. It is **not signed**, so it can be added after signing. The payee reads it on [`GET /transfers`](#get-transfers) and in the [`transfer.received`](./events#transferreceived) webhook. Anything else is `invalid_request` and nothing is sent. Leave it out when there is none. |
 
 `Idempotency-Key` is **required**. Without it: `400 idempotency_key_required`, and nothing is sent.
 
@@ -124,6 +125,58 @@ Two fields, and only ever two.
 | `pending` | 202 | Submitted, no receipt yet. It is probably seconds from landing. **Do not send it again.** |
 
 `id` is the transaction hash. It is your handle on the transfer on Base, and the only one: there is no `GET /v1/transfers/{id}` and no way to cancel. Look it up on a Base explorer, or watch your [balance](./balances).
+
+## Being paid: `transfer.received`, `GET /transfers` and the reference
+
+A transfer to your address, from any wallet, by any route (a `pay()` button, a `kakitu:` link, a QR code, this API), is announced to your `callback_url` as a signed [`transfer.received`](./events#transferreceived) event once it is on chain, if you are an approved merchant. It carries the transfer's `tx_hash`, `from`, `to`, the exact amount, and the payer's `reference` when they sent one. You do not have to watch the chain to find out you were paid.
+
+**A reference is the payer's claim, not proof.** Anybody can send KSHS to your address with any reference, including one that belongs to somebody else's order, or to an order that is already paid. Treat it as the answer to "which order is this for?" and then check that the **amount** and the **recipient** are what that order needs, and that this order has not already been matched to another transfer. The reference never replaces that check.
+
+### GET /transfers
+
+Your wallet's own KSHS history, sent and received, newest first. It is the wallet's read, not a `/v1` route: it needs only a signed request (the same three headers as every call), not a registered merchant, and it answers with the older error shape.
+
+```http
+GET /transfers?limit=50&before=2026-11-07T08:21:09.123456789Z
+```
+
+| Query | Rules |
+|---|---|
+| `limit` | A whole number. Default 50, and never more than 100. |
+| `before` | The `next_before` of the previous page, unchanged. RFC 3339. |
+
+```json
+HTTP 200
+{
+  "transfers": [
+    {
+      "tx_hash": "0x9f3c…",
+      "direction": "in",
+      "kind": "transfer",
+      "counterpart": "0x2b7e…",
+      "amount_kes": 1250,
+      "value_wei": "1250000000000000000000",
+      "status": "confirmed",
+      "submitted_at": "2026-11-07T08:21:09.123456789Z",
+      "reference": "ORD-1042"
+    }
+  ],
+  "next_before": "2026-11-07T08:21:09.123456789Z"
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `tx_hash` | The transaction on Base. |
+| `direction` | `in` or `out`, from your point of view. Decided by the server, so you never compute it. |
+| `kind` | `transfer`, `mint` or `burn`. A mint is a top-up landing and a burn is a withdrawal leaving; neither involves another person. |
+| `counterpart` | The other address. **Absent** on a mint or a burn. |
+| `amount_kes` | Whole shillings, as a number. Use `value_wei` when the exact amount matters. |
+| `value_wei` | The exact amount, as a decimal string. |
+| `status` | `confirmed` or `unconfirmed`. **`unconfirmed` is not a failure**: it was submitted with no receipt yet, and the money may have moved. Never show it as failed, and never retry it. |
+| `submitted_at` | RFC 3339 UTC. |
+| `reference` | The payer's reference. **Absent** when none was sent. |
+| `next_before` | The cursor for the next page. **Absent** on the last page. |
 
 ## Signing a transfer
 

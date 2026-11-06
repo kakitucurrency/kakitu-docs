@@ -144,3 +144,14 @@ def test_the_new_codes_raise_their_own_exceptions(code, status, cls):
     with pytest.raises(cls) as e:
         c.payouts.get("p-1")
     assert e.value.code == code
+
+
+def test_a_paid_charge_carries_what_it_cost_and_what_was_credited_and_an_unpaid_one_has_neither():
+    c, _ = make({"id": "c1", "reference": "o-1", "amount": 500, "currency": "KES", "status": "settled",
+                 "created_at": "x", "paid_at": "x", "settled_at": "x", "fee_kes": 15, "credited_kes": 485})
+    ch = c.charges.get("c1")
+    assert (ch.fee_kes, ch.credited_kes) == (15, 485)
+    c, _ = make({"id": "c2", "reference": "o-2", "amount": 500, "currency": "KES", "status": "prompted",
+                 "created_at": "x", "paid_at": None, "settled_at": None, "fee_kes": None, "credited_kes": None})
+    ch = c.charges.get("c2")
+    assert ch.fee_kes is None and ch.credited_kes is None

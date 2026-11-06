@@ -5,7 +5,7 @@ title: Webhooks
 
 # Webhooks
 
-A webhook is a `POST` we make to your `callback_url` when something happens to one of your charges or payouts. This page is the receiving end: where deliveries go, the secret that signs them, what you must answer, and what happens when you do not.
+A webhook is a `POST` we make to your `callback_url` when something happens to one of your charges, a payment arrives at your address, a payout moves, or your own payout controls change. This page is the receiving end: where deliveries go, the secret that signs them, what you must answer, and what happens when you do not.
 
 **The bodies themselves are documented once, on the [Events](./events) page.** Every field of every type, which fields are always present and which may be null, and a worked example of each — [the payload](./events#the-payload). They live there rather than being repeated here so there is only ever one description of them to keep true.
 
@@ -32,7 +32,7 @@ Your callback URL and your secret are read **fresh on every attempt**, so fixing
 |---|---|
 | `Kakitu-Signature` | `t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">` |
 | `Kakitu-Event-Id` | The event id. Your dedupe key. |
-| `Kakitu-Event-Type` | One of the five types below. |
+| `Kakitu-Event-Type` | One of the thirteen types below. |
 
 **Only the signature is worth trusting.** The other two headers are a convenience and both values are also inside the signed body; reading them without verifying the signature verifies nothing.
 
@@ -46,34 +46,39 @@ Verify against the **exact bytes** of the request body. Parsing and re-serialisi
 
 ## The body
 
-Every delivery carries one of five event types:
+Every delivery carries one of thirteen event types:
 
 | `type` | What it tells you |
 |---|---|
 | `charge.paid` | The payer paid. Your wallet is not credited yet. |
-| `charge.settled` | The KSHS is at your address. This is the one to release goods on. |
+| `charge.settled` | The KSHS is at your address. This is the one to release goods on for a charge. |
 | `charge.failed` | The collection did not go through, or was refunded. |
-| `payout.expired` | **It was not sent. Sign and submit it again.** |
+| `transfer.received` | **KSHS arrived at your address**, from anybody. Carries the payer's `reference` if they sent one. A reference is their claim, not proof: check the amount and the recipient. |
+| `payout.approved` | **A person said yes. Quote and sign now**, before `approval_expires_at`. |
+| `payout.rejected` | **A person said no. Do not ask again.** |
+| `payout.expired` | **It was not sent. Ask again with a new payout.** |
 | `payout.cancelled` | **It was not sent. A person refused it. Do not submit it again.** |
+| `payout.paid` | The beneficiary has the money. |
+| `payout.failed` | It did not reach the beneficiary. A retry is a new payout. |
+| `payout_destination.added` | **Somebody holding your key saved a new place to pay.** If it was not you, remove it. |
+| `payout_destination.removed` | A saved place came off your list. |
+| `payout_lock.changed` | **The payout lock moved.** If it was not you, turn it on again. |
 
-Each body is a four-field envelope — `id`, `type`, `created_at` — wrapped around **one** subject object, `charge` or `payout`. A charge event has no `payout` key at all and a payout event has no `charge` key; the key is absent, not present-and-`null`. **Branch on `type` and on nothing else.**
+Each body is a three-field envelope (`id`, `type`, `created_at`) wrapped around **one** subject object: `charge`, `transfer`, `payout`, `destination` or `payout_lock`. Only the subject the event is about is present; the other keys are absent, not present-and-`null`. **Branch on `type` and on nothing else.**
 
 **Every field of every type, what is always present, what may be null, and an example body of each: [the payload](./events#the-payload).**
 
-:::danger The two payout types are opposite instructions
-Both mean **nothing left your wallet and nothing reached the beneficiary.** They differ only in
-what you do next, and they differ completely: `payout.expired` asks you to send the money again,
-`payout.cancelled` forbids it.
+:::danger Four payout types mean "not sent", and they are not the same instruction
+`payout.expired`, `payout.cancelled` and `payout.rejected` all mean **nothing left your wallet and
+nothing reached the beneficiary.** They differ only in what you do next, and they differ completely:
+`payout.expired` asks you to ask again with a new payout, while `payout.cancelled` and
+`payout.rejected` mean a person has already decided and forbid it.
 
-A held payout carries a signed permit that stops being relayable after minutes, and a person
-working a review queue does not work in minutes — so a hold nobody reaches in time lapses, and
-`payout.expired` is the *ordinary* end of one, not an edge case. The answer to it is a fresh
-quote, a fresh signature and a **new** payout. `payout.cancelled` means an operator looked at it
-and decided the money does not go; re-signing walks straight back into a decision a person has
-just taken.
+`payout.failed` is different again: the payout was handed over and did not reach the beneficiary.
+A retry is a new payout, and it counts against your budget again.
 
 **The `type` is the only way to tell them apart.** There is no reason field and no sentence to
-read — deliberately, because a receiver that had to parse English to decide whether to send money
+read, deliberately, because a receiver that had to parse English to decide whether to send money
 a second time would eventually get it wrong. Acting on the wrong one either loses a payment or
 sends it twice.
 :::

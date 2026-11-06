@@ -60,6 +60,10 @@ class Charge:
     created_at: str
     paid_at: str | None = None
     settled_at: str | None = None
+    #: What the collection cost, and what reached your wallet (``amount`` less ``fee_kes``), in
+    #: whole KES. Both are None until the charge is paid.
+    fee_kes: int | None = None
+    credited_kes: int | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @classmethod
@@ -68,7 +72,8 @@ class Charge:
             id=str(d.get("id", "")), reference=str(d.get("reference", "")),
             amount=int(d.get("amount", 0) or 0), currency=str(d.get("currency", "")),
             status=str(d.get("status", "")), created_at=str(d.get("created_at", "")),
-            paid_at=d.get("paid_at"), settled_at=d.get("settled_at"), raw=d,
+            paid_at=d.get("paid_at"), settled_at=d.get("settled_at"),
+            fee_kes=_opt_int(d.get("fee_kes")), credited_kes=_opt_int(d.get("credited_kes")), raw=d,
         )
 
 

@@ -18,14 +18,16 @@ Kakitu is a Kenyan-shilling stablecoin. **KSHS is an ERC-20 token on Base, backe
 | A website, on a phone | A `kakitu:` payment link, which opens the Kakitu app with your address and the amount filled in | [Pay with Kakitu on a phone](./extension#pay-with-kakitu-on-a-phone) |
 | A shop counter | A QR code of your address. In the Kakitu app, **Receive → Lipa na Kakitu** makes a printable card | [QR codes](./extension#pay-with-kakitu-on-a-phone) |
 
-**You confirm the payment yourself, on chain.** Nothing tells you that you were paid: no webhook, no push, no SMS, and no order reference travels with the transfer. A screenshot of a payer's phone is not a payment. Look for a `Transfer` log on the KSHS contract (`kshs_contract` in [`GET /config`](https://walletapi.kakitu.org/config)) to your address, for the amount you priced, in a mined block, and match it to exactly one order. [The extension page](./extension#pay-pay) has the rule in full.
+**Once you are an approved merchant, you are told.** A payment to your address arrives at your `callback_url` as a signed [`transfer.received`](./events#transferreceived) webhook, and it carries the payer's order `reference` when they sent one (`pay()` and the `kakitu:` link both can). Until you are approved you are not notified, so check the chain yourself.
+
+**A reference is the payer's claim, not proof.** Anybody can pay your address with any reference. A screenshot of a payer's phone is not a payment either. Check that there is a `Transfer` log on the KSHS contract (`kshs_contract` in [`GET /config`](https://walletapi.kakitu.org/config)) to your address, for the amount you priced, in a mined block, and match it to exactly one order. [The extension page](./extension#pay-pay) has the rule in full.
 
 **Then cash out.** Import your wallet's 12-word recovery phrase into the Kakitu app and withdraw to an M-Pesa number, till or paybill. See [Cash out](./cash-out), and [Pricing, limits and settlement](./pricing) for what it costs and how much fits in one go.
 
 The [quickstart](./quickstart) sets up a wallet for this in ten minutes.
 
 :::warning M-Pesa collections and payouts are not open yet
-The API below can also **collect** by M-Pesa (a PIN prompt on the payer's phone, settled to you as KSHS) and **pay out** to M-Pesa. Both are switched off for every merchant today. `POST /v1/charges` answers `503 rail_unavailable` and rings nobody, and the payout routes answer `403`. Do not build a checkout that depends on either until we announce them. Registering is safe, and the request and response shapes below are final.
+The API below can also **collect** by M-Pesa (a PIN prompt on the payer's phone, settled to you as KSHS) and **pay out** to an M-Pesa number, a till, a paybill or a bank account. Both are switched off for every merchant today. `POST /v1/charges` answers `503 rail_unavailable` and rings nobody, and the payout routes answer `403 payouts_disabled`. Do not build a checkout that depends on either until we announce them. Registering is safe, and the request and response shapes below are final.
 :::
 
 ## The developer API
@@ -47,14 +49,17 @@ The developer API is in private release. Registration is open; a Kakitu operator
 | `GET /v1/limits` | Open | [Limits](./limits) |
 | `GET /v1/events` | Open | [Events](./events) |
 | `POST /v1/events/{id}/replay` | Open | [Events](./events) |
+| `POST /v1/payouts/requests` | **Not open.** Off globally and per merchant | [Payouts](./payouts#approve-first) |
 | `POST /v1/payouts/quote` | **Not open.** Off globally and per merchant | [Payouts](./payouts) |
 | `POST /v1/payouts` | **Not open.** Off globally and per merchant | [Payouts](./payouts) |
 | `GET /v1/payouts` | Open: a signed request is enough | [Payouts](./payouts) |
 | `GET /v1/payouts/{id}` | Open: a signed request is enough | [Payouts](./payouts) |
-| Webhook delivery | For charge and payout events only | [Webhooks](./webhooks) |
+| `GET`, `POST /v1/payout-destinations`, `DELETE /v1/payout-destinations/{id}`, `POST /v1/payout-destinations/lock` | A registered merchant reads and locks; an approved one saves | [Payouts](./payouts#saved-destinations-and-the-lock) |
+| `GET /transfers` | Open: your wallet's own history, with each payment's `reference` | [Transfers](./transfers#get-transfers) |
+| Webhook delivery | Charges, payments received, payouts and your payout controls: thirteen event types | [Webhooks](./webhooks) |
 | Operator approval of a merchant | A person, not an endpoint | [Going live](./going-live) |
 
-Sixteen routes. **Only the routes that move money check approval**: `POST /v1/charges` and `POST /v1/transfers` refuse a merchant that is not `approved`, and so do the two payout routes, which also need payouts switched on. Every other route needs a signed request and nothing more. Routes scoped to a merchant (`GET /v1/merchants/me`, the charge reads and the event routes) answer `404 merchant_not_registered` until you register; quotes, orders, balances, limits and the payout reads answer any signing wallet.
+Twenty-one `/v1` routes, and `GET /transfers`, which is the wallet's own. **Only the routes that move money check approval**: `POST /v1/charges` and `POST /v1/transfers` refuse a merchant that is not `approved`, and so do the payout routes, which also need payouts switched on. Every other route needs a signed request and nothing more. Routes scoped to a merchant (`GET /v1/merchants/me`, the charge reads and the event routes) answer `404 merchant_not_registered` until you register; quotes, orders, balances, limits and the payout reads answer any signing wallet.
 
 Paying money **out** is a second decision on top of approval, off by default both globally and per merchant. See [Payouts](./payouts#payouts-are-off-by-default).
 

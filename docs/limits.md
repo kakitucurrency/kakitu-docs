@@ -97,9 +97,9 @@ if (body.payout) {
   // remaining_today_kes is null when the counter could not be read, and null is NOT zero.
   const remaining = p.remaining_today_kes === null ? "unknown" : p.remaining_today_kes;
   console.log(p.enabled, p.max_kes, p.daily_cap_kes, p.hold_above_kes, remaining);
-  // "Above" is strict: a payout exactly equal to hold_above_kes is dispatched, not held.
-  const willBeHeld = (kes) => kes > p.hold_above_kes;
-  console.log(willBeHeld(p.hold_above_kes));   // false
+  // "Above" is strict: a payout exactly equal to hold_above_kes goes straight through, not to a person.
+  const needsApproval = (kes) => kes > p.hold_above_kes;
+  console.log(needsApproval(p.hold_above_kes));   // false
 }
 ```
 
@@ -127,7 +127,7 @@ if p is not None:
     # remaining_today_kes is None when the counter could not be read, and None is NOT zero.
     remaining = "unknown" if p["remaining_today_kes"] is None else p["remaining_today_kes"]
     print(p["enabled"], p["max_kes"], p["daily_cap_kes"], p["hold_above_kes"], remaining)
-    # "Above" is strict: a payout exactly equal to hold_above_kes is dispatched, not held.
+    # "Above" is strict: a payout exactly equal to hold_above_kes goes straight through, not to a person.
     print(p["hold_above_kes"] > p["hold_above_kes"])   # False
 ```
 
@@ -154,9 +154,9 @@ if (array_key_exists('payout', $body)) {
     $remaining = $p['remaining_today_kes'] ?? 'unknown';
     echo $p['enabled'] ? 'on' : 'off', ' ', $p['max_kes'], ' ', $p['daily_cap_kes'], ' ',
          $p['hold_above_kes'], ' ', $remaining, PHP_EOL;
-    // "Above" is strict: a payout exactly equal to hold_above_kes is dispatched, not held.
-    $willBeHeld = fn (int $kes): bool => $kes > $p['hold_above_kes'];
-    var_dump($willBeHeld($p['hold_above_kes']));   // false
+    // "Above" is strict: a payout exactly equal to hold_above_kes goes straight through, not to a person.
+    $needsApproval = fn (int $kes): bool => $kes > $p['hold_above_kes'];
+    var_dump($needsApproval($p['hold_above_kes']));   // false
 }
 ```
 
@@ -179,7 +179,7 @@ HTTP 200
     "daily_cap_kes": 200000,
     "hold_above_kes": 20000,
     "remaining_today_kes": 143500,
-    "note": "max_kes, daily_cap_kes and hold_above_kes are exact: they are read from the same place the limits are enforced. remaining_today_kes is a snapshot and may already be lower by the time you read it, because another payout of yours can land in between; it is null when it could not be read, which does not mean zero. The day resets at midnight East Africa Time. A payout above hold_above_kes is accepted and held for a person to review, which is a normal outcome and not an error."
+    "note": "max_kes, daily_cap_kes and hold_above_kes are exact: they are read from the same place the limits are enforced. remaining_today_kes is a snapshot and may already be lower by the time you read it, because another payout of yours can land in between; it is null when it could not be read, which does not mean zero. The day resets at midnight East Africa Time. A payout above hold_above_kes needs a person's approval before it can be signed: ask at POST /v1/payouts/requests, which is a normal step and not an error."
   },
   "max_staleness_seconds": 300,
   "note": "The withdrawal band is cached and refreshed about every five minutes, so after the payout route is switched it can be up to five minutes out of date. A quote, not this band, is what decides whether an amount is accepted."
@@ -220,7 +220,7 @@ This is what governs [payouts](./payouts), published so you do not have to learn
 | `enabled` | Whether you may pay out at all. |
 | `max_kes` | The largest single payout. Over it: `400 payout_amount_above_maximum`. |
 | `daily_cap_kes` | Today's budget. Over it: `429 payout_daily_cap_exceeded`. |
-| `hold_above_kes` | A payout **above** this is accepted and held for a person. |
+| `hold_above_kes` | A payout **above** this needs a person to [approve it first](./payouts#approve-first), before you sign. |
 | `remaining_today_kes` | What is left of `daily_cap_kes`, or `null`. |
 | `note` | The caveats below, in a sentence. |
 
@@ -242,7 +242,7 @@ The three numbers are published regardless. A `false` with real caps still tells
 
 `max_kes`, `daily_cap_kes` and `hold_above_kes` are read from the same place the enforcement reads them — not from a second copy that could drift. A limit published here that disagreed with the one enforced would be worse than publishing nothing, because you would build against a number we do not honour. There is nothing to drift from.
 
-`hold_above_kes` is the one worth acting on. **A held payout is a normal, expected outcome and not an error**, and knowing this number lets you tell someone "this one needs review" *before* asking them to sign rather than after. "Above" is strict: a payout exactly equal to `hold_above_kes` is dispatched, not held. A threshold of `0` holds everything, which is the setting an operator reaches for when something is wrong.
+`hold_above_kes` is the one worth acting on. **A payout above it needs a person's approval before you can sign it**, and that is a normal step and not an error: knowing this number lets you [ask first](./payouts#approve-first) (`POST /v1/payouts/requests`) instead of finding out when a quote is refused with `payout_approval_required`. "Above" is strict: a payout exactly equal to `hold_above_kes` goes straight through, not to a person. A threshold of `0` sends everything to a person, which is the setting an operator reaches for when something is wrong.
 
 ### `remaining_today_kes` is a snapshot, and `null` is not zero
 
@@ -271,4 +271,5 @@ It publishes the **withdrawal** band and your **payout** limits. These live else
 |---|---|
 | Your daily collection cap and per-charge maximum | `daily_cap_kes` and `per_charge_max_kes` in [`GET /v1/merchants/me`](./merchants) |
 | The largest single [transfer](./transfers) | `relay_max_per_tx_kes` in `GET /config` |
+| The largest single M-Pesa collection | The collection partner's per-order ceiling, `deposit_max_per_order_usd` in `GET /config` (USD 99, about KES 13,000 at the current buying rate). It binds before your `per_charge_max_kes` does. Over it: `amount_above_maximum` |
 | Requests per minute, prompts per payer, charges per minute | [Rate limits](./rate-limits) |

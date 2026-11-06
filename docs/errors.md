@@ -45,7 +45,7 @@ Every `/v1/` endpoint answers an error with one envelope:
 | `rate_limited` | 429 | Too many requests per minute, too many charges per minute, too many prompts, or too many transfers this hour. See [Rate limits](./rate-limits). |
 | `charge_not_found` | 404 | No such charge for this merchant. |
 | `reference_reused` | 409 | This merchant already has a charge with that reference. |
-| `rail_unavailable` | 503 | The thing you asked for is temporarily unavailable. Retry shortly. On a route that moves money it means **nothing was sent**. |
+| `rail_unavailable` | 503 | The thing you asked for is temporarily unavailable, or a payout's capacity is short for now. Retry shortly. On a route that moves money it means **nothing was sent**. |
 | `order_not_found` | 404 | No such order. See [Orders](./orders). |
 | `event_not_found` | 404 | No such webhook event. See [Events](./events). |
 | `payouts_disabled` | 403 | Payouts are not switched on for this merchant. See [Payouts](./payouts#payouts-are-off-by-default). |
@@ -53,13 +53,24 @@ Every `/v1/` endpoint answers an error with one envelope:
 | `payout_amount_above_maximum` | 400 | Over the largest single payout allowed for this merchant. |
 | `payout_not_found` | 404 | No such payout for this merchant. See [Payouts](./payouts). |
 | `payout_quote_not_found` | 404 | The payout quote does not exist, has expired, or has already been spent. |
+| `payout_approval_required` | 409 | The payout is above your `hold_above_kes` and no person has approved it, so there is nothing to sign. Ask at `POST /v1/payouts/requests`. See [Approve first](./payouts#approve-first). |
+| `payout_not_approved` | 409 | The `payout_id` cannot be quoted or signed now: undecided, rejected, lapsed, already used, or its destination was removed. Read the payout. |
+| `payout_approval_mismatch` | 409 | The amount or beneficiary is not what a person approved. It is a different payout, so it is a new request. |
+| `payout_open_requests_exceeded` | 429 | You already have as many payout requests waiting as you may. A decision or a lapsed approval frees a place. |
+| `payout_destination_locked` | 403 | You hold your payouts to your saved destinations, and this is not one that can be paid now. The answer does not say whether it is unsaved, cooling off or removed. See [the lock](./payouts#saved-destinations-and-the-lock). |
+| `payout_destination_not_found` | 404 | No saved destination with that id for this merchant. |
+| `payout_destinations_full` | 409 | You have as many saved destinations as you may (50). Remove one. |
+| `bank_unavailable` | 403 | A paybill or bank that is not a saved destination past its cooling-off, or a kind of destination that is not available now. Nothing was quoted. |
+| `unknown_bank` | 400 | `bank_code` is not a bank we can pay. |
+| `account_not_found` | 422 | The bank does not hold that account, or no longer under the name it was saved with. |
+| `insufficient_balance` | 400 | The wallet does not hold the KSHS this payout or withdrawal burns. Nothing was quoted or sent. |
 | `profile_required` | 409 | This wallet has no profile yet: a phone number and name, which the cash-out partner needs on every order. There is no `/v1` route for it; save one with `POST /profile` or in the Kakitu app. See [Cash out](./cash-out#2-a-profile-once). |
 | `identity_verification_required` | 403 | The amount needs the customer's identity verified first. |
 | `internal` | 500 | Something went wrong on our side. Quote the request_id. |
 
-Thirty-one codes, and that is all of them.
+Forty-two codes, and that is all of them.
 
-Six answer the same way for a thing that does not exist and a thing that belongs to somebody else: `merchant_not_registered`, `charge_not_found`, `order_not_found`, `event_not_found`, `payout_not_found` and `payout_quote_not_found`. Same status, same code, same sentence, deliberately. An error that told the two apart would turn the endpoint into a way of asking whether somebody else's id is real.
+Seven answer the same way for a thing that does not exist and a thing that belongs to somebody else: `merchant_not_registered`, `charge_not_found`, `order_not_found`, `event_not_found`, `payout_not_found`, `payout_quote_not_found` and `payout_destination_not_found`. Same status, same code, same sentence, deliberately. An error that told the two apart would turn the endpoint into a way of asking whether somebody else's id is real.
 
 ## The payout codes are not the collection codes
 
@@ -68,6 +79,16 @@ Six answer the same way for a thing that does not exist and a thing that belongs
 **Paying money out is a different permission from collecting it in**, on different settings and a different counter. A payout cap refusal must never arrive as `daily_cap_exceeded`: an integrator who saw that would go and ask an operator to raise their *collection* cap, the operator would raise the wrong number, nothing would change, and the real limit would stay a mystery. Branch on the payout codes when you are paying out. See [Payouts](./payouts#payout-caps-are-not-your-collection-caps).
 
 The whole code set above is final and will not change under you. Codes are never reused and never renamed: a code you branch on today means the same thing tomorrow.
+
+## Codes that are not in `/v1`
+
+The wallet's own routes (`/ramp/*`, which the Kakitu app and extension call) answer in the older shape, `{"error": "<code>"}`, and a few of their codes have no `/v1` equivalent. The one worth knowing if you cash in or out for a customer:
+
+| `error` | HTTP | Meaning |
+|---|---|---|
+| `deposits_paused` | 409 | M-Pesa top-ups are paused for a short while. **Nothing was charged**, no prompt was sent, and the customer is texted when top-ups reopen. Not a failure to retry in a loop. |
+
+On those routes `insufficient_balance` is the same fact as the `/v1` code above, and `rail_unavailable` is not used: a partner that fails is `502 provider_error`.
 
 ## Authentication failures
 

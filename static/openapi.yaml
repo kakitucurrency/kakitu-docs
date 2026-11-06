@@ -17,17 +17,20 @@ info:
 
     **M-Pesa collections and payouts are not open.** `POST /v1/charges` answers
     `503 rail_unavailable` before anything is written (nobody is prompted, the reference stays
-    free), and the two payout-sending routes answer `403`. The live way for a business to be
-    paid is a plain KSHS transfer to its address — the Kakitu extension's `pay()`, a `kakitu:`
-    link or a QR code — verified on chain by the merchant. See
+    free), and the payout routes answer `403 payouts_disabled`. The live way for a business to
+    be paid is a plain KSHS transfer to its address — the Kakitu extension's `pay()`, a
+    `kakitu:` link or a QR code. An approved merchant is told of it by a signed
+    `transfer.received` webhook, which carries the payer's `reference`; **a reference is the
+    payer's claim, not proof**, so the merchant still checks the amount and the recipient. See
     https://developer.kakitu.org/docs/intro.
 
     ## Access
 
     The developer API is in private release. Registration is open to anyone. Only the routes
     that move money check approval: `POST /v1/charges` and `POST /v1/transfers` refuse a
-    merchant that is not `approved`, and so do `POST /v1/payouts/quote` and `POST /v1/payouts`.
-    Every other route needs a signed request and nothing more.
+    merchant that is not `approved`, and so do the payout routes (`POST /v1/payouts/requests`,
+    `POST /v1/payouts/quote`, `POST /v1/payouts`, `POST /v1/payout-destinations`). Every other
+    route needs a signed request and nothing more.
 
     **Payouts are off by default.** They are governed by two switches that are ANDed: a global
     one for the whole platform, and a per-merchant one on your own record. Both are an
@@ -112,17 +115,20 @@ info:
 
     ## Idempotency
 
-    Three of the seven `POST` routes require an `Idempotency-Key` header; four do not.
+    Four of the ten `POST` routes require an `Idempotency-Key` header; six do not.
 
     | Route | `Idempotency-Key` |
     | --- | --- |
     | `POST /v1/charges` | **required** |
     | `POST /v1/transfers` | **required** |
     | `POST /v1/payouts` | **required** |
+    | `POST /v1/payouts/requests` | **required** |
     | `POST /v1/merchants` | **not required** (registration is an upsert) |
     | `POST /v1/quotes` | **not required** (a quote creates no order, charge or transfer) |
     | `POST /v1/payouts/quote` | **not required** (a payout quote creates no payout and moves no money) |
     | `POST /v1/events/{id}/replay` | **not required** (idempotent by construction) |
+    | `POST /v1/payout-destinations` | **not required** (saving a place twice returns the first row) |
+    | `POST /v1/payout-destinations/lock` | **not required** (a lock already where it was asked to be changes nothing) |
 
     Where it is required and missing, the request fails `400 idempotency_key_required`. The key
     is at most 255 characters, is scoped to the authenticated address, and is fingerprinted
@@ -202,7 +208,9 @@ tags:
   - name: Transfers
     description: Gasless KSHS transfers signed by the caller.
   - name: Payouts
-    description: Send shillings to a beneficiary's M-Pesa. Not open yet; off by default and enabled per merchant by an operator.
+    description: Send shillings to an M-Pesa number, till, paybill or bank account. Not open yet; off by default and enabled per merchant by an operator. Above a threshold a person approves first.
+  - name: Payout destinations
+    description: The places you may pay, and the lock that holds you to them. The lock controls where cash-outs go; it does not stop KSHS transfers to other wallets.
   - name: Reads
     description: Balances, orders, limits and prices.
   - name: Events
@@ -658,7 +666,7 @@ paths:
       tags: [Payouts]
       summary: Price a payout and get back exactly what to sign
       description: |
-        Prices a payout to a beneficiary's M-Pesa and mints the **single-use quote that is the
+        Prices a payout to a beneficiary's M-Pesa number, till, paybill or bank account (see `PayoutBeneficiary`) and mints the **single-use quote that is the
         only thing `POST /v1/payouts` will accept**. Nothing is created and no money moves.
 
         **Payouts are off by default**, globally and per merchant. Both switches are an
@@ -679,8 +687,14 @@ paths:
 
         `beneficiary.name` is **your** text and is what the recipient sees on their M-Pesa
         statement. It is never filled in from the sending merchant's profile. At most 100
-        characters, and it must not be empty. `beneficiary.phone` is a Kenyan mobile number in
-        `2547xxxxxxxx` form.
+        bytes, and it must not be empty. Which other fields go with it depends on
+        `beneficiary.type`: a phone is `2547xxxxxxxx`, a till is `till`, a paybill is `paybill`
+        and `account`, and a bank is `account` and `bank_code`.
+
+        ### Above the hold threshold, ask first
+
+        A payout above `hold_above_kes` must name `payout_id`: the request a person approved at
+        `POST /v1/payouts/requests`. Without it, `409 payout_approval_required`.
 
         ### What to sign
 
@@ -718,7 +732,8 @@ paths:
         '400':
           description: |
             `invalid_request` (unknown field, `amount_kes` below 1, missing `beneficiary`, a
-            number that is not a Kenyan mobile, a missing or over-long `beneficiary.name`),
+            beneficiary that is not exactly one valid destination, a missing or over-long
+            `beneficiary.name`),
             `payout_amount_above_maximum` (above the largest single payout allowed for this
             merchant — no amount of waiting makes it acceptable, only a smaller one),
             `amount_below_minimum` or `amount_above_maximum` (GET /v1/limits shows the current
@@ -731,7 +746,10 @@ paths:
           description: |
             `merchant_not_approved` or `merchant_suspended` (checked first), then
             `payouts_disabled` (payouts are not switched on — today they are off for every
-            merchant), or `identity_verification_required`.
+            merchant), `identity_verification_required`, `payout_destination_locked` (the
+            merchant is locked to its saved destinations and this is not one that can be paid
+            now) or `bank_unavailable` (a paybill or bank that is not a saved destination past
+            its cooling-off).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -747,6 +765,10 @@ paths:
             own `POST /profile` (same signature headers; body
             `{"phone": "2547XXXXXXXX", "first_name": "…", "last_name": "…"}`) or in the Kakitu
             app.
+
+            Also `payout_approval_required` (above `hold_above_kes` with no `payout_id`),
+            `payout_not_approved` (that `payout_id` is undecided, rejected, lapsed or used) and
+            `payout_approval_mismatch` (the amount or beneficiary is not what was approved).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -811,24 +833,15 @@ paths:
         transfer with it. A mismatched signature therefore costs the quote and that much
         budget; get a new quote and sign exactly what it says.
 
-        ### 202 means accepted, and there are two kinds of accepted
+        ### 202 means accepted, not paid
 
-        This route answers **202** in both successful cases — read `status`:
+        This route answers **202**: the payout is `dispatched` and the money is on its way. Poll
+        `GET /v1/payouts/{id}`, or wait for `payout.paid` or `payout.failed`.
 
-        - `status: "dispatched"` — handed to the worker; the money is on its way. **Today this
-          may be the last status the API reports**: the rail's outcome is not yet carried back
-          onto the payout, so it can stay `dispatched`, and there is no `payout.paid` or
-          `payout.failed` event.
-        - `status: "held"` — **a normal, expected answer and not an error.** A payout above the
-          merchant's hold threshold is accepted but parked for a person to look at. Nothing has
-          been sent. `message` says so. Poll `GET /v1/payouts/{id}` for the outcome.
-
-        A held payout keeps the permit you signed, and that permit stops being relayable at its
-        own `deadline` — minutes, which a human working a queue rarely beats. So the ordinary
-        end of a hold is **`expired`**: nothing left your wallet, nothing reached the
-        beneficiary, and a `payout.expired` webhook tells you to sign a fresh quote and submit
-        again. If instead a person **refused** it, the payout ends `cancelled` and raises
-        `payout.cancelled` — do **not** submit it again.
+        A payout **above** the merchant's `hold_above_kes` must have been approved first
+        (`POST /v1/payouts/requests`); without that it is `409 payout_approval_required`. A
+        payout whose outcome is not known stays `dispatched`, and `payout.failed` is never
+        raised for it.
 
         ### The daily budget is spent here
 
@@ -847,8 +860,8 @@ paths:
       responses:
         '202':
           description: |
-            Accepted. `status` is `dispatched` (on its way) or `held` (parked for a person,
-            nothing sent). Both are success; branch on `status`, not on the HTTP code.
+            Accepted. `status` is `dispatched` (on its way). Nothing has reached the beneficiary
+            yet; branch on `status`, not on the HTTP code.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
             Idempotent-Replayed: { $ref: '#/components/headers/IdempotentReplayed' }
@@ -1004,11 +1017,10 @@ paths:
         all answer `404 payout_not_found` with the same sentence. There is no way to tell them
         apart.
 
-        This is the poll for a `held` payout: it stays `held` until a person releases it (→
-        `dispatched`), refuses it (→ `cancelled`), or its signed permit lapses (→ `expired`).
-
-        A `dispatched` payout may stay `dispatched`: the rail's outcome is not yet projected back
-        onto it, so `paid` and `failed` are not reported today.
+        This is the poll for a request: `pending_approval` becomes `approved` (with
+        `approval_expires_at`) or `rejected`, and an approval nobody signed becomes `expired`.
+        A `dispatched` payout becomes `paid` or `failed`; one whose outcome is not known stays
+        `dispatched`.
       parameters:
         - name: id
           in: path
@@ -1034,6 +1046,261 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/Internal' }
         '503': { $ref: '#/components/responses/RailUnavailable' }
+  /v1/payouts/requests:
+    post:
+      operationId: requestPayout
+      tags: [Payouts]
+      summary: Ask a person to approve a payout before anything is signed
+      description: |
+        A payout **above** the merchant's `hold_above_kes` (see `GET /v1/limits`) is decided by
+        a person before it is signed. This route asks. **Nothing is priced, signed or counted
+        against the day's budget**, so a request can wait as long as a person takes: the answer
+        is `202` with `status: "pending_approval"`.
+
+        The decision arrives as a webhook, `payout.approved` (with `approval_expires_at`) or
+        `payout.rejected`, and as the payout's `status` on `GET /v1/payouts/{id}`. After
+        `payout.approved`, call `POST /v1/payouts/quote` with the `payout_id` and the **same**
+        `amount_kes` and `beneficiary`, sign, and `POST /v1/payouts` before `approval_expires_at`.
+
+        **`payout.rejected` means do not ask again.** `payout.expired` after an approval means
+        the merchant did not sign in time: make a new request.
+
+        A merchant may have only so many requests waiting at once (20 by default); past that,
+        `429 payout_open_requests_exceeded`. An amount that does not need approval is
+        `400 invalid_request`: quote it and sign that.
+
+        **`Idempotency-Key` is REQUIRED.** Payouts are off by default (`403 payouts_disabled`).
+        Body limit 4 KiB; unknown fields are refused.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutRequestBody' }
+      responses:
+        '202':
+          description: Asked. `status` is `pending_approval`; `fee_kes` and `send_kes` are `0` until a quote prices it.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Idempotent-Replayed: { $ref: '#/components/headers/IdempotentReplayed' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payout' }
+        '400':
+          description: |
+            `invalid_request` (unknown field, a beneficiary that is not exactly one valid
+            destination, an amount that does not need approval), `payout_amount_above_maximum`,
+            `idempotency_key_required` or `idempotency_key_invalid`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '403':
+          description: '`merchant_not_approved`, `merchant_suspended`, `payouts_disabled`, `payout_destination_locked` or `bank_unavailable`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404':
+          description: '`merchant_not_registered`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '409':
+          description: '`idempotency_key_reuse` or `idempotency_key_in_progress`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '413':
+          description: '`request_too_large` — the body is larger than 4 KiB.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429':
+          description: '`payout_open_requests_exceeded` (a decision or a lapsed approval frees a place) or `rate_limited`.'
+          headers:
+            Retry-After: { $ref: '#/components/headers/RetryAfter' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/RailUnavailable' }
+  /v1/payout-destinations:
+    get:
+      operationId: listPayoutDestinations
+      tags: [Payout destinations]
+      summary: List saved destinations, and whether the lock binds
+      description: |
+        Any registered merchant may read its own list, suspended or not. `payout_locked` says
+        whether the merchant is held to this list now, and `payout_unlocks_at` is present only
+        while an unlock is pending.
+
+        **The lock controls where cash-outs can go. It does not stop KSHS transfers to other
+        wallets.**
+      responses:
+        '200':
+          description: The list.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PayoutDestinationList' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '404':
+          description: '`merchant_not_registered`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
+    post:
+      operationId: savePayoutDestination
+      tags: [Payout destinations]
+      summary: Save a place the merchant may pay
+      description: |
+        Saves one place, in the beneficiary's field names and **with no name**. A bank is looked
+        up and its `holder_name` stored. **A new place waits out `payout_cooling_off_hours`
+        (24 by default, never less than 1) before it can be paid**: `status` is `cooling_off`
+        until `active_at`. A `payout_destination.added` event and an operator alarm go out at
+        once, so a place added by anybody else who holds the key is seen before it can be used.
+
+        `201` for a new place, `200` for one already saved (its clock untouched, so a retry
+        costs nothing). A merchant may keep up to 50 places. **No `Idempotency-Key`.** Needs an
+        approved merchant. Body limit 4 KiB; unknown fields are refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SavePayoutDestinationRequest' }
+      responses:
+        '200':
+          description: Already saved. The first row, untouched.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PayoutDestination' }
+        '201':
+          description: Saved. It can be paid from `active_at`.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PayoutDestination' }
+        '400':
+          description: '`invalid_request` (not exactly one valid destination) or `unknown_bank`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '403':
+          description: '`merchant_not_approved`, `merchant_suspended` or `bank_unavailable`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404':
+          description: '`merchant_not_registered`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '409':
+          description: '`payout_destinations_full` — remove one first.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '422':
+          description: '`account_not_found` — the bank does not hold that account.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/RailUnavailable' }
+  /v1/payout-destinations/{id}:
+    delete:
+      operationId: removePayoutDestination
+      tags: [Payout destinations]
+      summary: Remove a saved destination, at once
+      description: |
+        Immediate: removing narrows where money can go, so it never waits. Any registered
+        merchant may, suspended or not. A payout already approved to this place can no longer be
+        signed, and one already dispatched is out of reach. A `payout_destination.removed` event
+        is raised.
+
+        Another merchant's place, a missing one and an id that is no UUID are one answer,
+        `404 payout_destination_not_found`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, removed]
+                properties:
+                  id: { type: string, format: uuid }
+                  removed: { type: boolean, const: true }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '404':
+          description: '`payout_destination_not_found`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
+  /v1/payout-destinations/lock:
+    post:
+      operationId: setPayoutLock
+      tags: [Payout destinations]
+      summary: Lock the merchant to its saved destinations, or ask to unlock
+      description: |
+        `{"locked": true}` binds **at once** and cancels an unlock in progress.
+        `{"locked": false}` leaves the lock on until `payout_unlocks_at`, which is
+        `payout_cooling_off_hours` later. Either raises `payout_lock.changed` and an alarm.
+
+        **A locked merchant can pay only a saved destination whose `active_at` has passed.**
+        Anything else is `403 payout_destination_locked`. The lock holds on the payout routes
+        and on the wallet's own cash-out routes (`/ramp/withdraw/quote` is held to the same
+        list; a cash-out to USDC on Base is refused outright).
+
+        **The lock controls where cash-outs can go. It does not stop KSHS transfers to other
+        wallets**, so it is not protection against somebody who holds the key moving KSHS on
+        chain.
+
+        Locking needs only a registered merchant (a suspended owner must still be able to cancel
+        an unlock somebody asked for); unlocking needs an approved one. **No `Idempotency-Key`.**
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutLockRequest' }
+      responses:
+        '200':
+          description: The lock, after this change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PayoutLock' }
+        '400':
+          description: '`invalid_request` — the body must be exactly `{"locked": true}` or `{"locked": false}`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '403':
+          description: '`merchant_not_approved` or `merchant_suspended` (unlocking only).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404':
+          description: '`merchant_not_registered`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
   /v1/balances:
     get:
       operationId: getBalances
@@ -1225,10 +1492,10 @@ paths:
 
         ### An event is about a charge **or** about a payout
 
-        Exactly one of `charge_id` and `payout_id` is set; the other is `null`. `charge_id` was
-        once always present and is now **nullable** — it is `null` on every payout event. A
-        typed client generated from an older version of this document breaks on the first
-        payout event it receives.
+        At most one of `charge_id` and `payout_id` is set; the other is `null`, and on
+        `transfer.received` and the three payout-control events both are. `charge_id` was once
+        always present and is now **nullable**. A typed client generated from an older version
+        of this document breaks on the first payout event it receives.
 
         Branch on `type`, and only on `type`:
 
@@ -1237,12 +1504,20 @@ paths:
         | `charge.paid` | the rail says the payer paid | — |
         | `charge.settled` | your wallet is credited on chain | — |
         | `charge.failed` | the collection failed | — |
-        | `payout.expired` | the payout was **not sent**; its signed permit lapsed while it was held | sign a fresh quote and **submit it again** |
+        | `transfer.received` | KSHS arrived at your address; carries the payer's `reference`, which is a claim and not proof | check amount and recipient |
+        | `payout.approved` | a person said yes to a request | quote with `payout_id` and **sign now**, before `approval_expires_at` |
+        | `payout.rejected` | a person said no | **do not** ask again |
+        | `payout.expired` | the payout was **not sent**; an approval went unsigned, or a signature lapsed | ask again with a **new** payout |
         | `payout.cancelled` | the payout was **not sent**; a person refused it | **do not** submit it again |
+        | `payout.paid` | the beneficiary has the money | — |
+        | `payout.failed` | it did not reach the beneficiary | a retry is a **new** payout |
+        | `payout_destination.added` | somebody saved a new place to pay | if it was not you, remove it |
+        | `payout_destination.removed` | a saved place came off the list | — |
+        | `payout_lock.changed` | the payout lock moved | if it was not you, turn it on again |
 
-        `payout.expired` and `payout.cancelled` both mean no money left your wallet, which is
-        exactly why they are two types and not one: one of them asks you to send money a second
-        time and the other forbids it.
+        `payout.expired`, `payout.cancelled` and `payout.rejected` all mean no money left your
+        wallet, which is exactly why they are separate types and not one: one of them asks you
+        to try again and the others forbid it.
 
         Scoped to the authenticated merchant by the query itself. Same opaque cursor as the
         charge list.
@@ -1251,10 +1526,9 @@ paths:
           in: query
           required: false
           description: |
-            A typo here is refused rather than quietly matching nothing. All five types are
-            filterable, including the two payout ones — `?type=payout.expired` is the filter a
-            merchant most needs, because that is the event saying money did **not** go and it
-            must be signed and submitted again.
+            A typo here is refused rather than quietly matching nothing. All thirteen types are
+            filterable — `?type=payout.expired` is the filter a merchant most needs, because that
+            is the event saying money did **not** go and must be asked for again.
 
             There is no `payout_id` filter — narrow with `type` and read `payout_id` off the
             rows.
@@ -1413,10 +1687,10 @@ webhooks:
       tags: [Events]
       summary: payout.expired — NOT sent, sign and submit it again
       description: |
-        POSTed to your merchant's `callback_url`. **The money did not go.** A held payout's
-        signed permit lapsed while it waited for a person, which is the ordinary end of a hold
-        and not an edge case. Nothing left your wallet and nothing reached the beneficiary. The
-        answer is a fresh quote, a fresh signature and a **new** payout.
+        POSTed to your merchant's `callback_url`. **The money did not go.** An approval went
+        unsigned past `approval_expires_at`, or a held payout's signed permit lapsed. Nothing
+        left your wallet and nothing reached the beneficiary. The answer is a **new** payout:
+        a fresh request, quote and signature.
 
         This is the exact opposite instruction to `payout.cancelled`, which carries the same
         amounts and the same "nothing was sent". Branch on `type` and on nothing else.
@@ -1454,6 +1728,164 @@ webhooks:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/PayoutCancelledPayload' }
+      responses:
+        '200': { $ref: '#/components/responses/WebhookAccepted' }
+        '4XX': { $ref: '#/components/responses/WebhookRejected' }
+  transfer.received:
+    post:
+      operationId: onTransferReceived
+      tags: [Events]
+      summary: transfer.received — KSHS arrived at your address
+      description: |
+        POSTed to your merchant's `callback_url`. A transfer to your address, from anybody, by
+        any route. `transfer.reference` is the payer's claim and not proof: check the amount and
+        the recipient before you release goods.
+      parameters:
+        - $ref: '#/components/parameters/KakituSignature'
+        - $ref: '#/components/parameters/KakituEventId'
+        - $ref: '#/components/parameters/KakituEventType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransferReceivedPayload' }
+      responses:
+        '200': { $ref: '#/components/responses/WebhookAccepted' }
+        '4XX': { $ref: '#/components/responses/WebhookRejected' }
+  payout.approved:
+    post:
+      operationId: onPayoutApproved
+      tags: [Events]
+      summary: payout.approved — a person said yes, sign now
+      description: |
+        POSTed to your merchant's `callback_url`. Quote with the `payout_id`, sign, and submit
+        before `payout.approval_expires_at`.
+      parameters:
+        - $ref: '#/components/parameters/KakituSignature'
+        - $ref: '#/components/parameters/KakituEventId'
+        - $ref: '#/components/parameters/KakituEventType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutApprovedPayload' }
+      responses:
+        '200': { $ref: '#/components/responses/WebhookAccepted' }
+        '4XX': { $ref: '#/components/responses/WebhookRejected' }
+  payout.rejected:
+    post:
+      operationId: onPayoutRejected
+      tags: [Events]
+      summary: payout.rejected — a person said no, do NOT ask again
+      description: |
+        POSTed to your merchant's `callback_url`. Nothing was signed or sent.
+      parameters:
+        - $ref: '#/components/parameters/KakituSignature'
+        - $ref: '#/components/parameters/KakituEventId'
+        - $ref: '#/components/parameters/KakituEventType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutRejectedPayload' }
+      responses:
+        '200': { $ref: '#/components/responses/WebhookAccepted' }
+        '4XX': { $ref: '#/components/responses/WebhookRejected' }
+  payout.paid:
+    post:
+      operationId: onPayoutPaid
+      tags: [Events]
+      summary: payout.paid — the beneficiary has the money
+      description: |
+        POSTed to your merchant's `callback_url`.
+      parameters:
+        - $ref: '#/components/parameters/KakituSignature'
+        - $ref: '#/components/parameters/KakituEventId'
+        - $ref: '#/components/parameters/KakituEventType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutPaidPayload' }
+      responses:
+        '200': { $ref: '#/components/responses/WebhookAccepted' }
+        '4XX': { $ref: '#/components/responses/WebhookRejected' }
+  payout.failed:
+    post:
+      operationId: onPayoutFailed
+      tags: [Events]
+      summary: payout.failed — it did not reach the beneficiary
+      description: |
+        POSTed to your merchant's `callback_url`. A retry is a new payout.
+      parameters:
+        - $ref: '#/components/parameters/KakituSignature'
+        - $ref: '#/components/parameters/KakituEventId'
+        - $ref: '#/components/parameters/KakituEventType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutFailedPayload' }
+      responses:
+        '200': { $ref: '#/components/responses/WebhookAccepted' }
+        '4XX': { $ref: '#/components/responses/WebhookRejected' }
+  payout_destination.added:
+    post:
+      operationId: onPayoutDestinationAdded
+      tags: [Events]
+      summary: payout_destination.added — a new place to pay was saved
+      description: |
+        POSTed to your merchant's `callback_url`. If you did not save it, somebody else holds
+        your key: remove it before `destination.active_at`, and replace the key.
+      parameters:
+        - $ref: '#/components/parameters/KakituSignature'
+        - $ref: '#/components/parameters/KakituEventId'
+        - $ref: '#/components/parameters/KakituEventType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutDestinationEventPayload' }
+      responses:
+        '200': { $ref: '#/components/responses/WebhookAccepted' }
+        '4XX': { $ref: '#/components/responses/WebhookRejected' }
+  payout_destination.removed:
+    post:
+      operationId: onPayoutDestinationRemoved
+      tags: [Events]
+      summary: payout_destination.removed — a saved place came off your list
+      description: |
+        POSTed to your merchant's `callback_url`. While locked, somebody holding your key can stop
+        your payouts this way, so it is announced like an addition.
+      parameters:
+        - $ref: '#/components/parameters/KakituSignature'
+        - $ref: '#/components/parameters/KakituEventId'
+        - $ref: '#/components/parameters/KakituEventType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutDestinationEventPayload' }
+      responses:
+        '200': { $ref: '#/components/responses/WebhookAccepted' }
+        '4XX': { $ref: '#/components/responses/WebhookRejected' }
+  payout_lock.changed:
+    post:
+      operationId: onPayoutLockChanged
+      tags: [Events]
+      summary: payout_lock.changed — the payout lock moved
+      description: |
+        POSTed to your merchant's `callback_url`. If somebody asked for the lock to come off and
+        it was not you, turn it on again: that cancels the unlock at once.
+      parameters:
+        - $ref: '#/components/parameters/KakituSignature'
+        - $ref: '#/components/parameters/KakituEventId'
+        - $ref: '#/components/parameters/KakituEventType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutLockChangedPayload' }
       responses:
         '200': { $ref: '#/components/responses/WebhookAccepted' }
         '4XX': { $ref: '#/components/responses/WebhookRejected' }
@@ -1722,9 +2154,13 @@ components:
           description: Accepted and ignored.
         settled_at:
           description: Accepted and ignored.
+        fee_kes:
+          description: Accepted and ignored.
+        credited_kes:
+          description: Accepted and ignored.
     Charge:
       type: object
-      required: [id, reference, amount, currency, status, created_at, paid_at, settled_at]
+      required: [id, reference, amount, currency, status, created_at, paid_at, settled_at, fee_kes, credited_kes]
       properties:
         id: { type: string, format: uuid }
         reference: { type: string }
@@ -1734,6 +2170,8 @@ components:
         created_at: { type: string, format: date-time }
         paid_at: { type: [string, 'null'], format: date-time }
         settled_at: { type: [string, 'null'], format: date-time }
+        fee_kes: { type: [integer, 'null'], format: int64, description: 'What the collection cost, in whole KES. `null` until the charge is paid, and cleared again if a paid charge is refunded.' }
+        credited_kes: { type: [integer, 'null'], format: int64, description: 'What reached the merchant''s wallet, in whole KES: `amount` less `fee_kes`. `null` until the charge is paid.' }
     ChargeList:
       type: object
       required: [data, next_cursor]
@@ -1758,6 +2196,17 @@ components:
         iv: { type: integer, description: 'EIP-712 Relay(owner,to,value,deadline,nonce) intent signature, which binds the recipient.' }
         ir: { type: string, description: 'EIP-712 relay intent signature.' }
         is: { type: string, description: 'EIP-712 relay intent signature.' }
+        reference:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z0-9._:-]{1,64}$'
+          description: |
+            Your note on the payment, such as an order number. **Not signed**, so it can be
+            added after signing. The payee reads it on `GET /transfers` and in the
+            `transfer.received` webhook. **It is the payer's claim, not proof**: the payee still
+            checks the amount and the recipient. Omit it when there is none; anything outside
+            the pattern is `400 invalid_request` and nothing is sent.
     Transfer:
       type: object
       required: [id, status]
@@ -1770,28 +2219,69 @@ components:
     PayoutBeneficiary:
       type: object
       additionalProperties: false
-      required: [phone, name]
+      required: [name]
+      description: |
+        Where a payout goes and who is being paid. `type` says which kind of place it is, and
+        each type takes **exactly** its own fields; a field of another type, or a field with no
+        `type` to go with it, is `400 invalid_request`. A body with a `phone` and no `type` means
+        phone, and a phone payout is answered with no `type`, exactly as before types existed.
+
+        | `type` | Fields |
+        | --- | --- |
+        | `phone` (or none) | `phone` |
+        | `till` | `till` |
+        | `paybill` | `paybill`, `account` |
+        | `bank` | `account`, `bank_code` |
+
+        A paybill or a bank is open only once it is a saved destination past its cooling-off.
+        A bank is paid under the name the bank gave when it was saved, whatever `name` says.
       properties:
+        type:
+          type: string
+          enum: [phone, till, paybill, bank]
+          description: Omitted means `phone`, and is omitted on a phone payout's answers.
         phone:
           type: string
           description: |
-            The beneficiary's Kenyan mobile number: `254`, then `7` or `1`, then eight digits.
-            No `+`, no leading `0`. This is who gets paid. It is echoed back on the quote and on
-            the payout.
+            **Phone.** A Kenyan mobile number: `254`, then `7` or `1`, then eight digits. No `+`,
+            no leading `0`.
           pattern: '^254[17]\d{8}$'
+        till:
+          type: string
+          description: '**Till.** A Buy Goods till number, 5 to 9 digits.'
+          pattern: '^\d{5,9}$'
+        paybill:
+          type: string
+          description: '**Paybill.** A paybill number, 5 to 9 digits.'
+          pattern: '^\d{5,9}$'
+        account:
+          type: string
+          description: |
+            **Paybill:** the account to credit, 1 to 40 letters, digits, spaces, dots,
+            underscores or dashes. **Bank:** the bank account number.
+        bank_code:
+          type: string
+          description: '**Bank.** From the bank list. An unknown one is `unknown_bank`.'
         name:
           type: string
           minLength: 1
           description: |
             **Your** name for the person being paid, and what their M-Pesa statement shows. It
-            is never derived from the sending merchant's own profile. Required, at most 100
-            **bytes** of UTF-8 after trimming — a non-ASCII letter counts two or more, so
-            fewer than 100 such characters fit.
+            is never derived from the sending merchant's own profile. Required for every type,
+            at most 100 **bytes** of UTF-8 after trimming — a non-ASCII letter counts two or
+            more, so fewer than 100 such characters fit.
     PayoutQuoteRequest:
       type: object
       additionalProperties: false
       required: [amount_kes, beneficiary]
       properties:
+        payout_id:
+          type: string
+          format: uuid
+          description: |
+            The id of a request a person has approved (`POST /v1/payouts/requests`). Required
+            for a payout above the merchant's `hold_above_kes`; `amount_kes` and `beneficiary`
+            must then be what was approved, or `409 payout_approval_mismatch`.
         amount_kes:
           type: integer
           format: int64
@@ -1799,6 +2289,18 @@ components:
           description: |
             A whole number of shillings, at least 1. This is what **lands on the beneficiary**,
             not what leaves your wallet — see `send_kes` on the response.
+        beneficiary: { $ref: '#/components/schemas/PayoutBeneficiary' }
+    PayoutRequestBody:
+      type: object
+      additionalProperties: false
+      required: [amount_kes, beneficiary]
+      description: Ask a person to approve a payout before anything is signed. The same two fields a quote takes.
+      properties:
+        amount_kes:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Whole KES that will land on the beneficiary.
         beneficiary: { $ref: '#/components/schemas/PayoutBeneficiary' }
     EIP712Domain:
       type: object
@@ -1816,6 +2318,10 @@ components:
         A priced payout plus everything to sign. It carries no rail name, no rail quote id and
         no order id: `quote_id` is Kakitu's own and is redeemable only at `POST /v1/payouts`.
       properties:
+        payout_id:
+          type: string
+          format: uuid
+          description: 'Present only when this quote spends an approved request: the payout your signature will land on.'
         quote_id:
           type: string
           description: |
@@ -1860,6 +2366,63 @@ components:
             relay:
               allOf: [{ $ref: '#/components/schemas/EIP712Domain' }]
               description: The forwarder's domain, for the EIP-712 relay intent (`iv`, `ir`, `is`).
+    PayoutDestination:
+      type: object
+      required: [id, type, status, active_at, created_at]
+      description: A saved payout destination. A locked merchant can pay only an `active` one.
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [phone, till, paybill, bank] }
+        phone: { type: string }
+        till: { type: string }
+        paybill: { type: string }
+        account: { type: string, description: 'A paybill''s account, or a bank account number.' }
+        bank_code: { type: string }
+        holder_name: { type: string, description: 'On a bank: the name the bank gave at the save.' }
+        status:
+          type: string
+          enum: [cooling_off, active]
+          description: '`cooling_off` until `active_at`, then `active`.'
+        active_at: { type: string, format: date-time, description: The moment it can first be paid. }
+        created_at: { type: string, format: date-time }
+    PayoutLock:
+      type: object
+      required: [payout_locked]
+      properties:
+        payout_locked: { type: boolean, description: Whether the merchant is held to its saved destinations now. }
+        payout_unlocks_at:
+          type: string
+          format: date-time
+          description: Present only while an unlock is pending; the lock is still on until then.
+    PayoutDestinationList:
+      allOf:
+        - $ref: '#/components/schemas/PayoutLock'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/PayoutDestination' }
+    SavePayoutDestinationRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        One place, in the beneficiary's field names and with **no name**: phone (or no type)
+        needs `phone`, till needs `till`, paybill needs `paybill` and `account`, bank needs
+        `account` and `bank_code`.
+      properties:
+        type: { type: string, enum: [phone, till, paybill, bank] }
+        phone: { type: string }
+        till: { type: string }
+        paybill: { type: string }
+        account: { type: string }
+        bank_code: { type: string }
+    PayoutLockRequest:
+      type: object
+      additionalProperties: false
+      required: [locked]
+      properties:
+        locked: { type: boolean }
     PayoutConfirmRequest:
       type: object
       additionalProperties: false
@@ -1878,22 +2441,28 @@ components:
     PayoutStatus:
       type: string
       description: |
-        Kakitu's own vocabulary, never the payment rail's.
+        Kakitu's own vocabulary, never a payment partner's.
 
         - `quoted` — priced, nothing signed, nothing moved.
-        - `held` — signed and accepted, deliberately **not** sent, waiting for a person.
-        - `dispatched` — handed to the worker; the money is leaving.
+        - `pending_approval` — you asked a person (above `hold_above_kes`). Nothing is signed,
+          priced or counted. Wait for `payout.approved` or `payout.rejected`.
+        - `approved` — a person said yes. Quote with `payout_id`, sign and submit before
+          `approval_expires_at`.
+        - `rejected` — terminal. A person said no. Nothing was sent. Do not ask again.
+        - `held` — signed and accepted, not yet handed over. A payout at or below the threshold
+          passes through this for an instant.
+        - `dispatched` — handed over; the money is leaving. `payout.paid` or `payout.failed`
+          follows. A payout whose outcome is not known stays `dispatched`.
         - `paid` — terminal. The beneficiary has the money.
         - `failed` — terminal. Retry by creating a **new** payout; this one never moves again.
         - `cancelled` — terminal. A person refused a held payout. Nothing was sent. Do not
-          submit it again.
-        - `expired` — terminal. Nothing was sent and nothing can be: a held payout's signed
-          permit passed its deadline, or a quote lapsed unsigned. Sign a fresh quote and submit
-          again.
+          submit it again. Kept for payouts already written; a refusal now ends `rejected`.
+        - `expired` — terminal. Nothing was sent and nothing can be: an approval went unsigned
+          past `approval_expires_at`, or a quote lapsed. Ask again with a new payout.
 
-        All four of `paid`, `failed`, `cancelled` and `expired` are final — unlike a charge,
-        where `failed` and `expired` can still move.
-      enum: [quoted, held, dispatched, paid, failed, cancelled, expired]
+        All five of `paid`, `failed`, `cancelled`, `rejected` and `expired` are final — unlike a
+        charge, where `failed` and `expired` can still move.
+      enum: [quoted, pending_approval, approved, rejected, held, dispatched, paid, failed, cancelled, expired]
     Payout:
       type: object
       required: [id, status, amount_kes, fee_kes, send_kes, currency, beneficiary, created_at]
@@ -1909,12 +2478,16 @@ components:
         currency: { type: string, const: KES }
         beneficiary: { $ref: '#/components/schemas/PayoutBeneficiary' }
         created_at: { type: string, format: date-time }
+        approval_expires_at:
+          type: string
+          format: date-time
+          description: Present on an `approved` payout only. Sign and submit before this, or ask again.
         message:
           type: string
           description: |
-            Kakitu's own sentence about what is happening now. Present on `held` (it says the
-            payout has **not** been sent and a person will release or cancel it) and on
-            `dispatched`. Omitted otherwise. For humans — never branch on it; branch on `status`.
+            Kakitu's own sentence about what is happening now. Present on `pending_approval`,
+            `approved`, `rejected`, `held` and `dispatched`. Omitted otherwise. For humans —
+            never branch on it; branch on `status`.
     PayoutList:
       type: object
       required: [data, next_cursor]
@@ -2021,9 +2594,10 @@ components:
           type: integer
           format: int64
           description: |
-            A payout **above** this is accepted and then held for a person to review — a normal
-            outcome, not an error. "Above" is strict: a payout exactly equal to this is
-            dispatched, not held. A threshold of 0 holds everything.
+            A payout **above** this needs a person's approval before it can be signed: ask at
+            `POST /v1/payouts/requests` — a normal step, not an error. "Above" is strict: a
+            payout exactly equal to this goes straight through. A threshold of 0 sends everything
+            to a person.
         remaining_today_kes:
           type: [integer, 'null']
           format: int64
@@ -2094,11 +2668,24 @@ components:
       description: |
         The whole published set, as it appears on an event and as the `type` query filter on
         `GET /v1/events` accepts it. `payout.expired` means the payout was never sent and you
-        should sign and submit it again; `payout.cancelled` means a person refused it and you
-        must not.
+        should ask again with a new payout; `payout.cancelled` and `payout.rejected` mean a
+        person refused it and you must not.
 
         `type` also decides the shape of `payload`; see `EventPayload`.
-      enum: [charge.paid, charge.settled, charge.failed, payout.expired, payout.cancelled]
+      enum:
+        - charge.paid
+        - charge.settled
+        - charge.failed
+        - transfer.received
+        - payout.approved
+        - payout.rejected
+        - payout.expired
+        - payout.cancelled
+        - payout.paid
+        - payout.failed
+        - payout_destination.added
+        - payout_destination.removed
+        - payout_lock.changed
     EventStatus:
       type: string
       description: |
@@ -2124,7 +2711,7 @@ components:
           description: When the event was raised, not when it was delivered. RFC 3339, UTC, to the second.
         charge:
           type: object
-          required: [id, reference, amount, currency, status, paid_at, settled_at]
+          required: [id, reference, amount, currency, status, paid_at, settled_at, fee_kes, credited_kes]
           properties:
             id: { type: string, format: uuid }
             reference: { type: string, minLength: 1, description: 'The merchant''s own reference, unique per merchant. Never empty.' }
@@ -2133,6 +2720,8 @@ components:
             status: { type: string, const: paid }
             paid_at: { type: string, format: date-time, description: 'Always a timestamp on this type, never null.' }
             settled_at: { type: 'null', description: 'Always null on this type. The key is present; nothing has settled yet.' }
+            fee_kes: { type: integer, format: int64, description: 'What the collection cost, in whole KES.' }
+            credited_kes: { type: integer, format: int64, description: 'What reaches the merchant''s wallet: `amount` less `fee_kes`.' }
     ChargeSettledPayload:
       title: charge.settled
       type: object
@@ -2145,7 +2734,7 @@ components:
         created_at: { type: string, format: date-time, description: 'RFC 3339, UTC, to the second.' }
         charge:
           type: object
-          required: [id, reference, amount, currency, status, paid_at, settled_at]
+          required: [id, reference, amount, currency, status, paid_at, settled_at, fee_kes, credited_kes]
           properties:
             id: { type: string, format: uuid }
             reference: { type: string, minLength: 1, description: 'The merchant''s own reference. Never empty.' }
@@ -2159,6 +2748,8 @@ components:
                 Always a timestamp on this type, never null. For a charge that reached settled
                 without a `charge.paid` ever being raised, it is the moment it settled.
             settled_at: { type: string, format: date-time, description: 'Always a timestamp on this type, never null. Equals `created_at`.' }
+            fee_kes: { type: integer, format: int64, description: 'What the collection cost, in whole KES.' }
+            credited_kes: { type: integer, format: int64, description: 'What reached the merchant''s wallet: `amount` less `fee_kes`.' }
     ChargeFailedPayload:
       title: charge.failed
       type: object
@@ -2175,7 +2766,7 @@ components:
         created_at: { type: string, format: date-time, description: 'RFC 3339, UTC, to the second.' }
         charge:
           type: object
-          required: [id, reference, amount, currency, status, paid_at, settled_at]
+          required: [id, reference, amount, currency, status, paid_at, settled_at, fee_kes, credited_kes]
           properties:
             id: { type: string, format: uuid }
             reference: { type: string, minLength: 1, description: 'The merchant''s own reference. Never empty.' }
@@ -2190,16 +2781,17 @@ components:
                 one that was paid and then refunded, and it is when it was **paid**, not when it
                 failed.
             settled_at: { type: 'null', description: 'Always null on this type. A settled charge never fails.' }
+            fee_kes: { type: 'null', description: 'Always null on this type. Nothing was credited.' }
+            credited_kes: { type: 'null', description: 'Always null on this type. Nothing was credited.' }
     PayoutExpiredPayload:
       title: payout.expired
       type: object
       required: [id, type, created_at, payout]
       description: |
-        **The payout was NOT sent. Sign a fresh quote and submit it again.**
+        **The payout was NOT sent. Ask again with a new payout.**
 
-        A held payout carries a signed permit that stops being relayable after minutes, and a
-        person working a review queue does not work in minutes, so this is the ordinary end of a
-        hold rather than an edge case. Nothing left the merchant's wallet and nothing reached the
+        Either an approval went unsigned past `approval_expires_at`, or a held payout's signed
+        permit passed its deadline. Nothing left the merchant's wallet and nothing reached the
         beneficiary. There is no `charge` key on a payout event — absent, not null.
       properties:
         id: { type: string, format: uuid, description: 'The event id, and the dedupe key.' }
@@ -2226,10 +2818,10 @@ components:
       type: object
       required: [id, status, amount_kes, fee_kes, send_kes, currency]
       description: |
-        The payout a `payout.expired` or `payout.cancelled` is about. Every field is always
-        present and never null.
+        The payout a `payout.*` event is about. Every field is always present and never null,
+        except `approval_expires_at`, which is on `payout.approved` only.
 
-        It carries no beneficiary phone or name (those are on `GET /v1/payouts/{id}` under
+        It carries no beneficiary number, account or name (those are on `GET /v1/payouts/{id}` under
         `beneficiary`, never on the wire to a callback URL), no operator identity, no hold
         reason, no rail name, no pricing partner's quote id and no signed permit. It carries no
         `held_at`, `dispatched_at` or `paid_at` either, because none of them would be true.
@@ -2237,24 +2829,141 @@ components:
         id: { type: string, format: uuid }
         status:
           type: string
-          enum: [expired, cancelled]
-          description: Always restates `type` — `expired` on `payout.expired`, `cancelled` on `payout.cancelled`.
+          enum: [approved, rejected, expired, cancelled, paid, failed]
+          description: Always restates `type`, minus the `payout.` prefix.
         amount_kes: { type: integer, format: int64, description: 'Whole KES that would have landed on the beneficiary.' }
         fee_kes: { type: integer, format: int64, description: 'Kakitu''s fee. May be 0.' }
-        send_kes: { type: integer, format: int64, description: 'Whole KES that would have left the merchant''s wallet.' }
+        send_kes: { type: integer, format: int64, description: 'Whole KES that would have left the merchant''s wallet. `0` on `payout.approved`: a request is priced when it is signed.' }
         currency: { type: string, const: KES }
+        approval_expires_at:
+          type: string
+          format: date-time
+          description: On `payout.approved` only. Sign and submit before this.
+    TransferReceivedPayload:
+      title: transfer.received
+      type: object
+      required: [id, type, created_at, transfer]
+      description: |
+        **KSHS arrived at the merchant's address on chain**, from anybody, by any route. Mints
+        and burns are never announced. Only an approved merchant receives it.
+
+        `transfer.reference` is **the payer's claim, not proof**: anybody can pay an address
+        with any reference. Check the amount and the recipient against the order it names.
+      properties:
+        id: { type: string, format: uuid, description: 'The event id, and the dedupe key.' }
+        type: { type: string, const: transfer.received }
+        created_at: { type: string, format: date-time }
+        transfer:
+          type: object
+          required: [tx_hash, log_index, from, to, amount_kes, value_wei, block_number, observed_at]
+          properties:
+            tx_hash: { type: string }
+            log_index: { type: integer, description: 'Which `Transfer` log in the transaction. With `tx_hash` it names the payment.' }
+            from: { type: string, description: The payer's address. }
+            to: { type: string, description: The merchant's address. }
+            amount_kes: { type: string, description: 'The exact amount as a decimal STRING, such as `"99.5"`, not whole shillings.' }
+            value_wei: { type: string, description: 'The same amount in the token''s smallest unit, as a string.' }
+            block_number: { type: integer, format: int64 }
+            observed_at: { type: string, format: date-time }
+            reference:
+              type: string
+              pattern: '^[A-Za-z0-9._:-]{1,64}$'
+              description: Present only when the payer sent one. The key is absent otherwise.
+    PayoutApprovedPayload:
+      title: payout.approved
+      type: object
+      required: [id, type, created_at, payout]
+      description: '**A person said yes. Quote and sign it now**, before `payout.approval_expires_at`.'
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, const: payout.approved }
+        created_at: { type: string, format: date-time }
+        payout: { allOf: [{ $ref: '#/components/schemas/PayoutEventSubject' }] }
+    PayoutRejectedPayload:
+      title: payout.rejected
+      type: object
+      required: [id, type, created_at, payout]
+      description: |
+        **A person said no. Do not ask again.** Nothing was signed, sent or counted against the
+        budget. It can also follow `payout.approved`, if an operator takes the yes back before
+        the merchant has signed.
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, const: payout.rejected }
+        created_at: { type: string, format: date-time }
+        payout: { allOf: [{ $ref: '#/components/schemas/PayoutEventSubject' }] }
+    PayoutPaidPayload:
+      title: payout.paid
+      type: object
+      required: [id, type, created_at, payout]
+      description: '**The beneficiary has the money.**'
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, const: payout.paid }
+        created_at: { type: string, format: date-time }
+        payout: { allOf: [{ $ref: '#/components/schemas/PayoutEventSubject' }] }
+    PayoutFailedPayload:
+      title: payout.failed
+      type: object
+      required: [id, type, created_at, payout]
+      description: |
+        **It did not reach the beneficiary. A retry is a new payout**, and counts against the
+        budget again. Never raised for an outcome nobody knows: that payout stays `dispatched`.
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, const: payout.failed }
+        created_at: { type: string, format: date-time }
+        payout: { allOf: [{ $ref: '#/components/schemas/PayoutEventSubject' }] }
+    PayoutDestinationEventPayload:
+      title: payout_destination.added / payout_destination.removed
+      type: object
+      required: [id, type, created_at, destination]
+      description: |
+        About the merchant's own saved destinations. **If you did not make the change, somebody
+        else holds your key.** A destination is named by its type and the end of its number; the
+        holder's name stays out.
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [payout_destination.added, payout_destination.removed] }
+        created_at: { type: string, format: date-time }
+        destination:
+          type: object
+          required: [id, type, ending]
+          properties:
+            id: { type: string, format: uuid, description: The id to `DELETE` it with. }
+            type: { type: string, enum: [phone, till, paybill, bank] }
+            ending: { type: string, description: The last four characters of the number. }
+            active_at: { type: string, format: date-time, description: 'On `payout_destination.added` only: the moment it can first be paid.' }
+    PayoutLockChangedPayload:
+      title: payout_lock.changed
+      type: object
+      required: [id, type, created_at, payout_lock]
+      description: |
+        **The payout lock moved.** It went on, or somebody asked for it to come off. If that was
+        not you, turn it on again: that cancels the unlock at once. The lock controls where
+        cash-outs can go; it does not stop KSHS transfers to other wallets.
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, const: payout_lock.changed }
+        created_at: { type: string, format: date-time }
+        payout_lock:
+          type: object
+          required: [locked]
+          properties:
+            locked: { type: boolean, description: 'Always `true`: asking to unlock leaves the lock on until `unlocks_at`.' }
+            unlocks_at: { type: string, format: date-time, description: Only while an unlock is pending. }
     EventPayload:
       description: |
         The body of one webhook delivery, and the value of `payload` on an event. Which shape it
         is, is decided by `type` and by nothing else.
 
-        Three things hold for all five:
+        Three things hold for all thirteen:
 
         - **It is never a delta.** Every body states its subject's state **at the time the event
           was raised**, in full. That is what makes a duplicate delivery a no-op rather than a
           second count — and delivery is at-least-once, so duplicates happen.
-        - **Exactly one subject key is present**, `charge` or `payout`. The other is *absent*,
-          not null.
+        - **Exactly one subject key is present**: `charge`, `transfer`, `payout`, `destination`
+          or `payout_lock`. The others are *absent*, not null.
         - **The subject's `status` restates `type`.** It tells a receiver nothing `type` did not.
 
         Because retries run for up to 24 hours, a body can arrive after its subject has moved
@@ -2263,22 +2972,38 @@ components:
         - $ref: '#/components/schemas/ChargePaidPayload'
         - $ref: '#/components/schemas/ChargeSettledPayload'
         - $ref: '#/components/schemas/ChargeFailedPayload'
+        - $ref: '#/components/schemas/TransferReceivedPayload'
+        - $ref: '#/components/schemas/PayoutApprovedPayload'
+        - $ref: '#/components/schemas/PayoutRejectedPayload'
         - $ref: '#/components/schemas/PayoutExpiredPayload'
         - $ref: '#/components/schemas/PayoutCancelledPayload'
+        - $ref: '#/components/schemas/PayoutPaidPayload'
+        - $ref: '#/components/schemas/PayoutFailedPayload'
+        - $ref: '#/components/schemas/PayoutDestinationEventPayload'
+        - $ref: '#/components/schemas/PayoutLockChangedPayload'
       discriminator:
         propertyName: type
         mapping:
           charge.paid: '#/components/schemas/ChargePaidPayload'
           charge.settled: '#/components/schemas/ChargeSettledPayload'
           charge.failed: '#/components/schemas/ChargeFailedPayload'
+          transfer.received: '#/components/schemas/TransferReceivedPayload'
+          payout.approved: '#/components/schemas/PayoutApprovedPayload'
+          payout.rejected: '#/components/schemas/PayoutRejectedPayload'
           payout.expired: '#/components/schemas/PayoutExpiredPayload'
           payout.cancelled: '#/components/schemas/PayoutCancelledPayload'
+          payout.paid: '#/components/schemas/PayoutPaidPayload'
+          payout.failed: '#/components/schemas/PayoutFailedPayload'
+          payout_destination.added: '#/components/schemas/PayoutDestinationEventPayload'
+          payout_destination.removed: '#/components/schemas/PayoutDestinationEventPayload'
+          payout_lock.changed: '#/components/schemas/PayoutLockChangedPayload'
     Event:
       type: object
       required: [id, type, charge_id, payout_id, created_at, status, attempts, next_attempt_at, last_attempt_at, delivered_at, payload]
       description: |
-        Exactly one of `charge_id` and `payout_id` is non-null: an event is about a charge or
-        about a payout, never both and never neither.
+        At most one of `charge_id` and `payout_id` is non-null. `transfer.received` and the three
+        payout-control events (`payout_destination.*`, `payout_lock.changed`) have **both**
+        `null`: read their subject from `payload`.
       properties:
         id:
           type: string
@@ -2289,12 +3014,13 @@ components:
           type: [string, 'null']
           format: uuid
           description: |
-            The charge this event is about. **`null` on a payout event** — this field used to be
-            always present, and a client that assumes so breaks on the first payout event.
+            The charge this event is about. **`null` on every event that is not about a charge**
+            — this field used to be always present, and a client that assumes so breaks on the
+            first payout event.
         payout_id:
           type: [string, 'null']
           format: uuid
-          description: The payout this event is about. `null` on a charge event.
+          description: The payout this event is about. `null` on every event that is not about a payout.
         created_at: { type: string, format: date-time }
         status: { $ref: '#/components/schemas/EventStatus' }
         attempts: { type: integer }
@@ -2316,9 +3042,9 @@ components:
             your callback URL — rendered as a JSON value rather than a quoted string, so it
             needs no second parse.
 
-            Its shape is decided by `type`: a `charge.*` event carries a `charge` object and a
-            `payout.*` event carries a `payout` object, and the other key is absent rather than
-            null. See `EventPayload`.
+            Its shape is decided by `type`: a `charge.*` event carries a `charge` object, a
+            `payout.*` event a `payout`, `transfer.received` a `transfer`, and so on; the other
+            keys are absent rather than null. See `EventPayload`.
     EventList:
       type: object
       required: [data, next_cursor]
@@ -2379,7 +3105,18 @@ components:
         - payout_amount_above_maximum
         - payout_not_found
         - payout_quote_not_found
+        - payout_approval_required
+        - payout_not_approved
+        - payout_approval_mismatch
+        - payout_open_requests_exceeded
+        - payout_destination_locked
+        - payout_destination_not_found
+        - payout_destinations_full
         - profile_required
+        - bank_unavailable
+        - unknown_bank
+        - account_not_found
+        - insufficient_balance
         - identity_verification_required
         - internal
       x-http-status:
@@ -2411,7 +3148,18 @@ components:
         payout_amount_above_maximum: 400
         payout_not_found: 404
         payout_quote_not_found: 404
+        payout_approval_required: 409
+        payout_not_approved: 409
+        payout_approval_mismatch: 409
+        payout_open_requests_exceeded: 429
+        payout_destination_locked: 403
+        payout_destination_not_found: 404
+        payout_destinations_full: 409
         profile_required: 409
+        bank_unavailable: 403
+        unknown_bank: 400
+        account_not_found: 422
+        insufficient_balance: 400
         identity_verification_required: 403
         internal: 500
     TooManyRequests:

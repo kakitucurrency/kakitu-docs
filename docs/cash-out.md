@@ -5,7 +5,7 @@ title: Cash out
 
 # Cash out
 
-**Today a business takes its money out the same way a person does: from the Kakitu app, to M-Pesa.** There is no API for it yet. The [payouts](./payouts) API is not open, and it pays third parties, not you.
+**A business takes its money out the same way a person does: from the Kakitu app, to M-Pesa.** The [payouts API](./payouts) can do the same from a server (to a phone, a till, a paybill or a bank account), but it is off until an operator switches it on for your merchant, and it is meant for paying other people, under caps.
 
 The whole path is: open your business wallet in the app with its recovery phrase, then **Withdraw to M-Pesa**.
 
@@ -45,8 +45,8 @@ In the app: **Withdraw to M-Pesa**, then the amount and where it goes.
 | Destination | What you enter |
 |---|---|
 | An M-Pesa number | The number. It does not have to be the profile's. |
-| A till (Buy Goods) | The till number, 4 to 10 digits. |
-| A paybill | The paybill number, 4 to 10 digits, and the account number. |
+| A till (Buy Goods) | The till number, 5 to 9 digits. |
+| A paybill | The paybill number, 5 to 9 digits, and the account number. |
 
 You type the shillings that must **land**. The app quotes the KSHS it will take from your wallet, the fee, and counts down how long the price holds — a few minutes; after that, ask for a new price. Nothing leaves until you approve with your PIN.
 
@@ -73,8 +73,10 @@ It can take longer. If the hot treasury that funds cash-outs is short, the order
 
 ## USDC instead of M-Pesa
 
-The Kakitu **browser extension** can also cash out to **USDC on Base**, to an address you name ("Cash out to USDC"). The treasury's balance is checked before your shillings are taken, so a short treasury refuses the order rather than holding it. A Base address is final and nothing can reverse a payment to the wrong one; double-check it. The phone app does not offer this. The extension is not on the Chrome Web Store yet; see [the extension page](./extension).
+The Kakitu **browser extension** can also cash out to **USDC on Base**, to an address you name ("Cash out to USDC"). The treasury's balance is checked before your shillings are taken, so a short treasury refuses the order rather than holding it. A Base address is final and nothing can reverse a payment to the wrong one; double-check it. The phone app does not offer this. The extension is on the [Chrome Web Store](https://chromewebstore.google.com/detail/ebcjlgfjbbgoldipdhbcmciebdiadifg); see [the extension page](./extension).
 
 ## The payouts API
 
-`POST /v1/payouts/quote` and `POST /v1/payouts` are **off for every merchant** and answer `403`. When they open they will pay **other people's** M-Pesa from your wallet, under an operator's caps. Even then, a payout's status may stop at `dispatched` with no later update. Until we announce them, cash out from the app as above.
+[`POST /v1/payouts/quote`](./payouts) and `POST /v1/payouts` are **off for a merchant until an operator switches them on**, and answer `403 payouts_disabled` until then. When they are on, they pay **other people's** M-Pesa number, till, paybill or bank account from your wallet, under an operator's caps; a payout above your hold threshold [needs a person to approve it first](./payouts#approve-first). You can also [save the places you cash out to and lock yourself to them](./payouts#saved-destinations-and-the-lock). That lock controls where cash-outs go; it does not stop KSHS transfers to other wallets.
+
+A payout ends `paid` or `failed` and you are told by webhook ([`payout.paid`](./events#payoutpaid-and-payoutfailed), `payout.failed`). Until payouts are on for you, cash out from the app as above.

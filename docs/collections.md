@@ -10,7 +10,7 @@ import TabItem from '@theme/TabItem';
 
 A collection (a *charge*) asks a payer's phone to approve an M-Pesa payment. When they pay, your merchant wallet is credited in KSHS.
 
-**You are credited less than `amount`.** `amount` is what the payer is asked for. Our payment partner converts those shillings to USDC at its rate and takes its fee, and we mint KSHS against the USDC that arrives, at our rate net of the mint spread (`mint_spread_bps` in [`GET /config`](https://walletapi.kakitu.org/config)). The KSHS minted to you is the credit: never more than `amount`, and usually a little less. Neither the charge nor its webhook carries the credited figure today; read it from the mint `Transfer` to your address on chain. See [Pricing, limits and settlement](./pricing).
+**You are credited less than `amount`.** `amount` is what the payer is asked for. Our payment partner converts those shillings to USDC at its rate and takes its fee, and we mint KSHS against the USDC that arrives, at our rate net of the mint spread (`mint_spread_bps` in [`GET /config`](https://walletapi.kakitu.org/config)). The KSHS minted to you is the credit: never more than `amount`, and usually a little less. Once the charge is paid, **the charge and its webhooks carry both numbers**: `fee_kes`, what the collection cost, and `credited_kes`, what reached your wallet (`amount` less `fee_kes`), in whole shillings. Both are `null` until the charge is paid. See [Pricing, limits and settlement](./pricing).
 
 :::warning Collections are not open yet
 Collections are switched off for every merchant. `POST /v1/charges` answers `503 rail_unavailable`
@@ -223,11 +223,13 @@ Provisional response:
   "status": "prompted",
   "created_at": "2026-10-25T12:00:00Z",
   "paid_at": null,
-  "settled_at": null
+  "settled_at": null,
+  "fee_kes": null,
+  "credited_kes": null
 }
 ```
 
-A field the server owns — `id`, `status`, `currency`, `created_at`, `paid_at`, `settled_at` — is tolerated and dropped if you echo it back from a charge you read, so round-tripping a charge object does not break. It is never obeyed. Any other unknown field is refused with `invalid_request`, and the message names it.
+A field the server owns — `id`, `status`, `currency`, `created_at`, `paid_at`, `settled_at`, `fee_kes`, `credited_kes` — is tolerated and dropped if you echo it back from a charge you read, so round-tripping a charge object does not break. It is never obeyed. Any other unknown field is refused with `invalid_request`, and the message names it.
 
 ## `GET /v1/charges/{id}`
 
@@ -413,7 +415,9 @@ while ($target !== null) {
       "status": "settled",
       "created_at": "2026-10-25T12:00:00Z",
       "paid_at": "2026-10-25T12:00:41Z",
-      "settled_at": "2026-10-25T12:01:03Z"
+      "settled_at": "2026-10-25T12:01:03Z",
+      "fee_kes": 15,
+      "credited_kes": 485
     }
   ],
   "next_cursor": "MjAyNi0xMC0yNVQxMjowMDowMFouLg"
@@ -431,7 +435,7 @@ The list is scoped to your merchant in the query itself, not by a filter we reme
 | `pending` | Created, nothing sent yet. |
 | `prompted` | The payer's handset has been rung. |
 | `paid` | The rail says the payer paid. |
-| `settled` | Your wallet has been credited on chain with the KSHS minted for this payment, which is less than `amount` ([why](./pricing#fees)). Final. |
+| `settled` | Your wallet has been credited on chain with the KSHS minted for this payment, which is `credited_kes`, less than `amount` ([why](./pricing#fees)). Final. |
 | `failed` | The attempt did not complete. |
 | `expired` | The charge ran out of time. |
 | `cancelled` | Cancelled. Final. |

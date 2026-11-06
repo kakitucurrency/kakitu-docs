@@ -62,7 +62,7 @@ You can be paid at that address now, before you register anything:
 - **On a website**, call `window.kakitu.pay({ to: "<your address>", amountKes: "1250" })` from a **Pay with Kakitu** button. See [the extension](./extension#pay-pay).
 - **On a phone or at a counter**, show a `kakitu:` link or its QR code. See [Pay with Kakitu on a phone](./extension#pay-with-kakitu-on-a-phone).
 
-**Then verify it on chain, every time.** Nothing notifies you of an incoming payment, and nothing on the payer's screen is proof. Check Base for a `Transfer` of KSHS to your address, for the amount you priced, in a mined block, matched to one order. [The extension page](./extension#pay-pay) has the rule; `GET https://walletapi.kakitu.org/config` has the contract address.
+**Then check every payment, every time.** Once you are an approved merchant, a payment to your address reaches your `callback_url` as a signed [`transfer.received`](./events#transferreceived) webhook, with the payer's order `reference` if they sent one. Before that you are not notified. Either way, nothing on the payer's screen is proof, and a reference is the payer's claim, not proof: check Base for a `Transfer` of KSHS to your address, for the amount you priced, in a mined block, matched to one order. [The extension page](./extension#pay-pay) has the rule; `GET https://walletapi.kakitu.org/config` has the contract address.
 
 ## 3. Copy the signer and check who you are
 

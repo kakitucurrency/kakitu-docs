@@ -8,11 +8,11 @@ import TabItem from '@theme/TabItem';
 
 # Payouts
 
-:::warning Payouts are not open
-Payouts are switched off for every merchant today. To take your own takings out, [cash out](./cash-out) from the Kakitu app.
+:::warning Payouts are off until an operator switches them on for you
+A merchant starts with payouts off. Until we switch them on for yours, every route that prices or sends a payout answers `403 payouts_disabled`. To take your own takings out meanwhile, [cash out](./cash-out) from the Kakitu app.
 :::
 
-A payout sends shillings **out** — from your KSHS balance to somebody's M-Pesa. You price it, you sign it with your own key, and we hand the signed result to the rail that pays the beneficiary.
+A payout sends shillings **out** — from your KSHS balance to an M-Pesa number, a till, a paybill or a bank account. You price it, you sign it with your own key, and we hand the signed result to the partner that pays the beneficiary.
 
 It is the opposite direction from [collections](./collections), and it is deliberately not the same object with the sign flipped. A charge is money arriving; a payout is money leaving, and the permissions, the caps and the counters behind the two are separate from end to end.
 
@@ -57,13 +57,13 @@ None of these is `daily_cap_exceeded`, and they never will be. That code is the 
 
 The daily payout budget resets at **midnight East Africa Time**, not UTC.
 
-**You do not have to discover your own numbers by being refused.** [`GET /v1/limits`](./limits#payout-limits) publishes them: your per-payout maximum, your daily cap, what is left of today's budget, and the threshold above which a payout is [held](#the-hold). They are read from the same place the refusals above read them, so they cannot disagree.
+**You do not have to discover your own numbers by being refused.** [`GET /v1/limits`](./limits#payout-limits) publishes them: your per-payout maximum, your daily cap, what is left of today's budget, and the threshold above which a payout needs a person to [approve it first](#approve-first). They are read from the same place the refusals above read them, so they cannot disagree.
 
 The budget is checked twice: at quote time, so you learn you are over it **before** you sign anything, and again when you confirm, which is the call that actually spends it — before the signed transfer is checked ([why that matters](#the-quote-is-single-use-and-yours-alone)). A payout that is accepted and then fails has still spent the day's budget — there is no refund path, because a counter that could be refunded is a counter that can be raced.
 
 ## The shape of it
 
-Three calls, in this order:
+Three calls, in this order, for a payout **at or below** your `hold_above_kes`:
 
 ```http
 POST /v1/payouts/quote   price it, and get back exactly what to sign
@@ -71,11 +71,26 @@ POST /v1/payouts         send the quote id and the signed transfer
 GET  /v1/payouts/{id}    read where it got to
 ```
 
-And one for afterwards:
+**Above** `hold_above_kes` a person decides first, so there is one more call in front:
 
 ```http
-GET  /v1/payouts         everything you have sent, newest first
+POST /v1/payouts/requests   ask a person; nothing is signed or priced yet
+                            ... you receive payout.approved ...
+POST /v1/payouts/quote      the same, with the approved payout_id
+POST /v1/payouts            the signature lands on the approved payout
 ```
+
+And for afterwards, and for where your payouts may go:
+
+```http
+GET  /v1/payouts                       everything you have sent, newest first
+GET  /v1/payout-destinations           the places you have saved, and whether the lock binds
+POST /v1/payout-destinations           save a place
+DELETE /v1/payout-destinations/{id}    remove one
+POST /v1/payout-destinations/lock      lock, or ask to unlock
+```
+
+[Approve first](#approve-first) and [saved destinations and the lock](#saved-destinations-and-the-lock) are further down.
 ## Running these examples
 
 Every example on this page is **signed**. An unsigned request is `401 unauthorized`, so a
@@ -143,15 +158,40 @@ Content-Type: application/json
 
 | Field | Type | Rules |
 |---|---|---|
+| `payout_id` | string, optional | The id of a request a person has [approved](#approve-first). **Required** for a payout above your `hold_above_kes`, and then `amount_kes` and `beneficiary` must be what was approved. |
 | `amount_kes` | integer, required | A whole number of shillings, at least 1. It is what **lands on the beneficiary**, not what leaves you. |
-| `beneficiary.phone` | string, required | A Kenyan mobile number, `254` then `7` or `1` then eight digits: `^254[17]\d{8}$`. No `+`, no leading `0`. |
-| `beneficiary.name` | string, required | The person being paid, 1 to 100 **bytes** after trimming (a non-ASCII letter takes two or more). See below. |
+| `beneficiary.type` | string, optional | `phone` (the default), `till`, `paybill` or `bank`. See [where a payout can go](#where-a-payout-can-go). |
+| `beneficiary.phone` | string | **Phone.** A Kenyan mobile number, `254` then `7` or `1` then eight digits: `^254[17]\d{8}$`. No `+`, no leading `0`. |
+| `beneficiary.name` | string, required | The person or business being paid, 1 to 100 **bytes** after trimming (a non-ASCII letter takes two or more). See below. |
+
+The other beneficiary fields are `till`, `paybill`, `account` and `bank_code`, in [the next section](#where-a-payout-can-go).
 
 Unknown fields are refused with `invalid_request` rather than ignored. On a route that authorises money leaving, a mistyped field name must be a refusal and not an instruction that was silently dropped. The body is limited to 4 KiB (`request_too_large`, 413).
 
+### Where a payout can go
+
+`beneficiary.type` says which kind of place it is, and each type takes **exactly** its own fields. Give a field of another type, or a field with no `type` to go with it, and the body is `400 invalid_request`: it is refused, never guessed at. A body with a `phone` and no `type` still means phone, exactly as before types existed.
+
+| `type` | Fields | Notes |
+|---|---|---|
+| `phone` (or none) | `phone` | An M-Pesa number. |
+| `till` | `till` | A Buy Goods till number, 5 to 9 digits. A number that is not a till is refused at the quote, before anything is signed. |
+| `paybill` | `paybill`, `account` | A paybill number (5 to 9 digits) and the account to credit (1 to 40 letters, digits, spaces, dots, underscores or dashes). **Open only once it is a [saved destination](#saved-destinations-and-the-lock) past its cooling-off.** Otherwise `403 bank_unavailable`. |
+| `bank` | `account`, `bank_code` | A bank account. `bank_code` must be on the bank list (`unknown_bank`) and the bank must hold the account (`account_not_found`). **Open only once it is a saved destination past its cooling-off.** |
+
+A bank is paid under the name **the bank gave** when you saved it, whatever `beneficiary.name` says: you cannot pay a bank account under a name it does not carry. A bank that later holds the account under a different name is refused with `account_not_found`; remove it and save it again to read the new name.
+
+The answers carry the beneficiary back in the same shape you sent it. A phone payout's has no `type`, so test for `type` being absent, not for the string `"phone"`.
+
+```json
+{ "type": "till",    "till": "123456", "name": "Jane Stores" }
+{ "type": "paybill", "paybill": "400200", "account": "INV-77", "name": "Landlord Ltd" }
+{ "type": "bank",    "account": "0123456789", "bank_code": "01", "name": "Jane Wanjiru" }
+```
+
 ### The beneficiary name is yours to supply
 
-**It is what the recipient sees on their M-Pesa statement, and it is taken from this request — never from your own merchant profile.** If you are paying Jane, put Jane's name here. Leaving it to be filled in from the sender's profile is exactly how a recipient ends up looking at a stranger's name against money they were expecting, and it is not something we will guess for you. Both the phone and the name are required: money must not leave without a number to send it to, and the recipient must not be shown the wrong person.
+**It is what the recipient sees on their M-Pesa statement, and it is taken from this request — never from your own merchant profile.** If you are paying Jane, put Jane's name here. Leaving it to be filled in from the sender's profile is exactly how a recipient ends up looking at a stranger's name against money they were expecting, and it is not something we will guess for you. The name is required for every type, and so is the number: money must not leave without a place to send it to, and the recipient must not be shown the wrong person.
 
 <Tabs groupId="lang">
 <TabItem value="curl" label="cURL" default>
@@ -263,6 +303,7 @@ HTTP 200
 
 | Field | Meaning |
 |---|---|
+| `payout_id` | Present only when you quoted an [approved request](#approve-first): the payout your signature will land on. |
 | `quote_id` | Ours: `pq_` and 64 hex characters. The only thing `POST /v1/payouts` accepts. Treat it as opaque. See [below](#the-quote-is-single-use-and-yours-alone). |
 | `amount_kes` | What lands on the beneficiary. The number you asked for. |
 | `fee_kes` | Kakitu's fee. |
@@ -344,8 +385,8 @@ kakitu POST /v1/payouts \
   -H "Idempotency-Key: $(uuidgen)"
 ```
 
-`202` either way. `"status":"held"` means a person must look at it and **nothing has been
-sent**; `"status":"dispatched"` means the money is leaving. Branch on `status`, never on
+`202`. `"status":"dispatched"` means the money is leaving; read the outcome from
+`GET /v1/payouts/{id}`, or wait for `payout.paid` or `payout.failed`. Branch on `status`, never on
 `message`.
 
 </TabItem>
@@ -392,11 +433,11 @@ headers["Idempotency-Key"] = randomUUID();
 
 const res = await fetch(BASE_URL + "/v1/payouts", { method: "POST", headers, body: raw });
 const out = await res.json();
-console.log(res.status, out.status);   // 202, then "held" or "dispatched"
+console.log(res.status, out.status);   // 202, then "dispatched"
 
-// Branch on status, never on message. "held" means a PERSON must look at it and nothing has
-// been sent; the ordinary end of a hold is payout.expired, which means: sign and submit again.
-if (out.status === "held") console.log(out.message);
+// Branch on status, never on message. "dispatched" is on its way: wait for the payout.paid
+// or payout.failed event, or poll GET /v1/payouts/{id}. A retry after a failure is a NEW payout.
+if (out.status !== "dispatched") console.log(out.message);
 ```
 
 </TabItem>
@@ -447,11 +488,11 @@ headers["Idempotency-Key"] = str(uuid.uuid4())
 
 res = requests.post(BASE_URL + "/v1/payouts", headers=headers, data=raw, timeout=30)
 out = res.json()
-print(res.status_code, out["status"])   # 202, then "held" or "dispatched"
+print(res.status_code, out["status"])   # 202, then "dispatched"
 
-# Branch on status, never on message. "held" means a PERSON must look at it and nothing has
-# been sent; the ordinary end of a hold is payout.expired, which means: sign and submit again.
-if out["status"] == "held":
+# Branch on status, never on message. "dispatched" is on its way: wait for the payout.paid
+# or payout.failed event, or poll GET /v1/payouts/{id}. A retry after a failure is a NEW payout.
+if out["status"] != "dispatched":
     print(out["message"])
 ```
 
@@ -494,11 +535,11 @@ $transfer = kakitu_sign_transfer(
     ['quote_id' => $quote['quote_id'], 'transfer' => $transfer],
     ['Idempotency-Key' => bin2hex(random_bytes(16))]);
 
-echo $status, ' ', $out['status'], PHP_EOL;   // 202, then "held" or "dispatched"
+echo $status, ' ', $out['status'], PHP_EOL;   // 202, then "dispatched"
 
-// Branch on status, never on message. "held" means a PERSON must look at it and nothing has
-// been sent; the ordinary end of a hold is payout.expired, which means: sign and submit again.
-if ($out['status'] === 'held') {
+// Branch on status, never on message. "dispatched" is on its way: wait for the payout.paid
+// or payout.failed event, or poll GET /v1/payouts/{id}. A retry after a failure is a NEW payout.
+if ($out['status'] !== 'dispatched') {
     echo $out['message'], PHP_EOL;
 }
 ```
@@ -529,7 +570,7 @@ They are indistinguishable on purpose. An error that told them apart would say w
 
 ### The response
 
-Both a held and a dispatched payout answer **`202`**. Nothing has reached the beneficiary when this returns either way.
+A payout answers **`202`**. Nothing has reached the beneficiary when this returns: poll [`GET /v1/payouts/{id}`](#get-v1payoutsid) for the outcome.
 
 ```json
 HTTP 202
@@ -546,73 +587,138 @@ HTTP 202
 }
 ```
 
-`message` is our sentence about what is happening now. It is present for `held` and `dispatched` and absent otherwise. It is written for a person reading a log; **branch on `status`, never on `message`.**
+`message` is our sentence about what is happening now. It is present for `pending_approval`, `approved`, `rejected`, `held` and `dispatched`, and absent otherwise. It is written for a person reading a log; **branch on `status`, never on `message`.**
 
-## The hold
+## Approve first
 
-**A payout above your hold threshold is accepted and then deliberately not sent. It waits for a person.**
+**A payout above your `hold_above_kes` is decided by a person before you sign anything.** You ask, wait for the answer, and only then quote and sign. `hold_above_kes` is yours to read at [`GET /v1/limits`](./limits#payout-limits); "above" is strict, so a payout exactly at it goes straight through, and a threshold of zero sends everything to a person.
 
-That is a normal answer and not an error. You get `202`, a payout id, and `"status": "held"`:
+It is this way round because the other way cannot work. A signature you make today stops being relayable in about ten minutes, and the price behind it lives for about two; a person working a review queue works in minutes or hours. A request holds nothing that can go stale, so there is no clock on the person at all.
+
+1. **Ask.** `POST /v1/payouts/requests` with the same body as a quote (`amount_kes` and `beneficiary`), and an `Idempotency-Key`. Nothing is priced, signed or counted against your budget. The answer is `202` with `"status": "pending_approval"`.
+
+   ```json
+   HTTP 202
+   {
+     "id": "7c2b18e4-0f2a-4a1b-9a44-1b2c3d4e5f60",
+     "status": "pending_approval",
+     "amount_kes": 9000,
+     "fee_kes": 0,
+     "send_kes": 0,
+     "currency": "KES",
+     "beneficiary": { "phone": "254712345678", "name": "Jane Wanjiru" },
+     "created_at": "2026-11-07T09:00:02Z",
+     "message": "This payout is waiting for a person to approve it. Nothing has been signed or sent, and there is no time limit on the decision. You will receive payout.approved or payout.rejected."
+   }
+   ```
+
+   `fee_kes` and `send_kes` are `0` until you quote, because a request is priced when it is signed.
+
+2. **Wait for the answer.** It arrives as a webhook: [`payout.approved`](./events#payoutapproved) or [`payout.rejected`](./events#payoutrejected). Or poll `GET /v1/payouts/{id}`: the status becomes `approved` (with `approval_expires_at`) or `rejected`.
+
+3. **Quote with `payout_id`.** `POST /v1/payouts/quote` with the request's `payout_id` and the **same** `amount_kes` and `beneficiary`. They must match what was approved; a disagreement is `409 payout_approval_mismatch`, and the answer to wanting something different is a new request.
+
+4. **Sign and submit** as for any payout, before `approval_expires_at`. The signature lands on that payout, and it dispatches.
+
+If you quote or submit a payout above the threshold without an approval, you get `409 payout_approval_required` and the message says to ask at `/v1/payouts/requests`.
+
+**`payout.rejected` means a person said no, and you must not ask again.** It can also follow `payout.approved`, if an operator takes the yes back before you have signed. Nothing was signed, nothing was sent and none of the day's budget was spent. **`payout.expired` after an approval means you did not sign in time.** Nothing was sent; make a new request.
+
+**The day's budget is counted once, when you sign**, not when you ask. A request that waits, is rejected or lapses spends nothing.
+
+You can have only so many requests waiting at once (20 by default). Past that, `429 payout_open_requests_exceeded`: a decision or a lapsed approval frees a place.
+
+## Saved destinations and the lock
+
+**You can hold your payouts to a list of places you name.** Every payout goes to a place; saved destinations are the places you have told us are yours. The **lock** says that only those places may be paid.
+
+```http
+GET    /v1/payout-destinations
+POST   /v1/payout-destinations
+DELETE /v1/payout-destinations/{id}
+POST   /v1/payout-destinations/lock
+```
+
+None of these moves money, so none takes an `Idempotency-Key`. Saving the same place twice returns the first row with its clock untouched, and locking a lock that is already on changes nothing, so a retry costs nothing and raises nothing.
+
+**Saving a place.** `POST /v1/payout-destinations` takes one place, in the beneficiary's own field names and **with no name**: a saved place has none of yours, and a bank's is the bank's to give.
+
+```http
+POST /v1/payout-destinations
+Content-Type: application/json
+
+{ "type": "till", "till": "123456" }
+```
 
 ```json
-HTTP 202
+HTTP 201
 {
-  "id": "7c2b18e4-…",
-  "status": "held",
-  "message": "This payout is held for review and has NOT been sent. A person will release or cancel it; poll GET /v1/payouts/{id} for the outcome."
+  "id": "c3d4e5f6-0a1b-4c2d-8e3f-a4b5c6d7e8f9",
+  "type": "till",
+  "till": "123456",
+  "status": "cooling_off",
+  "active_at": "2026-11-08T09:00:02Z",
+  "created_at": "2026-11-07T09:00:02Z"
 }
 ```
 
-The threshold is a per-platform setting an operator controls, and "above" is strict — a payout exactly at the threshold goes on. A threshold of zero holds everything, which is the setting an operator reaches for when something is wrong.
+`201` for a new place, `200` for one already saved. A phone is `{"phone": "2547…"}`, a paybill is `{"type": "paybill", "paybill": "…", "account": "…"}` and a bank is `{"type": "bank", "account": "…", "bank_code": "…"}`. A bank is looked up at the save and its `holder_name` is stored and returned. You can keep up to 50 places; past that, `409 payout_destinations_full`.
 
-Your signature is **held, not spent**. Nothing has been handed to the rail, nothing has left your wallet, and nothing has reached the beneficiary. The only thing that makes that true is that the dispatcher is never called, so a `held` status really does mean the money is still yours.
+**A new place waits before it can be paid.** `status` is `cooling_off` until `active_at`, which is `payout_cooling_off_hours` after the save (24 by default, never less than 1). Everything that **widens** where money can go waits like this, and raises an event and an alarm to us the moment it happens: [`payout_destination.added`](./events#payout_destinationadded-and-payout_destinationremoved) tells you. Everything that **narrows** it is immediate, so the owner, seeing that event, can always move first.
 
-### Holds usually expire, and you should plan for that
+**Removing a place** is immediate. A payout already approved to a place that has since been removed can no longer be signed, and one already dispatched is out of reach.
 
-This is the part that will surprise you if nobody says it: **the ordinary end of a hold is `expired`, not `dispatched`.**
+**The lock.** `POST /v1/payout-destinations/lock` with `{"locked": true}` binds at once, and cancels an unlock in progress. `{"locked": false}` leaves the lock on until `payout_unlocks_at`, `payout_cooling_off_hours` later.
 
-The permit you signed stops being relayable at its own deadline, and that window is about ten minutes. The price behind it lives less. An operator working a review queue is working in minutes or hours. So a hold that a person has not reached in time lapses — a sweep notices within the minute, moves the payout to `expired`, and tells you.
+```json
+HTTP 200
+{ "payout_locked": true, "payout_unlocks_at": "2026-11-08T09:00:02Z" }
+```
 
-When that happens you get a **`payout.expired`** webhook, and the instruction is: **sign and submit again.** Nothing was sent. The money never left. A fresh quote and a fresh signature is the correct response, and it is a new payout with a new id.
+`payout_unlocks_at` is present only while an unlock is pending. `GET /v1/payout-destinations` returns the list as `data` with the same two lock fields beside it.
 
-That is not the same as a person saying no. If an operator refuses a held payout you get **`payout.cancelled`**, and the instruction is the opposite: **do not submit it again.** Nothing was sent in that case either — the two outcomes look identical in every respect except one.
+**A locked merchant can pay only a saved destination whose `active_at` has passed.** Any other place is `403 payout_destination_locked`, and the answer deliberately does not say whether it was unsaved, cooling off or removed. The lock holds on the payout routes and on the wallet's own cash-out routes, which would otherwise go round it: `/ramp/withdraw/quote` is held to the same list, and a cash-out to USDC on Base is refused outright, because a Base address cannot be a saved destination. A saved place is still subject to every limit and to the approve-first rule: **a payout to your own saved destination still passes limits and holds.**
 
-**The event `type` is the only reliable way to tell them apart.** Both mean "not sent". Both leave the payout terminal. One says try again, the other says a person has already decided. There is no reason field to parse and no message to read, because a receiver that had to parse English to decide whether to send money a second time would eventually get it wrong. Branch on `type`. See [Events](./events).
+:::warning What the lock does and does not do
+**The lock controls where your cash-outs can go.** It does **not** stop KSHS transfers to other wallets: [`POST /v1/transfers`](./transfers) and the app's send are not payouts and ignore it. It is a control on where shillings leave Kakitu, not protection against somebody who holds your key moving your KSHS on chain. Treat it as the first, not as the only.
+:::
+
+Locking, unlocking and changing the list all raise events ([`payout_lock.changed`](./events#payout_lockchanged), `payout_destination.added`, `payout_destination.removed`) so that a change you did not make is one you hear about. Reading the list and locking need only a registered merchant (a suspended owner can still lock, and must be able to cancel an unlock somebody asked for); saving a place and turning the lock off need an approved one.
 
 ## Status
 
 | `status` | Terminal | Meaning |
 |---|---|---|
 | `quoted` | no | Priced, nothing signed, nothing moved. |
-| `held` | no | Signed and accepted, deliberately **not** sent. Waiting for a person. |
-| `dispatched` | no | Handed to the worker. The money is leaving. **Today this may be the last status you see**: see below. |
+| `pending_approval` | no | You asked a person, over `hold_above_kes`. Nothing is signed or priced. Wait for `payout.approved` or `payout.rejected`. |
+| `approved` | no | A person said yes. Quote with the `payout_id`, sign and submit before `approval_expires_at`. |
+| `rejected` | **yes** | A person said no. Nothing was sent. **Do not ask again.** |
+| `held` | no | Signed and accepted, not yet handed over. A payout at or below the threshold passes through this for an instant. |
+| `dispatched` | no | Handed over. The money is leaving. `payout.paid` or `payout.failed` follows. |
 | `paid` | **yes** | The beneficiary has the money. |
-| `failed` | **yes** | It did not go through. |
-| `cancelled` | **yes** | A person refused it. Nothing was sent. **Do not re-submit.** |
-| `expired` | **yes** | Nothing was sent and nothing can be. **Sign and submit again.** |
+| `failed` | **yes** | It did not reach the beneficiary. A retry is a new payout. |
+| `cancelled` | **yes** | A person refused a held payout. Nothing was sent. **Do not re-submit.** Kept for payouts already written; a refusal now ends as `rejected`. |
+| `expired` | **yes** | Nothing was sent and nothing can be: an approval went unsigned past `approval_expires_at`, or a quote lapsed. **Ask again with a new payout.** |
 
 The moves that exist, and no others:
 
 ```
-quoted ──► held ──► dispatched ──► paid
-   │         │           └──────► failed
+pending_approval ──► approved ──► (you sign) ──► dispatched ──► paid
+        │                │                            └──────► failed
+        └──► rejected ◄──┤
+                         └──► expired
+
+quoted ──► held ──► dispatched
    │         ├──► cancelled
    │         └──► expired
    └──► expired
 ```
 
-Three things that are refused and worth knowing are refused: a `paid` payout can never be dispatched again, nothing can skip `dispatched` to reach `paid`, and a `cancelled` payout cannot be revived by a late caller.
+A payout that cannot be told apart from one that is still moving is never reported as failed: **a payout whose outcome is not known stays `dispatched`**, and you will not receive `payout.failed` for it. Confirm with the beneficiary, and ask support with the payout id if it has not resolved.
 
-:::warning `dispatched` may be final as far as the API reports today
-The server does not yet carry the rail's outcome back onto a payout. A dispatched payout stays
-`dispatched` in `GET /v1/payouts/{id}`, and there is no `payout.paid` or `payout.failed` event.
-Treat `dispatched` as "handed over, outcome not reported", confirm with the beneficiary, and ask
-support with the payout id if one goes missing. This is one of the reasons payouts are not open.
-:::
+**All five terminal states really are final.** This is where a payout differs from a [charge](./collections#status) on purpose: a `failed` charge can still turn out to have been paid, because it is our projection of a partner's word about money coming in. A payout row is the **authority** for money going out, so re-opening one would let a late message send a second disbursement against a budget that was only ever charged once. A retry is always a **new payout**, never this one moving again, which also means the amount is counted against your cap again.
 
-**All four terminal states really are final.** This is where a payout differs from a [charge](./collections#status) on purpose: a `failed` charge can still turn out to have been paid, because it is our projection of a rail's word about money coming in. A payout row is the **authority** for money going out, so re-opening one would let a late message send a second disbursement against a budget that was only ever charged once. A retry is always a **new payout**, never this one moving again — which also means the amount is counted against your cap again.
-
-You will not normally see `quoted` from the API. A payout is created in it and moved to `held` inside the same request, so by the time you are holding an id it is already past it.
+You will not normally see `quoted` or `held` from the API. A payout is created in `quoted` and moved to `held` inside the same request that dispatches it.
 
 ## GET /v1/payouts/\{id\}
 
@@ -717,15 +823,15 @@ Your own payouts, newest first. Signed request, no body, no `Idempotency-Key`; i
 
 ```bash
 # The query is INSIDE the signed message, so pass the whole target as one quoted argument.
-kakitu GET '/v1/payouts?status=held&created_after=2026-10-01T00:00:00Z&limit=50'
+kakitu GET '/v1/payouts?status=dispatched&created_after=2026-10-01T00:00:00Z&limit=50'
 
 # Paging. The same opaque cursor GET /v1/charges issues - one pager works for both.
-TARGET='/v1/payouts?status=held&limit=50'
+TARGET='/v1/payouts?status=dispatched&limit=50'
 while [ -n "$TARGET" ]; do
   PAGE=$(kakitu GET "$TARGET")
   jq -r '.data[] | [.id, .status, .amount_kes, .send_kes] | @tsv' <<<"$PAGE"
   CURSOR=$(jq -r '.next_cursor // empty' <<<"$PAGE")
-  [ -n "$CURSOR" ] && TARGET="/v1/payouts?status=held&limit=50&cursor=$CURSOR" || TARGET=
+  [ -n "$CURSOR" ] && TARGET="/v1/payouts?status=dispatched&limit=50&cursor=$CURSOR" || TARGET=
 done
 ```
 
@@ -740,12 +846,12 @@ const wallet = new Wallet(process.env.KAKITU_PRIVATE_KEY);
 
 // No Idempotency-Key: it reads. And no merchant lookup in front of it - an unregistered
 // wallet gets an empty page here, not 404 merchant_not_registered as GET /v1/charges does.
-let target = "/v1/payouts?status=held&limit=50";
+let target = "/v1/payouts?status=dispatched&limit=50";
 for (;;) {
   const { body } = await call(wallet, "GET", target);   // the query is part of the signature
   for (const p of body.data) console.log(p.id, p.status, p.amount_kes, p.send_kes);
   if (!body.next_cursor) break;                         // null on the last page
-  target = `/v1/payouts?status=held&limit=50&cursor=${encodeURIComponent(body.next_cursor)}`;
+  target = `/v1/payouts?status=dispatched&limit=50&cursor=${encodeURIComponent(body.next_cursor)}`;
 }
 ```
 
@@ -763,13 +869,13 @@ account = Account.from_key(os.environ["KAKITU_PRIVATE_KEY"])
 
 # No Idempotency-Key: it reads. And no merchant lookup in front of it - an unregistered
 # wallet gets an empty page here, not 404 merchant_not_registered as GET /v1/charges does.
-target = "/v1/payouts?status=held&limit=50"
+target = "/v1/payouts?status=dispatched&limit=50"
 while target:
     _, body = call(account, "GET", target)   # the query is part of the signature
     for p in body["data"]:
         print(p["id"], p["status"], p["amount_kes"], p["send_kes"])
     cursor = body["next_cursor"]             # None on the last page
-    target = f"/v1/payouts?status=held&limit=50&cursor={quote(cursor)}" if cursor else None
+    target = f"/v1/payouts?status=dispatched&limit=50&cursor={quote(cursor)}" if cursor else None
 ```
 
 </TabItem>
@@ -784,7 +890,7 @@ $key = getenv('KAKITU_PRIVATE_KEY');
 
 // No Idempotency-Key: it reads. And no merchant lookup in front of it - an unregistered
 // wallet gets an empty page here, not 404 merchant_not_registered as GET /v1/charges does.
-$target = '/v1/payouts?status=held&limit=50';
+$target = '/v1/payouts?status=dispatched&limit=50';
 while ($target !== null) {
     [, $body] = kakitu_call($key, 'GET', $target);   // the query is part of the signature
     foreach ($body['data'] as $p) {
@@ -793,7 +899,7 @@ while ($target !== null) {
     $cursor = $body['next_cursor'];                  // null on the last page
     $target = $cursor === null
         ? null
-        : '/v1/payouts?status=held&limit=50&cursor=' . rawurlencode($cursor);
+        : '/v1/payouts?status=dispatched&limit=50&cursor=' . rawurlencode($cursor);
 }
 ```
 
@@ -802,7 +908,7 @@ while ($target !== null) {
 
 | Parameter | Rules |
 |---|---|
-| `status` | One of the seven [statuses](#status). Anything else: `invalid_request`. |
+| `status` | One of the ten [statuses](#status). Anything else: `invalid_request`. |
 | `created_after` | An RFC 3339 timestamp, for example `2026-10-25T00:00:00Z`. Exclusive. |
 | `limit` | A whole number from 1 to 100. Default 20. |
 | `cursor` | `next_cursor` from the previous page, unchanged. |
@@ -812,14 +918,14 @@ while ($target !== null) {
   "data": [
     {
       "id": "7c2b18e4-0f2a-4a1b-9a44-1b2c3d4e5f60",
-      "status": "held",
-      "amount_kes": 25000,
-      "fee_kes": 150,
-      "send_kes": 25150,
+      "status": "dispatched",
+      "amount_kes": 2000,
+      "fee_kes": 25,
+      "send_kes": 2025,
       "currency": "KES",
       "beneficiary": { "phone": "254712345678", "name": "Jane Wanjiru" },
       "created_at": "2026-10-26T09:14:02Z",
-      "message": "This payout is held for review and has NOT been sent. A person will release or cancel it; poll GET /v1/payouts/{id} for the outcome."
+      "message": "This payout is on its way to the beneficiary. Poll GET /v1/payouts/{id} for the outcome."
     }
   ],
   "next_cursor": "MjAyNi0xMC0yNlQwOToxNDowMloucy4u"
@@ -853,11 +959,11 @@ This route is scoped by the **signing address**, in the query itself, and there 
 
 That is a real difference from [`GET /v1/charges`](./collections#get-v1charges), which *does* answer `merchant_not_registered`. Do not write one handler for both and expect the same refusal. The scope is in the `WHERE` clause either way, so neither returns somebody else's rows.
 
-### `message` is where a hold is explained
+### `message` is where a wait is explained
 
-Each element is the **same object** `GET /v1/payouts/{id}` returns, `message` included — present only while a payout is `held` or `dispatched`, absent otherwise.
+Each element is the **same object** `GET /v1/payouts/{id}` returns, `message` included — present only while a payout is `pending_approval`, `approved`, `rejected`, `held` or `dispatched`, absent otherwise.
 
-Read it. **That sentence is the only place a hold is explained to you**, and a payout that was accepted and then does not move looks like an outage until something says a person is going to look at it. It is written for a human reading a log: display it, log it, but **branch on `status`, never on `message`.**
+Read it. **That sentence is where a wait is explained to you**, and a payout that was accepted and then does not move looks like an outage until something says a person is going to look at it. It is written for a human reading a log: display it, log it, but **branch on `status`, never on `message`.**
 
 ## Errors
 
@@ -872,17 +978,46 @@ Read it. **That sentence is the only place a hold is explained to you**, and a p
 | `payouts_disabled` | 403 | Payouts are not switched on for this merchant. |
 | `payout_daily_cap_exceeded` | 429 | The day's payout budget is spent. Resets at midnight EAT. |
 | `payout_amount_above_maximum` | 400 | Over the largest single payout allowed for this merchant. |
-| `invalid_request` | 400 | A malformed body, an unknown field, an `amount_kes` below 1, or a phone or name that is not valid. |
+| `invalid_request` | 400 | A malformed body, an unknown field, an `amount_kes` below 1, a name that is not valid, or a beneficiary that is not exactly one valid destination (a till with a phone, a number that is not a till, a phone that is not a Kenyan mobile). |
 | `request_too_large` | 413 | The body is over 4 KiB. |
 | `amount_below_minimum` | 400 | Under the rail's band. [`GET /v1/limits`](./limits) shows it. |
 | `amount_above_maximum` | 400 | Over the rail's band. |
 | `profile_required` | 409 | This wallet has no profile yet: a phone number and name, which the cash-out partner needs on every order. There is no `/v1` route for it; save one with `POST /profile` or in the Kakitu app. See [Cash out](./cash-out#2-a-profile-once). |
 | `identity_verification_required` | 403 | This amount needs identity verification first. |
-| `rate_limited` | 429 | Too many requests from this wallet. |
+| `payout_approval_required` | 409 | Above your `hold_above_kes` with no approved request. Ask at `POST /v1/payouts/requests`. |
+| `payout_not_approved` | 409 | The `payout_id` is not approved: undecided, rejected, lapsed or already used. `GET /v1/payouts/{id}` shows which. |
+| `payout_approval_mismatch` | 409 | The amount or beneficiary is not what a person approved. A new request. |
+| `payout_destination_locked` | 403 | You are locked to your saved destinations and this is not one that can be paid now. |
+| `bank_unavailable` | 403 | A paybill or bank that is not a saved destination past its cooling-off, or a kind of destination not available now. Nothing was quoted. |
+| `unknown_bank` | 400 | `bank_code` is not a bank we can pay. |
+| `account_not_found` | 422 | The bank does not hold that account, or no longer under the name it was saved with. |
+| `insufficient_balance` | 400 | Your wallet does not hold the KSHS this payout burns. Nothing was quoted. |
+| `rate_limited` | 429 | Too many requests, or too many bank account lookups, from this wallet. |
 | `rail_unavailable` | 503 | Pricing is temporarily unavailable, or we could not count your budget. Nothing was priced. Retry shortly. |
 | `internal` | 500 | Something went wrong on our side. Quote the `request_id`. |
 
 `payout_amount_above_maximum` is a `400` and not a `429` for a reason: no amount of waiting makes that payout acceptable, only a smaller one. `payout_daily_cap_exceeded` is a `429` because tomorrow it will work.
+
+### POST /v1/payouts/requests
+
+`unauthorized`, `merchant_not_registered`, `merchant_not_approved`, `merchant_suspended`, `payouts_disabled`, `invalid_request` and `request_too_large` as above, plus:
+
+| `code` | HTTP | When |
+|---|---|---|
+| `idempotency_key_required` | 400 | No `Idempotency-Key`. Nothing was added. |
+| `payout_open_requests_exceeded` | 429 | You already have as many requests waiting as you may. A decision or a lapsed approval frees a place. |
+| `invalid_request` | 400 | Also: this amount does not need approval. Quote it at `/v1/payouts/quote` and sign that. |
+
+### POST /v1/payout-destinations
+
+| `code` | HTTP | When |
+|---|---|---|
+| `invalid_request` | 400 | The body is not exactly one valid destination. |
+| `payout_destinations_full` | 409 | You have as many saved as you may (50). Remove one. |
+| `unknown_bank`, `account_not_found`, `bank_unavailable` | 400, 422, 403 | A bank that is not on the list, does not hold the account, or is not available. |
+| `merchant_not_approved`, `merchant_suspended` | 403 | Saving needs an approved merchant. |
+
+`DELETE /v1/payout-destinations/{id}` answers `404 payout_destination_not_found` for a place that does not exist, one that is not yours and an id that is not a UUID, in the same words. `GET` needs only a registered merchant.
 
 ### POST /v1/payouts
 
@@ -893,6 +1028,7 @@ Everything above, plus:
 | `idempotency_key_required` | 400 | No `Idempotency-Key`. Nothing was sent. |
 | `payout_quote_not_found` | 404 | The quote cannot be used. See [above](#the-quote-is-single-use-and-yours-alone). |
 | `invalid_request` | 400 | The signed transfer does not match the quote, or the body is malformed. **Nothing was sent.** |
+| `payout_not_approved` | 409 | This payout cannot be signed now: not approved, rejected, lapsed, already sent, or its destination was removed after the approval. |
 | `idempotency_key_acted` | 409 | The payout was submitted and we cannot tell what became of it. **Do not send it again.** |
 
 The general idempotency rules — replays, mismatched bodies, the 24-hour window — are on the [Collections](./collections#idempotency) page and apply here unchanged.

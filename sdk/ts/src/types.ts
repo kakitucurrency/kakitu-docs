@@ -49,6 +49,10 @@ export interface Charge {
   created_at: string;
   paid_at: string | null;
   settled_at: string | null;
+  /** What the collection cost, in whole KES. `null` until the charge is paid. */
+  fee_kes: number | null;
+  /** What reached your wallet: `amount` less `fee_kes`. `null` until the charge is paid. */
+  credited_kes: number | null;
 }
 
 export interface CreateChargeParams {
