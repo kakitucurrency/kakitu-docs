@@ -43,9 +43,13 @@ final class Transfers
      * An Idempotency-Key is REQUIRED on this route and one is generated unless you pass your
      * own in $options['idempotency_key'].
      *
+     * An optional `reference` is your note on the payment, such as an order number: 1 to 64
+     * characters from [A-Za-z0-9._:-]. It is not signed. The payee reads it on GET /transfers and
+     * in `transfer.received`. It is the PAYER's claim and not proof of anything.
+     *
      * On success: `{"id": "<transaction hash>", "status": "pending"|"confirmed"}`.
      *
-     * @param array{from: string, to: string, value_wei: string, deadline: int, v: int, r: string, s: string, iv: int, ir: string, is: string} $transfer
+     * @param array{from: string, to: string, value_wei: string, deadline: int, v: int, r: string, s: string, iv: int, ir: string, is: string, reference?: string} $transfer
      * @param array{idempotency_key?: string} $options
      * @return array<string,mixed>
      */

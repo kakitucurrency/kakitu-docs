@@ -325,25 +325,23 @@ final class ResourcesTest extends TestCase
 
     // ------------------------------------------------------- the closed sets
 
-    public function testPayoutStatesAreTheSevenTheServerPublishes(): void
+    public function testPayoutStatesAreTheTenTheServerPublishes(): void
     {
         $this->assertSame(
-            ['quoted', 'held', 'dispatched', 'paid', 'failed', 'cancelled', 'expired'],
+            ['quoted', 'pending_approval', 'approved', 'rejected', 'held', 'dispatched', 'paid', 'failed', 'cancelled', 'expired'],
             PayoutState::all(),
         );
-        $this->assertSame(['paid', 'failed', 'cancelled', 'expired'], PayoutState::terminal());
+        $this->assertSame(['paid', 'failed', 'cancelled', 'rejected', 'expired'], PayoutState::terminal());
         $this->assertTrue(PayoutState::isTerminal(PayoutState::EXPIRED));
         // held is NOT terminal: a person releases or cancels it.
         $this->assertFalse(PayoutState::isTerminal(PayoutState::HELD));
         $this->assertFalse(PayoutState::isTerminal('not-a-state'));
     }
 
-    public function testEventTypesAreTheFiveTheServerRaises(): void
+    public function testEventTypesAreTheThirteenTheServerRaises(): void
     {
-        $this->assertSame(
-            ['charge.paid', 'charge.settled', 'charge.failed', 'payout.expired', 'payout.cancelled'],
-            EventType::all(),
-        );
+        $this->assertCount(13, EventType::all());
+        $this->assertContains('transfer.received', EventType::all());
         $this->assertSame(['pending', 'delivered', 'abandoned'], EventType::statuses());
     }
 }

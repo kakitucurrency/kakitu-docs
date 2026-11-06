@@ -51,7 +51,28 @@ final class ErrorCode
     /** The ONE answer for a payout quote that does not exist, has expired, has already been
      * spent, or belongs to another merchant. They are deliberately indistinguishable. */
     public const PAYOUT_QUOTE_NOT_FOUND = 'payout_quote_not_found';
+    /** 409. Over your hold threshold with no approval: Payouts::request() first. */
+    public const PAYOUT_APPROVAL_REQUIRED = 'payout_approval_required';
+    /** 409. Not yet decided, rejected, lapsed or already spent: read the payout. */
+    public const PAYOUT_NOT_APPROVED = 'payout_not_approved';
+    /** 409. The amount or beneficiary is not what a person approved: a new request. */
+    public const PAYOUT_APPROVAL_MISMATCH = 'payout_approval_mismatch';
+    /** 429. As many requests are open as you may have; a decision or a lapse frees a place. */
+    public const PAYOUT_OPEN_REQUESTS_EXCEEDED = 'payout_open_requests_exceeded';
+    /** 403. Not a saved destination that can be paid now: unsaved, cooling off or removed. */
+    public const PAYOUT_DESTINATION_LOCKED = 'payout_destination_locked';
+    public const PAYOUT_DESTINATION_NOT_FOUND = 'payout_destination_not_found';
+    /** 409. You have as many saved as you may: remove one. */
+    public const PAYOUT_DESTINATIONS_FULL = 'payout_destinations_full';
     public const PROFILE_REQUIRED = 'profile_required';
+    /** 403. A paybill or bank is not open to this wallet. */
+    public const BANK_UNAVAILABLE = 'bank_unavailable';
+    /** 400. bank_code is not on the bank list. */
+    public const UNKNOWN_BANK = 'unknown_bank';
+    /** 422. The bank does not have this account. */
+    public const ACCOUNT_NOT_FOUND = 'account_not_found';
+    /** 400. The wallet does not hold the KSHS this payout burns. */
+    public const INSUFFICIENT_BALANCE = 'insufficient_balance';
     public const IDENTITY_VERIFICATION_REQUIRED = 'identity_verification_required';
     public const INTERNAL = 'internal';
 
@@ -73,8 +94,11 @@ final class ErrorCode
             self::CHARGE_NOT_FOUND, self::REFERENCE_REUSED, self::RAIL_UNAVAILABLE,
             self::ORDER_NOT_FOUND, self::EVENT_NOT_FOUND, self::PAYOUTS_DISABLED,
             self::PAYOUT_DAILY_CAP_EXCEEDED, self::PAYOUT_AMOUNT_ABOVE_MAXIMUM,
-            self::PAYOUT_NOT_FOUND, self::PAYOUT_QUOTE_NOT_FOUND, self::PROFILE_REQUIRED,
-            self::IDENTITY_VERIFICATION_REQUIRED, self::INTERNAL,
+            self::PAYOUT_NOT_FOUND, self::PAYOUT_QUOTE_NOT_FOUND, self::PAYOUT_APPROVAL_REQUIRED,
+            self::PAYOUT_NOT_APPROVED, self::PAYOUT_APPROVAL_MISMATCH, self::PAYOUT_OPEN_REQUESTS_EXCEEDED,
+            self::PAYOUT_DESTINATION_LOCKED, self::PAYOUT_DESTINATION_NOT_FOUND, self::PAYOUT_DESTINATIONS_FULL,
+            self::PROFILE_REQUIRED, self::BANK_UNAVAILABLE, self::UNKNOWN_BANK, self::ACCOUNT_NOT_FOUND,
+            self::INSUFFICIENT_BALANCE, self::IDENTITY_VERIFICATION_REQUIRED, self::INTERNAL,
         ];
     }
 }

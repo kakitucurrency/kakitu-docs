@@ -52,6 +52,21 @@ class PayoutLimitExceededError(KakituError):
     setting on a separate counter, so raising the collection cap changes nothing here."""
 class PayoutAmountError(KakituError):
     """400 payout_amount_above_maximum. Not a 429: waiting does not help, a smaller payout does."""
+class PayoutApprovalError(KakituError):
+    """409 payout_approval_required / payout_not_approved / payout_approval_mismatch. A payout over
+    your hold threshold needs a person's yes BEFORE you sign: ``payouts.request``, wait for
+    ``payout.approved``, then quote with its ``payout_id``. A mismatch is a different payout, so
+    it is a new request."""
+class PayoutOpenRequestsExceededError(KakituError):
+    """429 payout_open_requests_exceeded. As many requests are waiting as you may have; a decision
+    or a lapsed approval frees a place."""
+class PayoutDestinationError(KakituError):
+    """payout_destination_locked (403: not a saved destination that can be paid now), _not_found
+    (404) and payout_destinations_full (409: remove one)."""
+class BankError(KakituError):
+    """bank_unavailable (403), unknown_bank (400), account_not_found (422)."""
+class InsufficientBalanceError(KakituError):
+    """400. The wallet does not hold the KSHS this payout burns."""
 class ProfileRequiredError(KakituError):
     """409. The wallet has not given Kakitu the details a ramp needs yet."""
 class IdentityVerificationRequiredError(KakituError):
@@ -90,6 +105,17 @@ _BY_CODE: dict[str, type[KakituError]] = {
     "payout_amount_above_maximum": PayoutAmountError,
     "payout_not_found": PayoutNotFoundError,
     "payout_quote_not_found": PayoutQuoteNotFoundError,
+    "payout_approval_required": PayoutApprovalError,
+    "payout_not_approved": PayoutApprovalError,
+    "payout_approval_mismatch": PayoutApprovalError,
+    "payout_open_requests_exceeded": PayoutOpenRequestsExceededError,
+    "payout_destination_locked": PayoutDestinationError,
+    "payout_destination_not_found": PayoutDestinationError,
+    "payout_destinations_full": PayoutDestinationError,
+    "bank_unavailable": BankError,
+    "unknown_bank": BankError,
+    "account_not_found": BankError,
+    "insufficient_balance": InsufficientBalanceError,
     "profile_required": ProfileRequiredError,
     "identity_verification_required": IdentityVerificationRequiredError,
     "internal": InternalError,

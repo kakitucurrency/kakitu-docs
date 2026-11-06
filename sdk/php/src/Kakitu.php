@@ -15,6 +15,7 @@ use Kakitu\Resources\Events;
 use Kakitu\Resources\Limits;
 use Kakitu\Resources\Merchants;
 use Kakitu\Resources\Orders;
+use Kakitu\Resources\PayoutDestinations;
 use Kakitu\Resources\Payouts;
 use Kakitu\Resources\Quotes;
 use Kakitu\Resources\Transfers;
@@ -52,6 +53,7 @@ final class Kakitu
     public readonly Quotes $quotes;
     public readonly Events $events;
     public readonly Payouts $payouts;
+    public readonly PayoutDestinations $payoutDestinations;
 
     private Signer $signer;
     private string $baseUrl;
@@ -96,6 +98,7 @@ final class Kakitu
         $this->quotes = new Quotes($this);
         $this->events = new Events($this);
         $this->payouts = new Payouts($this);
+        $this->payoutDestinations = new PayoutDestinations($this);
     }
 
     /** Your merchant identity: the wallet address derived from the private key. */

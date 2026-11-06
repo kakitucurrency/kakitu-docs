@@ -232,6 +232,17 @@ final class ClientTest extends TestCase
             // 400, not 429: waiting does not help, a smaller payout does.
             'payout_amount_above_maximum' => Exception\InvalidRequestException::class,
             'profile_required' => Exception\ConflictException::class,
+            'payout_approval_required' => Exception\ConflictException::class,
+            'payout_not_approved' => Exception\ConflictException::class,
+            'payout_approval_mismatch' => Exception\ConflictException::class,
+            'payout_open_requests_exceeded' => Exception\RateLimitException::class,
+            'payout_destination_locked' => Exception\MerchantException::class,
+            'payout_destination_not_found' => Exception\NotFoundException::class,
+            'payout_destinations_full' => Exception\ConflictException::class,
+            'bank_unavailable' => Exception\MerchantException::class,
+            'unknown_bank' => Exception\InvalidRequestException::class,
+            'account_not_found' => Exception\ApiException::class,
+            'insufficient_balance' => Exception\InvalidRequestException::class,
             'identity_verification_required' => Exception\ApiException::class,
             'internal' => Exception\ApiException::class,
         ];

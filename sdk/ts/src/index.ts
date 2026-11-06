@@ -6,8 +6,10 @@ import type {
   Balances, Charge, CreateChargeParams, CreatePayoutParams, CreatePayoutQuoteParams,
   CreateQuoteParams, EIP712Domain, Event, EventStatus, EventType, Limits, ListChargesParams,
   ListEventsParams, ListPayoutsParams, Merchant, MerchantState, Order, OrderStatus, Payout,
-  PayoutBeneficiary, PayoutLimits, PayoutQuote, PayoutState, Quote, QuoteBeneficiary,
-  RegisterMerchantParams, SignedTransfer, Transfer, WithdrawalBand, ChargeStatus,
+  PayoutBeneficiary, PayoutBeneficiaryInput, PayoutDestination, PayoutDestinationList,
+  PayoutLimits, PayoutLock, PayoutQuote, PayoutState, Quote, QuoteBeneficiary,
+  RegisterMerchantParams, RequestPayoutParams, SavePayoutDestinationParams, SignedTransfer,
+  Transfer, WithdrawalBand, ChargeStatus,
 } from "./types.js";
 
 export { KakituError, SERVER_ERROR_CODES, type KakituErrorCode, type ServerErrorCode } from "./errors.js";
@@ -18,9 +20,13 @@ export type {
   Balances, Charge, ChargeStatus, CreateChargeParams, CreatePayoutParams, CreatePayoutQuoteParams,
   CreateQuoteParams, EIP712Domain, Event, EventStatus, EventType, Limits, ListChargesParams,
   ListEventsParams, ListPayoutsParams, Merchant, MerchantState, Order, OrderStatus, Payout,
-  PayoutBeneficiary, PayoutLimits, PayoutQuote, PayoutState, Quote, QuoteBeneficiary,
-  RegisterMerchantParams, SignedTransfer, Transfer, WithdrawalBand,
+  PayoutBeneficiary, PayoutBeneficiaryInput, PayoutDestination, PayoutDestinationList,
+  PayoutDestinationType, PayoutLimits, PayoutLock, PayoutQuote, PayoutState, PhoneBeneficiary,
+  TillBeneficiary, PaybillBeneficiary, BankBeneficiary, Quote, QuoteBeneficiary,
+  RegisterMerchantParams, RequestPayoutParams, SavePayoutDestinationParams, SignedTransfer,
+  Transfer, WithdrawalBand,
 } from "./types.js";
+export { EVENT_TYPES } from "./types.js";
 
 export interface RequestOptions {
   /**
@@ -132,12 +138,33 @@ export class Kakitu {
    * ends up.
    */
   readonly payouts: {
+    /**
+     * Above your `hold_above_kes` a person decides BEFORE you sign: `request` asks, you receive
+     * `payout.approved` (or `payout.rejected`), then `quote` with that `payout_id`, sign, `create`.
+     * `request` REQUIRES an Idempotency-Key and this SDK generates one unless you pass your own.
+     */
+    request(params: RequestPayoutParams, opts?: RequestOptions): Promise<Payout>;
     quote(params: CreatePayoutQuoteParams): Promise<PayoutQuote>;
     create(params: CreatePayoutParams, opts?: RequestOptions): Promise<Payout>;
     get(id: string): Promise<Payout>;
     list(params?: ListPayoutsParams): Promise<Page<Payout>>;
     /** Walks every page, yielding payouts. */
     listAll(params?: Omit<ListPayoutsParams, "cursor">): AsyncGenerator<Payout, void, undefined>;
+  };
+
+  /**
+   * Where your cash-outs may go, and the lock that holds you to that list. None of these moves
+   * money, so none takes an Idempotency-Key.
+   *
+   * Anything that WIDENS where money can go (a new destination, turning the lock off) waits out
+   * the cooling-off and raises an event and an alarm at once; anything that narrows it is
+   * immediate. The lock controls cash-outs only: it does not stop KSHS transfers to other wallets.
+   */
+  readonly payoutDestinations: {
+    list(): Promise<PayoutDestinationList>;
+    save(params: SavePayoutDestinationParams): Promise<PayoutDestination>;
+    remove(id: string): Promise<{ id: string; removed: boolean }>;
+    setLock(locked: boolean): Promise<PayoutLock>;
   };
 
   constructor(options: KakituOptions) {
@@ -188,7 +215,17 @@ export class Kakitu {
       replay: (id) => postNoKey<Event>(`/v1/events/${encodeURIComponent(id)}/replay`),
     };
 
+    this.payoutDestinations = {
+      list: () => get<PayoutDestinationList>("/v1/payout-destinations"),
+      save: (p) => postNoKey<PayoutDestination>("/v1/payout-destinations", p),
+      remove: (id) => t.request<{ id: string; removed: boolean }>({
+        method: "DELETE", path: `/v1/payout-destinations/${encodeURIComponent(id)}`, safeToRetry: false,
+      }),
+      setLock: (locked) => postNoKey<PayoutLock>("/v1/payout-destinations/lock", { locked }),
+    };
+
     this.payouts = {
+      request: (p, o) => postWithKey<Payout>("/v1/payouts/requests", p, o),
       quote: (p) => postNoKey<PayoutQuote>("/v1/payouts/quote", p),
       create: (p, o) => postWithKey<Payout>("/v1/payouts", p, o),
       get: (id) => get<Payout>(`/v1/payouts/${encodeURIComponent(id)}`),

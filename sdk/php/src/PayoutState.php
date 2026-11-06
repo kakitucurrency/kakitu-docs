@@ -5,15 +5,21 @@ declare(strict_types=1);
 namespace Kakitu;
 
 /**
- * The seven states of a merchant payout (models/dbmodels/payout.go). This is Kakitu's own
+ * The ten states of a merchant payout (models/dbmodels/payout.go). This is Kakitu's own
  * vocabulary, deliberately NOT a rail's: the fiat partners' words differ from each other and
  * are not part of a public contract.
  *
- *     quoted ──► held ──► dispatched ──► paid
- *        │         │           └──────► failed
+ *     pending_approval ──► approved ──► (you sign) ──► dispatched ──► paid
+ *            │                │                              └─────► failed
+ *            └──► rejected ◄──┤
+ *                             └──► expired
+ *
+ *     quoted ──► held ──► dispatched      (a payout at or below your hold threshold)
  *        │         ├──► cancelled
- *        │         └──► expired
- *        └──► expired
+ *        └─► expired └──► expired
+ *
+ * A payout ABOVE `hold_above_kes` starts at pending_approval: a person decides before anything is
+ * signed. See Payouts::request().
  *
  * Switch on these, never on the `message`:
  *
@@ -23,6 +29,12 @@ final class PayoutState
 {
     /** Priced, nothing signed, nothing moved. */
     public const QUOTED = 'quoted';
+    /** You asked a person; nothing is signed, priced or counted. No clock runs on the decision. */
+    public const PENDING_APPROVAL = 'pending_approval';
+    /** A person said yes. Quote with `payout_id`, sign, and submit before `approval_expires_at`. */
+    public const APPROVED = 'approved';
+    /** Terminal. A person said no. Nothing was signed or sent. Do not ask again. */
+    public const REJECTED = 'rejected';
     /**
      * Signed and accepted, deliberately NOT sent. Every payout is accepted into this state —
      * there is no quoted -> dispatched arrow — because this is the moment the hold decision is
@@ -50,18 +62,18 @@ final class PayoutState
     public static function all(): array
     {
         return [
-            self::QUOTED, self::HELD, self::DISPATCHED,
-            self::PAID, self::FAILED, self::CANCELLED, self::EXPIRED,
+            self::QUOTED, self::PENDING_APPROVAL, self::APPROVED, self::REJECTED, self::HELD,
+            self::DISPATCHED, self::PAID, self::FAILED, self::CANCELLED, self::EXPIRED,
         ];
     }
 
-    /** @return list<string> the four a payout can never leave */
+    /** @return list<string> the five a payout can never leave */
     public static function terminal(): array
     {
-        return [self::PAID, self::FAILED, self::CANCELLED, self::EXPIRED];
+        return [self::PAID, self::FAILED, self::CANCELLED, self::REJECTED, self::EXPIRED];
     }
 
-    /** True for paid, failed, cancelled and expired. A retry is a NEW payout. */
+    /** True for paid, failed, cancelled, rejected and expired. A retry is a NEW payout. */
     public static function isTerminal(string $state): bool
     {
         return in_array($state, self::terminal(), true);

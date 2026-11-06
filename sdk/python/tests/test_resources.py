@@ -242,8 +242,10 @@ def test_ids_are_escaped_into_the_path():
     assert seen[0].url.raw_path.decode() == "/v1/orders/o1%2F..%2Fadmin"
 
 
-def test_payout_states_are_the_seven_the_server_publishes():
-    assert PAYOUT_STATES == ("quoted", "held", "dispatched", "paid", "failed", "cancelled", "expired")
+def test_payout_states_are_the_ten_the_server_publishes():
+    assert PAYOUT_STATES == (
+        "quoted", "pending_approval", "approved", "rejected", "held", "dispatched",
+        "paid", "failed", "cancelled", "expired")
 
 
 # -------------------------------------------------------------- error codes

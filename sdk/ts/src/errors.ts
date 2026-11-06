@@ -36,7 +36,18 @@ export type ServerErrorCode =
   | "payout_amount_above_maximum"
   | "payout_not_found"
   | "payout_quote_not_found"
+  | "payout_approval_required"
+  | "payout_not_approved"
+  | "payout_approval_mismatch"
+  | "payout_open_requests_exceeded"
+  | "payout_destination_locked"
+  | "payout_destination_not_found"
+  | "payout_destinations_full"
   | "profile_required"
+  | "bank_unavailable"
+  | "unknown_bank"
+  | "account_not_found"
+  | "insufficient_balance"
   | "identity_verification_required"
   | "internal";
 
@@ -51,8 +62,11 @@ export const SERVER_ERROR_CODES: readonly ServerErrorCode[] = [
   "daily_cap_exceeded", "payer_velocity_exceeded", "rate_limited", "charge_not_found",
   "reference_reused", "rail_unavailable", "order_not_found", "event_not_found",
   "payouts_disabled", "payout_daily_cap_exceeded", "payout_amount_above_maximum",
-  "payout_not_found", "payout_quote_not_found", "profile_required",
-  "identity_verification_required", "internal",
+  "payout_not_found", "payout_quote_not_found", "payout_approval_required", "payout_not_approved",
+  "payout_approval_mismatch", "payout_open_requests_exceeded", "payout_destination_locked",
+  "payout_destination_not_found", "payout_destinations_full", "profile_required", "bank_unavailable",
+  "unknown_bank", "account_not_found", "insufficient_balance", "identity_verification_required",
+  "internal",
 ];
 
 export class KakituError extends Error {

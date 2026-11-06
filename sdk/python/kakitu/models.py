@@ -229,7 +229,13 @@ class Quote:
 
 
 #: Webhook event types (models/dbmodels/webhook_event.go).
-EVENT_TYPES = ("charge.paid", "charge.settled", "charge.failed", "payout.expired", "payout.cancelled")
+EVENT_TYPES = (
+    "charge.paid", "charge.settled", "charge.failed",
+    "transfer.received",
+    "payout.approved", "payout.rejected", "payout.expired", "payout.cancelled", "payout.paid", "payout.failed",
+    # About YOUR OWN payout controls. If you did not make the change, somebody else holds your key.
+    "payout_destination.added", "payout_destination.removed", "payout_lock.changed",
+)
 #: Delivery states of a webhook event.
 EVENT_STATUSES = ("pending", "delivered", "abandoned")
 
@@ -282,9 +288,83 @@ class Event:
 #:
 #: ``paid``, ``failed``, ``cancelled`` and ``expired`` are all terminal: a retry is a NEW payout,
 #: never this one moving again.
-PAYOUT_STATES = ("quoted", "held", "dispatched", "paid", "failed", "cancelled", "expired")
-#: The four states a payout can never leave.
-PAYOUT_TERMINAL_STATES = ("paid", "failed", "cancelled", "expired")
+#: A payout ABOVE ``hold_above_kes`` starts at ``pending_approval`` (see ``Payouts.request``): a
+#: person decides before anything is signed. At or below it, ``quoted`` -> ``held`` -> ``dispatched``.
+PAYOUT_STATES = (
+    "quoted", "pending_approval", "approved", "rejected", "held", "dispatched",
+    "paid", "failed", "cancelled", "expired",
+)
+#: The five states a payout can never leave.
+PAYOUT_TERMINAL_STATES = ("paid", "failed", "cancelled", "rejected", "expired")
+
+#: Where a payout can go. A beneficiary with no ``type`` is a phone.
+DESTINATION_TYPES = ("phone", "till", "paybill", "bank")
+
+_FIELDS_OF = {
+    "phone": ("phone",),
+    "till": ("till",),
+    "paybill": ("paybill", "account"),
+    "bank": ("account", "bank_code"),
+}
+
+
+class Beneficiary:
+    """Where a payout goes and who is being paid. Build one with the constructor for its type:
+
+    >>> Beneficiary.phone("254712345678", "Jane Wanjiru")
+    >>> Beneficiary.till("123456", "Jane Stores")
+    >>> Beneficiary.paybill("400200", "INV-77", "Landlord Ltd")
+    >>> Beneficiary.bank("0123456789", "01", "Jane Wanjiru")
+
+    Exactly the fields of one type may be given; a till with a phone beside it is refused here, as
+    the server would refuse it. ``name`` is the person being PAID and is never taken from your
+    own profile.
+    """
+    __slots__ = ("type", "name", "_fields")
+
+    def __init__(self, type: str, name: str, **fields: str) -> None:
+        if type not in DESTINATION_TYPES:
+            raise ValueError(f"beneficiary type must be one of {DESTINATION_TYPES}, not {type!r}")
+        own = _FIELDS_OF[type]
+        for f in own:
+            if not fields.get(f):
+                raise ValueError(f"a {type} beneficiary needs {f}")
+        for f in fields:
+            if f not in own:
+                raise ValueError(f"a {type} beneficiary has no {f}")
+        if not name:
+            raise ValueError("a beneficiary needs the name of the person being paid")
+        self.type, self.name, self._fields = type, name, dict(fields)
+
+    @classmethod
+    def phone(cls, phone: str, name: str) -> "Beneficiary":
+        return cls("phone", name, phone=phone)
+
+    @classmethod
+    def till(cls, till: str, name: str) -> "Beneficiary":
+        return cls("till", name, till=till)
+
+    @classmethod
+    def paybill(cls, paybill: str, account: str, name: str) -> "Beneficiary":
+        return cls("paybill", name, paybill=paybill, account=account)
+
+    @classmethod
+    def bank(cls, account: str, bank_code: str, name: str) -> "Beneficiary":
+        return cls("bank", name, account=account, bank_code=bank_code)
+
+    def __repr__(self) -> str:
+        return f"Beneficiary(type={self.type!r})"  # a number and a name are not for a log
+
+    def destination(self) -> dict[str, Any]:
+        """The place alone, as ``payout_destinations.save`` takes it. A phone carries no type."""
+        d: dict[str, Any] = {} if self.type == "phone" else {"type": self.type}
+        for f in _FIELDS_OF[self.type]:
+            d[f] = self._fields[f]
+        return d
+
+    def to_dict(self) -> dict[str, Any]:
+        """The wire form. A phone payout looks as it always did, with no ``type``."""
+        return {**self.destination(), "name": self.name}
 
 
 @dataclass(frozen=True)
@@ -331,6 +411,11 @@ class PayoutQuote:
     deadline: int
     permit_domain: EIP712Domain | None = None
     relay_domain: EIP712Domain | None = None
+    #: Set when this quote spends an approved request: the payout your signature will land on.
+    payout_id: str = ""
+    #: The beneficiary exactly as the server sent it. ``beneficiary_phone`` is "" for a till,
+    #: paybill or bank payout, so read this (and ``beneficiary_type``) for those.
+    beneficiary: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @classmethod
@@ -349,6 +434,7 @@ class PayoutQuote:
             treasury_address=str(d.get("treasury_address", "")), deadline=int(d.get("deadline", 0) or 0),
             permit_domain=EIP712Domain.from_dict(e["permit"]) if isinstance(e.get("permit"), dict) else None,
             relay_domain=EIP712Domain.from_dict(e["relay"]) if isinstance(e.get("relay"), dict) else None,
+            payout_id=str(d.get("payout_id", "") or ""), beneficiary=dict(b),
             raw=d,
         )
 
@@ -371,11 +457,20 @@ class Payout:
     beneficiary_name: str
     created_at: str
     message: str = ""
+    #: On an ``approved`` payout only: sign and submit before this, or ask again.
+    approval_expires_at: str | None = None
+    #: The beneficiary exactly as the server sent it. A phone payout's has no ``type``.
+    beneficiary: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @property
+    def beneficiary_type(self) -> str:
+        """``"phone"``, ``"till"``, ``"paybill"`` or ``"bank"``. Absent on the wire means phone."""
+        return str(self.beneficiary.get("type") or "phone")
+
+    @property
     def is_terminal(self) -> bool:
-        """True for paid, failed, cancelled and expired. A retry is a NEW payout."""
+        """True for paid, failed, cancelled, rejected and expired. A retry is a NEW payout."""
         return self.status in PAYOUT_TERMINAL_STATES
 
     @classmethod
@@ -386,5 +481,59 @@ class Payout:
             amount_kes=int(d.get("amount_kes", 0) or 0), fee_kes=int(d.get("fee_kes", 0) or 0),
             send_kes=int(d.get("send_kes", 0) or 0), currency=str(d.get("currency", "KES")),
             beneficiary_phone=str(b.get("phone", "")), beneficiary_name=str(b.get("name", "")),
-            created_at=str(d.get("created_at", "")), message=str(d.get("message", "") or ""), raw=d,
+            created_at=str(d.get("created_at", "")), message=str(d.get("message", "") or ""),
+            approval_expires_at=d.get("approval_expires_at") or None, beneficiary=dict(b), raw=d,
         )
+
+
+@dataclass(frozen=True)
+class PayoutDestination:
+    """A saved payout destination. ``status`` is ``cooling_off`` until ``active_at``; a locked
+    merchant can pay only an ``active`` one. ``holder_name`` is the name the bank gave."""
+    id: str
+    type: str
+    status: str
+    active_at: str
+    created_at: str
+    phone: str = ""
+    till: str = ""
+    paybill: str = ""
+    account: str = ""
+    bank_code: str = ""
+    holder_name: str = ""
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "PayoutDestination":
+        g = lambda k: str(d.get(k, "") or "")  # noqa: E731
+        return cls(id=g("id"), type=g("type"), status=g("status"), active_at=g("active_at"),
+                   created_at=g("created_at"), phone=g("phone"), till=g("till"), paybill=g("paybill"),
+                   account=g("account"), bank_code=g("bank_code"), holder_name=g("holder_name"), raw=d)
+
+
+@dataclass(frozen=True)
+class PayoutDestinations:
+    """``GET /v1/payout-destinations``: the list, and whether the lock binds.
+
+    The lock controls where your CASH-OUTS can go. It does not stop KSHS transfers to other
+    wallets. ``payout_unlocks_at`` is set while the lock is still on and coming off."""
+    data: list[PayoutDestination]
+    payout_locked: bool
+    payout_unlocks_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "PayoutDestinations":
+        return cls(data=[PayoutDestination.from_dict(x) for x in d.get("data") or []],
+                   payout_locked=bool(d.get("payout_locked", False)),
+                   payout_unlocks_at=d.get("payout_unlocks_at") or None)
+
+
+@dataclass(frozen=True)
+class PayoutLock:
+    """The lock, as ``POST /v1/payout-destinations/lock`` answers."""
+    payout_locked: bool
+    payout_unlocks_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "PayoutLock":
+        return cls(bool(d.get("payout_locked", False)), d.get("payout_unlocks_at") or None)

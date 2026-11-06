@@ -92,6 +92,13 @@ export interface SignedTransfer {
   iv: number;
   ir: string;
   is: string;
+  /**
+   * Your note on this payment, such as an order number: 1 to 64 characters from `[A-Za-z0-9._:-]`.
+   * It is not signed. The payee reads it on `GET /transfers` and in `transfer.received`. It is
+   * the PAYER's claim and not proof of anything: the payee still checks amount and recipient.
+   * Omit it when there is none.
+   */
+  reference?: string;
 }
 
 /** POST /v1/transfers answers with this. `id` is the transaction hash. */
@@ -207,8 +214,21 @@ export interface Quote {
 
 // ------------------------------------------------------------------- events
 
-export type EventType =
-  | "charge.paid" | "charge.settled" | "charge.failed" | "payout.expired" | "payout.cancelled";
+/**
+ * Every type the server raises, in the order the Events page lists them. `EventType` is derived
+ * from this, so a type cannot be in one and not the other.
+ *
+ * `payout_destination.*` and `payout_lock.changed` are about your OWN payout controls: if you did
+ * not make the change, somebody else holds your key.
+ */
+export const EVENT_TYPES = [
+  "charge.paid", "charge.settled", "charge.failed",
+  "transfer.received",
+  "payout.approved", "payout.rejected", "payout.expired", "payout.cancelled", "payout.paid", "payout.failed",
+  "payout_destination.added", "payout_destination.removed", "payout_lock.changed",
+] as const;
+
+export type EventType = (typeof EVENT_TYPES)[number];
 
 export type EventStatus = "pending" | "delivered" | "abandoned";
 
@@ -248,24 +268,71 @@ export interface ListEventsParams extends PageParams {
 // ------------------------------------------------------------------ payouts
 
 /**
- * The seven payout states (models/dbmodels/payout.go). `paid`, `failed`, `cancelled` and
+ * The ten payout states (models/dbmodels/payout.go). `paid`, `failed`, `cancelled`, `rejected` and
  * `expired` are all terminal: a retry is a NEW payout, never this one moving again.
  *
- *     quoted ──► held ──► dispatched ──► paid
- *        │        │            └──────► failed
- *        │        ├──► cancelled
- *        │        └──► expired
- *        └──► expired
+ *     pending_approval ──► approved ──► (you sign) ──► dispatched ──► paid
+ *            │                │                              └─────► failed
+ *            └──► rejected ◄──┤
+ *                             └──► expired
+ *
+ *     quoted ──► held ──► dispatched      (a payout at or below your hold threshold)
+ *        │         ├──► cancelled
+ *        └─► expired └──► expired
+ *
+ * A payout ABOVE `hold_above_kes` starts at `pending_approval` (see `payouts.request`): a person
+ * decides before anything is signed.
  */
 export type PayoutState =
-  | "quoted" | "held" | "dispatched" | "paid" | "failed" | "cancelled" | "expired";
+  | "quoted" | "pending_approval" | "approved" | "rejected" | "held" | "dispatched"
+  | "paid" | "failed" | "cancelled" | "expired";
 
-export interface PayoutBeneficiary {
-  /** A Kenyan mobile as 2547xxxxxxxx. */
+/** Where a payout can go. `phone` is the default, so a beneficiary with no `type` is a phone. */
+export type PayoutDestinationType = "phone" | "till" | "paybill" | "bank";
+
+/** An M-Pesa number, as 2547xxxxxxxx (or 2541xxxxxxxx). */
+export interface PhoneBeneficiary {
+  type?: "phone";
   phone: string;
-  /** The name of the person being PAID — it is what their M-Pesa statement shows. */
+  /** The person being PAID: what their M-Pesa statement shows. */
   name: string;
 }
+
+/** A Buy Goods till: 5 to 9 digits. */
+export interface TillBeneficiary {
+  type: "till";
+  till: string;
+  name: string;
+}
+
+/** A paybill number (5 to 9 digits) and the account to credit. */
+export interface PaybillBeneficiary {
+  type: "paybill";
+  paybill: string;
+  account: string;
+  name: string;
+}
+
+/** A bank account. `bank_code` comes from the bank list; an unknown one is `unknown_bank`. */
+export interface BankBeneficiary {
+  type: "bank";
+  account: string;
+  bank_code: string;
+  name: string;
+}
+
+/**
+ * What you SEND as `beneficiary`. Give exactly the fields of one type and no others: a till with a
+ * phone beside it is refused, not guessed at. A body with a phone and no `type` still means phone.
+ */
+export type PayoutBeneficiaryInput =
+  | PhoneBeneficiary | TillBeneficiary | PaybillBeneficiary | BankBeneficiary;
+
+/**
+ * What you GET BACK as `beneficiary`. A phone payout's has no `type`, exactly as before types
+ * existed, so test `type === undefined` for phone rather than for the string "phone".
+ */
+export type PayoutBeneficiary = PayoutBeneficiaryInput;
 
 /** One EIP-712 domain to sign under. */
 export interface EIP712Domain {
@@ -289,6 +356,8 @@ export interface EIP712Domain {
  */
 export interface PayoutQuote {
   quote_id: string;
+  /** Set when this quote spends an approved request: the payout your signature will land on. */
+  payout_id?: string;
   amount_kes: number;
   fee_kes: number;
   send_kes: number;
@@ -304,9 +373,20 @@ export interface PayoutQuote {
 }
 
 export interface CreatePayoutQuoteParams {
+  /**
+   * The id of a request a person has approved. Required for a payout above `hold_above_kes`, and
+   * `amount_kes` and `beneficiary` must then match what was approved.
+   */
+  payout_id?: string;
   /** Whole KES. This is what LANDS on the beneficiary, not what leaves your wallet. */
   amount_kes: number;
-  beneficiary: PayoutBeneficiary;
+  beneficiary: PayoutBeneficiaryInput;
+}
+
+/** POST /v1/payouts/requests: ask a person, before anything is signed. */
+export interface RequestPayoutParams {
+  amount_kes: number;
+  beneficiary: PayoutBeneficiaryInput;
 }
 
 /** A merchant payout (POST /v1/payouts, GET /v1/payouts/{id}, GET /v1/payouts). */
@@ -319,6 +399,8 @@ export interface Payout {
   currency: string;
   beneficiary: PayoutBeneficiary;
   created_at: string;
+  /** On an `approved` payout only: sign and submit before this, or ask again. */
+  approval_expires_at?: string;
   /** Kakitu's sentence about what is happening now — the only place a hold is explained. */
   message?: string;
 }
@@ -335,3 +417,45 @@ export interface ListPayoutsParams extends PageParams {
   /** RFC 3339, e.g. "2026-10-25T00:00:00Z". */
   created_after?: string;
 }
+
+// ------------------------------------------------- saved destinations and the lock
+
+/**
+ * A saved payout destination. `status` is `cooling_off` until `active_at`, and a locked merchant
+ * can pay only an `active` one. `holder_name` is the name the bank gave when a bank was saved.
+ */
+export interface PayoutDestination {
+  id: string;
+  type: PayoutDestinationType;
+  phone?: string;
+  till?: string;
+  paybill?: string;
+  account?: string;
+  bank_code?: string;
+  holder_name?: string;
+  status: "cooling_off" | "active";
+  active_at: string;
+  created_at: string;
+}
+
+/**
+ * The lock, as every route that shows it shows it. While `payout_unlocks_at` is set the lock is
+ * still on and is coming off at that time.
+ *
+ * The lock controls where your CASH-OUTS can go. It does not stop KSHS transfers to other wallets.
+ */
+export interface PayoutLock {
+  payout_locked: boolean;
+  payout_unlocks_at?: string;
+}
+
+export interface PayoutDestinationList extends PayoutLock {
+  data: PayoutDestination[];
+}
+
+/** One destination to save, in the beneficiary's field names, with no name: a bank gives its own. */
+export type SavePayoutDestinationParams =
+  | { type?: "phone"; phone: string }
+  | { type: "till"; till: string }
+  | { type: "paybill"; paybill: string; account: string }
+  | { type: "bank"; account: string; bank_code: string };

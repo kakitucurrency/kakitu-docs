@@ -13,7 +13,8 @@ import httpx
 
 from .errors import KakituConnectionError, KakituError, error_from_response
 from .models import (
-    Balances, Charge, Event, Limits, Merchant, Order, Payout, PayoutQuote, Quote, Transfer,
+    Balances, Beneficiary, Charge, Event, Limits, Merchant, Order, Payout, PayoutDestination,
+    PayoutDestinations, PayoutLock, PayoutQuote, Quote, Transfer,
 )
 from .pagination import Page, auto_paginate
 from .signing import Signer
@@ -49,6 +50,7 @@ class Kakitu:
         self.quotes = Quotes(self)
         self.events = Events(self)
         self.payouts = Payouts(self)
+        self.payout_destinations = PayoutDestinationsResource(self)
 
     @property
     def address(self) -> str:
@@ -220,6 +222,7 @@ class Transfers:
 
     def create(self, *, from_address: str, to: str, value_wei: str, deadline: int,
                v: int, r: str, s: str, iv: int, ir: str, is_: str,
+               reference: str | None = None,
                idempotency_key: str | None = None) -> Transfer:
         """Relay a transfer YOU have already signed.
 
@@ -240,10 +243,16 @@ class Transfers:
         float it is a different number and the signature will not verify. ``is_`` is spelled with
         a trailing underscore because ``is`` is a Python keyword; it goes on the wire as ``is``.
 
+        ``reference`` is your note on the payment, such as an order number: 1 to 64 characters
+        from ``[A-Za-z0-9._:-]``. It is not signed. The payee reads it on ``GET /transfers`` and in
+        ``transfer.received``. It is the PAYER's claim and not proof of anything.
+
         An ``Idempotency-Key`` is REQUIRED and one is generated unless you pass your own.
         """
         body = {"from": from_address, "to": to, "value_wei": str(value_wei), "deadline": int(deadline),
                 "v": int(v), "r": r, "s": s, "iv": int(iv), "ir": ir, "is": is_}
+        if reference is not None:
+            body["reference"] = reference
         return Transfer.from_dict(self._c._request("POST", "/v1/transfers", json_body=body,
                                                    idempotency_key=idempotency_key, idempotent=True))
 
@@ -370,13 +379,44 @@ class Payouts:
     def __init__(self, client: Kakitu) -> None:
         self._c = client
 
-    def quote(self, *, amount_kes: int, beneficiary_phone: str, beneficiary_name: str) -> PayoutQuote:
+    @staticmethod
+    def _beneficiary(beneficiary: Beneficiary | None, phone: str | None, name: str | None) -> dict[str, Any]:
+        if beneficiary is not None:
+            if phone is not None or name is not None:
+                raise ValueError("give beneficiary, or beneficiary_phone and beneficiary_name, not both")
+            return beneficiary.to_dict()
+        if phone is None or name is None:
+            raise ValueError("give a beneficiary (Beneficiary.phone/till/paybill/bank), "
+                             "or beneficiary_phone and beneficiary_name")
+        return Beneficiary.phone(phone, name).to_dict()
+
+    def request(self, *, amount_kes: int, beneficiary: Beneficiary,
+                idempotency_key: str | None = None) -> Payout:
+        """Ask a person to approve a payout BEFORE anything is signed (``POST /v1/payouts/requests``).
+
+        Needed for a payout above your ``hold_above_kes``. Nothing is priced, signed or counted
+        against your budget: the answer is ``pending_approval``, and you will receive
+        ``payout.approved`` (with ``approval_expires_at``) or ``payout.rejected``. Then
+        :meth:`quote` with that ``payout_id``, sign, and :meth:`create` before the approval lapses.
+
+        An ``Idempotency-Key`` is REQUIRED and one is generated unless you pass your own.
+        """
+        return Payout.from_dict(self._c._request(
+            "POST", "/v1/payouts/requests",
+            json_body={"amount_kes": amount_kes, "beneficiary": beneficiary.to_dict()},
+            idempotency_key=idempotency_key, idempotent=True))
+
+    def quote(self, *, amount_kes: int, beneficiary: Beneficiary | None = None,
+              beneficiary_phone: str | None = None, beneficiary_name: str | None = None,
+              payout_id: str | None = None) -> PayoutQuote:
         """Price a payout and get what to sign (``POST /v1/payouts/quote``).
 
         ``amount_kes`` is what LANDS on the beneficiary, not what leaves your wallet (that is
-        ``send_kes``). ``beneficiary_phone`` is a Kenyan mobile as ``2547xxxxxxxx`` and
-        ``beneficiary_name`` is the person being PAID — it is what their M-Pesa statement shows,
-        and it is never filled in from your own profile.
+        ``send_kes``). Name the beneficiary with a :class:`~kakitu.models.Beneficiary` (a phone,
+        till, paybill or bank account), or, as before, with ``beneficiary_phone`` and
+        ``beneficiary_name``. The name is the person being PAID and is never filled in from your
+        own profile. ``payout_id`` is the id of a request a person approved, which a payout above
+        ``hold_above_kes`` needs; the amount and beneficiary must then match what was approved.
 
         **NO Idempotency-Key is sent**: a quote creates no payout and moves no money, and the
         server mounts no idempotency on this route.
@@ -385,10 +425,11 @@ class Payouts:
         EIP-712 domains to sign under. Your daily payout cap is checked HERE, at quote time, so
         you learn you are over budget before signing anything.
         """
-        return PayoutQuote.from_dict(self._c._request(
-            "POST", "/v1/payouts/quote",
-            json_body={"amount_kes": amount_kes,
-                       "beneficiary": {"phone": beneficiary_phone, "name": beneficiary_name}}))
+        body: dict[str, Any] = {"amount_kes": amount_kes,
+                                "beneficiary": self._beneficiary(beneficiary, beneficiary_phone, beneficiary_name)}
+        if payout_id is not None:
+            body["payout_id"] = payout_id
+        return PayoutQuote.from_dict(self._c._request("POST", "/v1/payouts/quote", json_body=body))
 
     def create(self, *, quote_id: str, from_address: str, to: str, value_wei: str, deadline: int,
                v: int, r: str, s: str, iv: int, ir: str, is_: str,
@@ -408,8 +449,8 @@ class Payouts:
 
         An ``Idempotency-Key`` is REQUIRED and one is generated unless you pass your own.
 
-        A payout over your ``hold_above_kes`` comes back **held** and has NOT been sent: a person
-        will release or cancel it. That is a normal outcome, not an error — poll :meth:`get`.
+        Poll :meth:`get` for the outcome: ``dispatched`` is on its way, then ``paid`` or ``failed``.
+        A payout over your ``hold_above_kes`` must have been approved first (:meth:`request`).
         """
         body = {
             "quote_id": quote_id,
@@ -442,3 +483,37 @@ class Payouts:
         """Walks every page, yielding payouts."""
         filters.pop("cursor", None)
         return auto_paginate(lambda c: self.list(cursor=c, **filters))
+
+
+class PayoutDestinationsResource:
+    """Where your cash-outs may go, and the lock that holds you to that list. None of these moves
+    money, so none takes an ``Idempotency-Key``.
+
+    Anything that WIDENS where money can go (a new destination, turning the lock off) waits out
+    the cooling-off and raises an event and an alarm at once; anything that narrows it is
+    immediate. The lock controls cash-outs only: it does not stop KSHS transfers to other wallets.
+    """
+
+    def __init__(self, client: Kakitu) -> None:
+        self._c = client
+
+    def list(self) -> PayoutDestinations:
+        """``GET /v1/payout-destinations``: every saved place, and whether the lock binds."""
+        return PayoutDestinations.from_dict(self._c._request("GET", "/v1/payout-destinations"))
+
+    def save(self, destination: dict[str, Any]) -> PayoutDestination:
+        """``POST /v1/payout-destinations``. ``destination`` is the place alone, with no name:
+        ``Beneficiary.till(...).destination()``, or ``{"type": "till", "till": "123456"}``. Saving
+        a place twice returns the first row with its clock untouched."""
+        return PayoutDestination.from_dict(self._c._request(
+            "POST", "/v1/payout-destinations", json_body=dict(destination)))
+
+    def remove(self, destination_id: str) -> dict[str, Any]:
+        """``DELETE /v1/payout-destinations/{id}``, at once."""
+        return self._c._request("DELETE", f"/v1/payout-destinations/{quote(str(destination_id), safe='')}")
+
+    def set_lock(self, locked: bool) -> PayoutLock:
+        """``POST /v1/payout-destinations/lock``. On binds at once; off leaves it on until
+        ``payout_unlocks_at``."""
+        return PayoutLock.from_dict(self._c._request(
+            "POST", "/v1/payout-destinations/lock", json_body={"locked": bool(locked)}))
