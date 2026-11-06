@@ -668,7 +668,7 @@ HTTP 201
 
 **Removing a place** is immediate. A payout already approved to a place that has since been removed can no longer be signed, and one already dispatched is out of reach.
 
-**The lock.** `POST /v1/payout-destinations/lock` with `{"locked": true}` binds at once, and cancels an unlock in progress. `{"locked": false}` leaves the lock on until `payout_unlocks_at`, `payout_cooling_off_hours` later.
+**The lock.** Whether it binds is `payout_locked`. `POST /v1/payout-destinations/lock` with `{"locked": true}` binds at once, and cancels an unlock in progress. `{"locked": false}` leaves the lock on until `payout_unlocks_at`, `payout_cooling_off_hours` later.
 
 ```json
 HTTP 200

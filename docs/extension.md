@@ -229,9 +229,10 @@ await kakitu.pay({
 
 **The `reference` travels with the payment.** It is sent to the relay beside the signed transfer
 (it is not itself signed), and it reaches you on the transfer row ([`GET /transfers`](./transfers#get-transfers))
-and in the [`transfer.received`](./events#transferreceived) webhook. A `reference` outside the
-allowed characters or length rejects `pay()` with `INVALID_PARAMS` before the customer sees anything, so a
-bad order number cannot cost them an approval.
+and in the [`transfer.received`](./events#transferreceived) webhook. A reference with spaces or emoji (anything outside
+those characters, or longer than 64) is refused by `pay()` with `INVALID_PARAMS` before the customer sees
+anything, so a bad order number cannot cost them an approval. Before this change such a reference was
+shown and echoed but never sent; sanitise it on your page first.
 
 **A reference is the payer's claim, not proof.** Anybody can pay your address with any reference.
 Use it to find the order, then check the amount and the recipient against that order.

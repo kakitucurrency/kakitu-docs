@@ -7,6 +7,7 @@
 import { describe, it, expect } from "vitest";
 import vectors from "./vectors.json" with { type: "json" };
 import {
+  type Payout, type PayoutQuote,
   EVENT_TYPES, Kakitu, SERVER_ERROR_CODES,
   type EventType, type PayoutBeneficiaryInput, type SignedTransfer,
 } from "../src/index.js";
@@ -131,5 +132,15 @@ describe("event types", () => {
       "payout_destinations_full", "bank_unavailable", "unknown_bank", "account_not_found", "insufficient_balance",
     ]) expect(SERVER_ERROR_CODES).toContain(c);
     expect(SERVER_ERROR_CODES.length).toBe(42);
+  });
+});
+
+describe("response beneficiaries stay readable the old way", () => {
+  it("still compiles `payout.beneficiary.phone` on a Payout and a PayoutQuote", () => {
+    // Compile-level: this file is typechecked by `tsc --noEmit`. A union without `phone?` fails here.
+    const phoneOf = (p: Payout, q: PayoutQuote): [string | undefined, string | undefined, string] =>
+      [p.beneficiary.phone, q.beneficiary.phone, p.beneficiary.name];
+    const till = { beneficiary: { type: "till", till: "123456", name: "Jane Stores" } } as Payout;
+    expect(phoneOf(till, till as unknown as PayoutQuote)[0]).toBeUndefined();
   });
 });

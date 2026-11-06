@@ -84,8 +84,13 @@ const FIELDS = {
   "docs/pricing.md": ["fee_kes", "credited_kes"],
   "docs/collections.md": ["fee_kes", "credited_kes"],
   "docs/limits.md": ["deposit_max_per_order_usd"],
-  "docs/extension.md": ["ebcjlgfjbbgoldipdhbcmciebdiadifg", "Chrome Web Store", "reference"],
+  "docs/extension.md": ["ebcjlgfjbbgoldipdhbcmciebdiadifg", "reference"],
   "docs/errors.md": ["deposits_paused"],
+};
+
+// Prose that must be on the page, as plain text (these are sentences, not fields).
+const PHRASES = {
+  "docs/extension.md": ["Chrome Web Store", "is refused", "spaces or emoji"],
 };
 
 // Words that must not appear anywhere in the docs or the spec.
@@ -107,12 +112,45 @@ const docsDir = join(root, "docs");
 const pages = readdirSync(docsDir).filter((f) => f.endsWith(".md")).map((f) => `docs/${f}`);
 const text = Object.fromEntries([...pages, "static/openapi.yaml"].map((p) => [p, read(p)]));
 
-const mentions = (page, word) => text[page].includes("`" + word + "`") || text[page].includes(word);
+// What counts as "documented". A bare substring would let `phone`, `name` or `status` pass on any
+// page, so each kind of thing has to appear in the form a reader looks it up by.
+//
+//   field  an inline code span (`beneficiary.phone`) or the first cell of a table row, on the page
+//          that owns it. Whole-token: `phone_in_use` does not document `phone`.
+//   route  as a field, or inside a fenced code block, or in a heading (a route has spaces or slashes)
+//   event  a heading or a table row naming it in code formatting, on the page
+const esc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const tok = (w) => "(?<![\\w])" + esc(w) + "(?![\\w])";
+const codeSpans = (body) => [...body.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]);
+const fenced = (body) => [...body.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1]);
+const hasField = (page, w) => {
+  const re = new RegExp(tok(w));
+  if (codeSpans(text[page]).some((c) => re.test(c))) return true;
+  return new RegExp("^\\|\\s*" + esc(w) + "\\s*\\|", "m").test(text[page]);
+};
+const isRoute = (w) => /[\s/]/.test(w);
+const mentions = (page, w) => {
+  if (hasField(page, w)) return true;
+  if (!isRoute(w)) return false;
+  const re = new RegExp(tok(w));
+  return fenced(text[page]).some((c) => re.test(c)) || new RegExp("^#+ .*" + tok(w), "m").test(text[page]);
+};
+const hasEventEntry = (page, e) => {
+  const heading = new RegExp("^#+ .*`" + esc(e) + "`", "m");
+  const row = new RegExp("^\\|\\s*`" + esc(e) + "`\\s*\\|", "m");
+  return heading.test(text[page]) || row.test(text[page]);
+};
 
-// events: on the Events page, the Webhooks page, and in the spec
+// events: a heading or table row on the Events and Webhooks pages, a webhook key and an enum entry in the spec
 for (const e of EVENTS) {
-  for (const page of ["docs/events.md", "docs/webhooks.md", "static/openapi.yaml"]) {
-    if (!text[page].includes(e)) fail(`${page}: event ${e} is not documented`);
+  for (const page of ["docs/events.md", "docs/webhooks.md"]) {
+    if (!hasEventEntry(page, e)) fail(`${page}: event ${e} has no heading or table row`);
+  }
+  if (!new RegExp("^  " + esc(e) + ":\\s*$", "m").test(text["static/openapi.yaml"])) {
+    fail(`static/openapi.yaml: event ${e} is not a webhook entry`);
+  }
+  if (!new RegExp("^\\s+- " + esc(e) + "\\s*$", "m").test(text["static/openapi.yaml"])) {
+    fail(`static/openapi.yaml: event ${e} is not in the EventType enum`);
   }
 }
 
@@ -154,6 +192,10 @@ for (const p of [
 }
 for (const w of ["reference", "credited_kes", "payout_locked", "approval_expires_at", "bank_code"]) {
   if (!text["static/openapi.yaml"].includes(w)) fail(`static/openapi.yaml: ${w} is missing`);
+}
+
+for (const [page, phrases] of Object.entries(PHRASES)) {
+  for (const ph of phrases) if (!text[page].includes(ph)) fail(`${page}: the page must say "${ph}"`);
 }
 
 // words that must not be there
@@ -198,7 +240,12 @@ if (serverDir) {
 
 if (failures.length) {
   console.error(`check-docs: ${failures.length} problem(s)\n`);
+  if (!serverDir) console.error("check-docs: server comparison: SKIPPED (KAKITU_SERVER_DIR is not set)\n");
   for (const f of failures) console.error("  - " + f);
   process.exit(1);
 }
-console.log(`check-docs: ok (${EVENTS.length} events, ${ERROR_CODES.length + WALLET_CODES.length} error codes, ${PAYOUT_STATES.length} payout states${serverDir ? ", checked against the server" : ""})`);
+const ran = serverDir
+  ? "server comparison: RAN against " + serverDir
+  : "server comparison: SKIPPED (KAKITU_SERVER_DIR is not set), so the lists in this file were not checked against the server";
+console.log(`check-docs: ok (${EVENTS.length} events, ${ERROR_CODES.length + WALLET_CODES.length} error codes, ${PAYOUT_STATES.length} payout states)`);
+console.log(`check-docs: ${ran}`);

@@ -336,7 +336,18 @@ export type PayoutBeneficiaryInput =
  * What you GET BACK as `beneficiary`. A phone payout's has no `type`, exactly as before types
  * existed, so test `type === undefined` for phone rather than for the string "phone".
  */
-export type PayoutBeneficiary = PayoutBeneficiaryInput;
+export interface PayoutBeneficiary {
+  /** Absent on a phone payout. */
+  type?: PayoutDestinationType;
+  /** Present on a phone payout and ABSENT on a till, paybill or bank one (the server omits it). */
+  phone?: string;
+  till?: string;
+  paybill?: string;
+  /** A paybill's account, or a bank account number. */
+  account?: string;
+  bank_code?: string;
+  name: string;
+}
 
 /** One EIP-712 domain to sign under. */
 export interface EIP712Domain {
