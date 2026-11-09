@@ -31,6 +31,8 @@ Every `/v1/` endpoint answers an error with one envelope:
 | `merchant_not_approved` | 403 | The merchant is not `approved`. An operator must approve it first. |
 | `merchant_suspended` | 403 | The merchant is suspended. |
 | `merchant_name_frozen` | 409 | business_name cannot be changed after review. Needs an operator. |
+| `open_loan` | 409 | `POST /v1/merchants` only: this wallet has an open Kakitu loan, so it cannot register as a merchant until the loan is closed. Nothing was saved. |
+| `account_blocked` | 403 | Kakitu has blocked a wallet this request touches (yours, or on a transfer the recipient), or the money is on hold. **Nothing was charged or sent.** Contact support; retrying will not help. |
 | `idempotency_key_required` | 400 | A money-moving POST has no Idempotency-Key. |
 | `idempotency_key_invalid` | 400 | The Idempotency-Key is longer than 255 characters. |
 | `idempotency_key_reuse` | 409 | This key was already used with a different request. |
@@ -45,7 +47,7 @@ Every `/v1/` endpoint answers an error with one envelope:
 | `rate_limited` | 429 | Too many requests per minute, too many charges per minute, too many prompts, or too many transfers this hour. See [Rate limits](./rate-limits). |
 | `charge_not_found` | 404 | No such charge for this merchant. |
 | `reference_reused` | 409 | This merchant already has a charge with that reference. |
-| `rail_unavailable` | 503 | The thing you asked for is temporarily unavailable, or a payout's capacity is short for now. Retry shortly. On a route that moves money it means **nothing was sent**. |
+| `rail_unavailable` | 503 | The thing you asked for is temporarily unavailable: the partner, our cash-out capacity, or our own check of whether a wallet is blocked. Retry shortly. On a route that moves money it means **nothing was sent** and no handset was rung. |
 | `order_not_found` | 404 | No such order. See [Orders](./orders). |
 | `event_not_found` | 404 | No such webhook event. See [Events](./events). |
 | `payouts_disabled` | 403 | Payouts are not switched on for this merchant. See [Payouts](./payouts#payouts-are-off-by-default). |
@@ -68,7 +70,7 @@ Every `/v1/` endpoint answers an error with one envelope:
 | `identity_verification_required` | 403 | The amount needs the customer's identity verified first. |
 | `internal` | 500 | Something went wrong on our side. Quote the request_id. |
 
-Forty-two codes, and that is all of them.
+Forty-four codes, and that is all of them.
 
 Seven answer the same way for a thing that does not exist and a thing that belongs to somebody else: `merchant_not_registered`, `charge_not_found`, `order_not_found`, `event_not_found`, `payout_not_found`, `payout_quote_not_found` and `payout_destination_not_found`. Same status, same code, same sentence, deliberately. An error that told the two apart would turn the endpoint into a way of asking whether somebody else's id is real.
 
@@ -78,15 +80,18 @@ Seven answer the same way for a thing that does not exist and a thing that belon
 
 **Paying money out is a different permission from collecting it in**, on different settings and a different counter. A payout cap refusal must never arrive as `daily_cap_exceeded`: an integrator who saw that would go and ask an operator to raise their *collection* cap, the operator would raise the wrong number, nothing would change, and the real limit would stay a mystery. Branch on the payout codes when you are paying out. See [Payouts](./payouts#payout-caps-are-not-your-collection-caps).
 
-The whole code set above is final and will not change under you. Codes are never reused and never renamed: a code you branch on today means the same thing tomorrow.
+Codes are never reused and never renamed: a code you branch on today means the same thing tomorrow. New codes can be added (`open_loan` and `account_blocked` were added in November 2026), so treat a code you do not recognise by its HTTP status, and log it.
 
 ## Codes that are not in `/v1`
 
-The wallet's own routes (`/ramp/*`, which the Kakitu app and extension call) answer in the older shape, `{"error": "<code>"}`, and a few of their codes have no `/v1` equivalent. The one worth knowing if you cash in or out for a customer:
+The wallet's own routes (`/ramp/*`, which the Kakitu app and extension call) answer in the older shape, `{"error": "<code>"}`, and a few of their codes have no `/v1` equivalent. The ones worth knowing if you cash in or out for a customer:
 
 | `error` | HTTP | Meaning |
 |---|---|---|
 | `deposits_paused` | 409 | M-Pesa top-ups are paused for a short while. **Nothing was charged**, no prompt was sent, and the customer is texted when top-ups reopen. Not a failure to retry in a loop. |
+| `treasury_short` | 409 | The hot treasury cannot pay this cash-out right now. Refused at the quote or the confirm, before anything was signed or taken. Try a smaller amount (`cashout_capacity_kes` in [`GET /config`](https://walletapi.kakitu.org/config)) or later. |
+| `account_blocked` | 403 | Kakitu has blocked this wallet, or the other wallet on a transfer. Nothing moved. |
+| `cashout_on_hold` | 403 | Money paid in from an M-Pesa number new to this wallet can be held for a while before it may leave. Nothing moved. |
 
 On those routes `insufficient_balance` is the same fact as the `/v1` code above, and `rail_unavailable` is not used: a partner that fails is `502 provider_error`.
 
@@ -105,9 +110,9 @@ Here `error` is a string and `reason` is one of `missing_auth_headers`, `bad_tim
 
 | Situation | What to do |
 |---|---|
-| `503` (`idempotency_unavailable`, `rail_unavailable`) | Retry with backoff, same `Idempotency-Key`. |
+| `503` (`idempotency_unavailable`, `rail_unavailable`) | Retry with backoff, same `Idempotency-Key`. On a charge, a `rail_unavailable` can also have closed the `reference`: see [Collections](./collections#a-503-on-a-charge). |
 | `409 idempotency_key_in_progress` | Wait, retry with the same key. |
 | `429` | Back off. See [Rate limits](./rate-limits). |
-| `409 idempotency_key_acted` | **Do not retry**, with this key or a new one. The money may already have moved — check state first. On [transfers](./transfers#the-two-answers-that-are-not-retry) and [payouts](./payouts#the-one-answer-that-is-not-retry) you can get this on the first attempt. |
+| `409 idempotency_key_acted` | **Do not retry**, with this key or a new one. The money may already have moved — check state first. On [charges](./collections#idempotency_key_acted), [transfers](./transfers#the-two-answers-that-are-not-retry) and [payouts](./payouts#the-one-answer-that-is-not-retry) you can get this on the first attempt. |
 | `reference_reused` after a refused charge | Same key, **new reference**. |
 | `4xx` otherwise | Fix the request. Retrying will not help. |

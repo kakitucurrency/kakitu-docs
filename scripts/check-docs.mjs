@@ -34,7 +34,7 @@ const EVENTS = [
 
 const ERROR_CODES = [
   "invalid_request", "unauthorized", "merchant_not_registered", "merchant_not_approved",
-  "merchant_suspended", "merchant_name_frozen", "idempotency_key_required", "idempotency_key_invalid",
+  "merchant_suspended", "merchant_name_frozen", "open_loan", "account_blocked", "idempotency_key_required", "idempotency_key_invalid",
   "idempotency_key_reuse", "idempotency_key_in_progress", "idempotency_key_acted",
   "idempotency_unavailable", "request_too_large", "amount_below_minimum", "amount_above_maximum",
   "daily_cap_exceeded", "payer_velocity_exceeded", "rate_limited", "charge_not_found",
@@ -102,7 +102,9 @@ const FORBIDDEN = [
   [/pretium/i, "names a rail"],
   [/fonbnk/i, "names a rail"],
   [/stolen[- ]key|theft protection|against theft/i, "the payout lock controls where cash-outs go; it is not theft protection"],
-  [/\bthirty-one codes\b/i, "the closed set is forty-two codes"],
+  [/\bthirty-one codes\b/i, "the closed set is forty-four codes"],
+  [/\bnot open yet\b|when collections open|collections and payouts are not open/i,
+    "merchant collections and payouts are switched on in production (2026-10-30); payouts are per merchant"],
   [/there is no `payout\.paid`|no `payout\.paid` or `payout\.failed`/i, "payout.paid and payout.failed are raised"],
 ];
 
@@ -165,7 +167,7 @@ for (const c of ERROR_CODES) {
     fail(`static/openapi.yaml: error code ${c} is not in the ErrorCode enum`);
   }
 }
-const countWord = { 42: "forty-two" };
+const countWord = { 44: "forty-four" };
 if (!text["docs/errors.md"].toLowerCase().includes(countWord[ERROR_CODES.length])) {
   fail(`docs/errors.md: the code count must say ${countWord[ERROR_CODES.length]} (${ERROR_CODES.length} codes)`);
 }
