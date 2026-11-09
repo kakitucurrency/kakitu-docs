@@ -12,19 +12,22 @@ A collection (a *charge*) asks a payer's phone to approve an M-Pesa payment. Whe
 
 **You are credited less than `amount`.** `amount` is what the payer is asked for. Our payment partner converts those shillings to USDC at its rate and takes its fee, and we mint KSHS against the USDC that arrives, at our rate net of the mint spread (`mint_spread_bps` in [`GET /config`](https://walletapi.kakitu.org/config)). The KSHS minted to you is the credit: never more than `amount`, and usually a little less. Once the charge is paid, **the charge and its webhooks carry both numbers**: `fee_kes`, what the collection cost, and `credited_kes`, what reached your wallet (`amount` less `fee_kes`), in whole shillings. Both are `null` until the charge is paid. See [Pricing, limits and settlement](./pricing).
 
-:::warning Collections are not open yet
-Collections are switched off for every merchant. `POST /v1/charges` answers `503 rail_unavailable`
-and nobody is prompted. This page documents the final shapes so you can build against them; to
-be paid today, accept KSHS directly (see the [quickstart](./quickstart#2-take-a-payment)).
+:::info Collections are on for approved merchants
+Merchant collections were switched on in production on 30 October 2026. An **approved** merchant
+can create charges today, within its caps (see [Limits](#limits)). A merchant that is not approved
+is refused before anything happens. Collections stay a platform switch an operator can turn off;
+while it is off, `POST /v1/charges` answers `503 rail_unavailable` and nobody is prompted.
 :::
 
 ## Operator approval is required
 
 **Collections only work for an approved merchant.** A `pending`, `rejected` or `suspended` merchant is refused (`merchant_not_approved` or `merchant_suspended`, both 403) before anything else happens.
 
-The reason is plain: a collection **rings a stranger's handset with a real M-Pesa PIN prompt**. That prompt is issued by our payment partner. We pass your `business_name` to the partner as the account-holder name, and the prompt **may** show it, but what the prompt displays is the partner's decision: the payer must be able to recognise the amount and the moment, not only a name. Without a human check, the endpoint would be a phishing tool. So a Kakitu operator reviews every merchant first. See [Going live](./going-live).
+The reason is plain: a collection **rings a stranger's handset with a real M-Pesa PIN prompt**. That prompt is issued by our payment partner, and your `business_name` is not sent with it today, so the payer has to recognise the amount and the moment, not your name. Tell them a prompt is coming before you create the charge. Without a human check, the endpoint would be a phishing tool. So a Kakitu operator reviews every merchant first. See [Going live](./going-live).
 
-Collections must also be switched on for the platform by an operator. While they are off, `POST /v1/charges` answers `503 rail_unavailable` before anything is written: no handset is rung, no charge row exists, and the `reference` stays free.
+Collections are also a platform-wide switch. It is on today; if an operator turns it off, `POST /v1/charges` answers `503 rail_unavailable` before anything is written: no handset is rung, no charge row exists, and the `reference` stays free.
+
+**A blocked wallet is refused first.** If Kakitu has blocked your merchant wallet, `POST /v1/charges` answers `403 account_blocked` before the body is read, and nobody is prompted.
 
 ## Running these examples
 
@@ -455,20 +458,25 @@ A charge only moves forward. `pending` can also stay `pending` if the rail accep
 
 ### When a retry needs a new reference as well
 
-If the payment rail refuses a charge **before** a handset is rung (for example `amount_below_minimum`, `amount_above_maximum`, or `rate_limited` for too many prompts to that payer), the key is released and you may reuse it. But the charge row and its `reference` were already written, so that **reference is now closed**. A retry must use **the same key and a new `reference`**, otherwise you get `409 reference_reused`. The error message says "retry with a new reference" when this applies.
+If the payment rail refuses a charge **before** a handset is rung (for example `amount_below_minimum`, `amount_above_maximum`, `rate_limited` for too many prompts to that payer, or `rail_unavailable` because the rail cannot take a collection right now), the key is released and you may reuse it. But the charge row and its `reference` were already written (the charge is left `failed`), so that **reference is now closed**. A retry must use **the same key and a new `reference`**, otherwise you get `409 reference_reused`. The error message says "retry with a new reference" when this applies.
 
-Refusals made earlier, by Kakitu's own checks (not approved, malformed request, a reference you already used, your daily cap, per-charge maximum or per-minute rate), write no charge row, so the reference stays free. Fix the cause and retry.
+Refusals made earlier, by Kakitu's own checks (not approved, a blocked wallet, malformed request, a reference you already used, your daily cap, per-charge maximum or per-minute rate, the payer's daily limits, or collections switched off), write no charge row, so the reference stays free. Fix the cause and retry.
 
-### A 503 after the rail was asked
+### A 503 on a charge
 
-Once collections are on, `503 rail_unavailable` can also come **after** the charge row was written and the rail was asked to prompt the payer. Then the `reference` is consumed, and the payer's handset **may already have rung**: a rail that times out cannot tell us whether its prompt went out.
+`503 rail_unavailable` on this route always means **nobody was prompted**. It comes in two kinds, and the difference is only whether a charge row was written:
 
-So **do not answer a `503` by retrying with a new `reference`** until you have checked. Read `GET /v1/charges?reference=<your reference>`: if a charge comes back, that attempt exists and may still be paid; follow its status rather than prompting the payer again. Only when no charge exists for that reference is a fresh attempt safe.
+- **Before the row** (collections switched off, our limiter or block check unavailable): the `reference` stays free.
+- **After the row, before the prompt** (the rail refused before dispatching anything): the `reference` is closed, as above.
+
+You cannot tell them apart from the status, so **check before choosing a reference**: read `GET /v1/charges?reference=<your reference>`. If a charge comes back (it will be `failed`), use a new reference; if none does, the old one is still free.
+
+An outcome we cannot determine (the request may have reached the rail and the payer's handset may be ringing) is never a `503`. It is `409 idempotency_key_acted`, below.
 
 ### idempotency_key_acted
 
-If the original request reached the rail, so a handset may have been rung, but the outcome could not be recorded, every retry in the 24-hour window gets `409 idempotency_key_acted`. **Do not retry with this key or a new one.** Fetch the charge by `reference` or contact support first. Sending again could prompt the payer twice.
+If the request may have reached the rail, so a handset may have been rung, but the outcome is not known, you get `409 idempotency_key_acted`, **possibly on the first attempt**, and every retry with that key in the 24-hour window gets it too. The message names the charge id. **Do not retry with this key or a new reference.** Read the charge (`GET /v1/charges/{id}` or by `reference`): if the payer pays, it moves to `paid` by itself. Sending again could prompt the payer twice.
 
 ## Limits
 
-Per-merchant daily and per-charge caps, a per-minute rate and a per-payer daily prompt limit apply. See [Rate limits](./rate-limits).
+Per-merchant daily and per-charge caps, a per-minute rate, and two per-payer daily limits apply. See [Rate limits](./rate-limits#limits-that-apply-to-collections) for the codes and today's platform values. The largest single charge is also bounded by the collection partner's per-order ceiling, `deposit_max_per_order_usd` in [`GET /config`](https://walletapi.kakitu.org/config), which is lower than the default per-charge cap: see [Pricing, limits and settlement](./pricing#limits).

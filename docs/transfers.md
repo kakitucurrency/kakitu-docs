@@ -708,6 +708,7 @@ The forwarder also exposes `hashRelay(owner, to, value, deadline, nonce)` as a v
 | `merchant_not_registered` | 404 | This wallet has not registered. |
 | `merchant_not_approved` | 403 | Registered, not yet approved. |
 | `merchant_suspended` | 403 | The merchant is suspended, **or** either address is frozen on the token. |
+| `account_blocked` | 403 | Kakitu has blocked your wallet or the recipient's, or money in your wallet is on hold. **Nothing was sent.** Contact support. |
 | `amount_below_minimum` | 400 | Below the smallest transfer the relayer carries. |
 | `amount_above_maximum` | 400 | Above the largest single transfer allowed. `relay_max_per_tx_kes` in `GET /config` is that ceiling. |
 | `daily_cap_exceeded` | 429 | This wallet has used its transfer allowance for today. |
@@ -738,7 +739,7 @@ Most refusals are safe to retry. These are not, and they are the ones to write c
 
 ### What happens to your key on a refusal
 
-A key is **released** by a refusal that provably happened before anything was signed or broadcast — a bad body, a frozen account, an amount over or under the limits, a daily cap, the relayer having no ETH, a would-revert. Retry those with the **same** key once you have fixed the cause.
+A key is **released** by a refusal that provably happened before anything was signed or broadcast — a bad body, a frozen or blocked account, an amount over or under the limits, a daily cap, the relayer having no ETH, a would-revert. Retry those with the **same** key once you have fixed the cause.
 
 A key is **held** by anything else, including an unknown outcome. That is deliberate: freeing a key after money may have moved makes the retry send it again, while holding one only costs you a new key.
 

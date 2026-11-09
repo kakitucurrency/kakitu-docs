@@ -46,13 +46,16 @@ In the app: **Withdraw to M-Pesa**, then the amount and where it goes.
 |---|---|
 | An M-Pesa number | The number. It does not have to be the profile's. |
 | A till (Buy Goods) | The till number, 5 to 9 digits. |
-| A paybill | The paybill number, 5 to 9 digits, and the account number. |
+
+Cashing out from the app to a **paybill or a bank account is closed** for now, for every wallet; the server refuses it. A merchant can pay a paybill or bank through the [payouts API](./payouts#saved-destinations-and-the-lock) once payouts are on for it.
 
 You type the shillings that must **land**. The app quotes the KSHS it will take from your wallet, the fee, and counts down how long the price holds — a few minutes; after that, ask for a new price. Nothing leaves until you approve with your PIN.
 
 ### How much at a time
 
-Between **KES 20 and KES 33,333 per withdrawal** today. That band comes from our cash-out partner and is published live as `withdraw_min_per_order_kes` and `withdraw_max_per_order_kes` in [`GET /config`](https://walletapi.kakitu.org/config); read it rather than hard-coding it. A larger sum is several withdrawals. A large amount may ask you to verify your identity first.
+Between **KES 20 and KES 33,333 per withdrawal** landed, on 9 November 2026. That band comes from our cash-out partner and is published live as `withdraw_min_per_order_kes` and `withdraw_max_per_order_kes` in [`GET /config`](https://walletapi.kakitu.org/config); read it rather than hard-coding it. A larger sum is several withdrawals. A large amount may ask you to verify your identity first.
+
+**The treasury can be the tighter limit.** `cashout_capacity_kes` in the same `/config` is the most KSHS one cash-out may send right now that our hot treasury can back (KSHS 9,045 when this was written). A withdrawal over it is refused at the quote, `treasury_short`, before anything is signed or taken; try a smaller amount or later.
 
 Each withdrawal is also one gasless transfer from your wallet, so it counts against the **50 relayed transfers a day** each address gets. See [Pricing, limits and settlement](./pricing).
 
@@ -69,7 +72,7 @@ On a typical amount, expect a few percent in all. We would rather you saw it on 
 
 **Not instant.** Usually a few minutes. Your KSHS moves to our treasury first; then we fund the partner and the partner pays M-Pesa, which is a job that runs after you have confirmed, not during the request. The app shows the order as on its way until M-Pesa confirms.
 
-It can take longer. If the hot treasury that funds cash-outs is short, the order **waits** until an operator refills it: your shillings are held in the treasury, not lost, and the order is either completed or the shillings are returned. If a withdrawal is still going through after an hour, write to kakitu@kakitu.org with the reference the app shows. **Do not send it again** while it is still going through.
+It can take longer. The treasury is checked at the quote and again when you confirm, so a shortfall normally refuses the withdrawal before anything moves. If it runs short in the moment between your confirm and the payout, the order **waits** until an operator refills it: your shillings are held in the treasury, not lost, and the order is either completed or the shillings are returned. If a withdrawal is still going through after an hour, write to kakitu@kakitu.org with the reference the app shows. **Do not send it again** while it is still going through.
 
 ## USDC instead of M-Pesa
 

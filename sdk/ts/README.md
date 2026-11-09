@@ -1,6 +1,6 @@
 # @kakitu/sdk (TypeScript)
 
-A client for the Kakitu developer API. M-Pesa collections and payouts are not open yet ([status](https://developer.kakitu.org/docs/intro)); registration, transfers and the reads work today. The Kakitu API authenticates every request by signing it with your wallet key instead of using a bearer token. This SDK does the signing, so you never build a signature, a timestamp or a header yourself.
+A client for the Kakitu developer API. M-Pesa collections work for an approved merchant, and payouts once an operator switches them on for yours ([status](https://developer.kakitu.org/docs/intro)); registration and the reads work for any signing wallet, and transfers once you are approved. The Kakitu API authenticates every request by signing it with your wallet key instead of using a bearer token. This SDK does the signing, so you never build a signature, a timestamp or a header yourself.
 
 ## 60-second quickstart
 

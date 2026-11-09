@@ -1,6 +1,6 @@
 # Kakitu Python SDK
 
-A client for the Kakitu developer API. M-Pesa collections and payouts are not open yet ([status](https://developer.kakitu.org/docs/intro)); registration, transfers and the reads work today. Kakitu authenticates by **signing every request with your wallet key**, not with a bearer token. This SDK does the signing for you, so you never build a signature, a timestamp or a body hash yourself.
+A client for the Kakitu developer API. M-Pesa collections work for an approved merchant, and payouts once an operator switches them on for yours ([status](https://developer.kakitu.org/docs/intro)); registration and the reads work for any signing wallet, and transfers once you are approved. Kakitu authenticates by **signing every request with your wallet key**, not with a bearer token. This SDK does the signing for you, so you never build a signature, a timestamp or a body hash yourself.
 
 ## 60-second quickstart
 

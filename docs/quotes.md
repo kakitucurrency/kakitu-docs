@@ -197,7 +197,7 @@ var_dump(array_key_exists('quote_id', $deposit));   // false
 | `amount_kes` | integer, required | Whole shillings, at least 1. What it means depends on `type` — see below. |
 | `phone` | string | The payer's number, for a deposit. |
 | `beneficiary` | object | **Required for a withdrawal.** `{ "channel": …, "number": …, "reference": … }`. |
-| `beneficiary.channel` | string | Exactly one of `mobile_money` (an M-Pesa number, `2547…`), `buy_goods` (a till number, 4 to 10 digits) or `paybill` (a paybill number, 4 to 10 digits). Anything else, `mpesa` included, is `400 invalid_request`. |
+| `beneficiary.channel` | string | Exactly one of `mobile_money` (an M-Pesa number, `2547…`), `buy_goods` (a till number, 5 to 9 digits) or `paybill` (a paybill number, 5 to 9 digits). Anything else, `mpesa` included, is `400 invalid_request`. **`paybill` withdrawals are closed for every wallet at the moment**, as in the app; such a quote is refused (today with `500 internal` rather than a clearer code), so do not offer it. |
 | `beneficiary.number` | string | The phone number, till number or paybill number, as the channel requires. |
 | `beneficiary.reference` | string | The account reference. **Required for `paybill`** (1 to 40 of letters, digits, space, `.`, `_`, `-`); not used by the other two channels. |
 
@@ -268,8 +268,10 @@ If you want a price you can **act on**, that is [`POST /v1/payouts/quote`](./pay
 | `amount_above_maximum` | 400 | Over the band. |
 | `profile_required` | 409 | This wallet has no profile yet: a phone number and name, which the cash-out partner needs on every order. There is no `/v1` route for it; save one with `POST /profile` or in the Kakitu app. See [Cash out](./cash-out#2-a-profile-once). |
 | `identity_verification_required` | 403 | This amount needs the customer's identity verified first. |
+| `account_blocked` | 403 | Kakitu has blocked this wallet. Nothing was quoted. |
+| `insufficient_balance` | 400 | Withdrawal only: the wallet does not hold the KSHS this withdrawal would send. Nothing was quoted. |
 | `rate_limited` | 429 | Too many requests from this wallet: the shared per-minute limit, or the **30 quotes a minute** this route allows on its own. `Retry-After` says how long to wait. |
-| `rail_unavailable` | 503 | Pricing is temporarily unavailable. Retry shortly. |
+| `rail_unavailable` | 503 | Pricing is temporarily unavailable, M-Pesa deposits are briefly paused, cash-out capacity is short for this amount (see `cashout_capacity_kes` in `GET /config`), or the wallet could not be checked. Nothing was quoted. Retry shortly, or with a smaller amount. |
 | `internal` | 500 | Something went wrong on our side. Quote the `request_id`; do not retry in a loop. |
 
 A `500` here is worth treating differently from a `503`. `rail_unavailable` means try again shortly. `internal` can mean our own arithmetic disagreed with itself, and retrying that gets the same answer faster.

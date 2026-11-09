@@ -169,16 +169,16 @@ The response:
 HTTP 200
 {
   "withdrawal": {
-    "min_kes": 200,
-    "max_kes": 60000,
+    "min_kes": 20,
+    "max_kes": 33333,
     "source": "live"
   },
   "payout": {
     "enabled": true,
-    "max_kes": 50000,
-    "daily_cap_kes": 200000,
+    "max_kes": 20000,
+    "daily_cap_kes": 50000,
     "hold_above_kes": 20000,
-    "remaining_today_kes": 143500,
+    "remaining_today_kes": 43500,
     "note": "max_kes, daily_cap_kes and hold_above_kes are exact: they are read from the same place the limits are enforced. remaining_today_kes is a snapshot and may already be lower by the time you read it, because another payout of yours can land in between; it is null when it could not be read, which does not mean zero. The day resets at midnight East Africa Time. A payout above hold_above_kes needs a person's approval before it can be signed: ask at POST /v1/payouts/requests, which is a normal step and not an error."
   },
   "max_staleness_seconds": 300,
@@ -210,6 +210,8 @@ Today it is `300`. Do not hardcode that: read it. If an operator widens the refr
 **A [quote](./quotes) decides whether an amount is accepted. This band does not.**
 
 Use it to shape a form — to grey out an obviously impossible amount, or to tell someone the rough range before they type. Do not use it to promise that a particular amount will go through, and do not treat a quote that disagrees with it as a bug. The quote is live; this is a cache.
+
+The band also leaves out what our hot treasury can pay right now. That is `cashout_capacity_kes` in [`GET /config`](https://walletapi.kakitu.org/config), in KSHS sent rather than shillings landed, and when it is lower than `max_kes` it is the limit that binds: a withdrawal or payout over it is refused at the quote with `503 rail_unavailable`, before anything moves.
 
 ## `payout` — your own limits {#payout-limits}
 

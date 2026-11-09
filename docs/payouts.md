@@ -9,7 +9,7 @@ import TabItem from '@theme/TabItem';
 # Payouts
 
 :::warning Payouts are off until an operator switches them on for you
-A merchant starts with payouts off. Until we switch them on for yours, every route that prices or sends a payout answers `403 payouts_disabled`. To take your own takings out meanwhile, [cash out](./cash-out) from the Kakitu app.
+Payouts are switched on for the platform (since 30 October 2026), but each merchant starts with its own payout switch off. Until we switch it on for yours, every route that prices or sends a payout answers `403 payouts_disabled`. To take your own takings out meanwhile, [cash out](./cash-out) from the Kakitu app.
 :::
 
 A payout sends shillings **out** — from your KSHS balance to an M-Pesa number, a till, a paybill or a bank account. You price it, you sign it with your own key, and we hand the signed result to the partner that pays the beneficiary.
@@ -18,7 +18,7 @@ It is the opposite direction from [collections](./collections), and it is delibe
 
 ## Payouts are off by default
 
-**Read this before you write any of it.** Payouts are off for everybody until an operator switches them on, and off for your merchant until an operator switches them on for you. Both switches must be on. While either is off, the two routes that price and send a payout — `POST /v1/payouts/quote` and `POST /v1/payouts` — answer an approved merchant with:
+**Read this before you write any of it.** There are two switches and both must be on: the platform's, which an operator controls for everybody (on today), and your merchant's own, which is off until an operator switches it on for you. While either is off, the two routes that price and send a payout — `POST /v1/payouts/quote` and `POST /v1/payouts` — answer an approved merchant with:
 
 ```json
 HTTP 403
@@ -593,6 +593,8 @@ HTTP 202
 
 **A payout above your `hold_above_kes` is decided by a person before you sign anything.** You ask, wait for the answer, and only then quote and sign. `hold_above_kes` is yours to read at [`GET /v1/limits`](./limits#payout-limits); "above" is strict, so a payout exactly at it goes straight through, and a threshold of zero sends everything to a person.
 
+**With today's platform defaults this step does not come up.** On 9 November 2026 the platform's hold threshold was KES 20,000 and its largest single payout was also KES 20,000, so a payout above the threshold is refused as `payout_amount_above_maximum` before approval is considered. Approve-first applies once an operator gives your merchant a per-payout maximum above its hold threshold. Read both numbers at [`GET /v1/limits`](./limits#payout-limits); the amounts in the examples below are illustrative.
+
 It is this way round because the other way cannot work. A signature you make today stops being relayable in about ten minutes, and the price behind it lives for about two; a person working a review queue works in minutes or hours. A request holds nothing that can go stale, so there is no clock on the person at all.
 
 1. **Ask.** `POST /v1/payouts/requests` with the same body as a quote (`amount_kes` and `beneficiary`), and an `Idempotency-Key`. Nothing is priced, signed or counted against your budget. The answer is `202` with `"status": "pending_approval"`.
@@ -992,8 +994,9 @@ Read it. **That sentence is where a wait is explained to you**, and a payout tha
 | `unknown_bank` | 400 | `bank_code` is not a bank we can pay. |
 | `account_not_found` | 422 | The bank does not hold that account, or no longer under the name it was saved with. |
 | `insufficient_balance` | 400 | Your wallet does not hold the KSHS this payout burns. Nothing was quoted. |
+| `account_blocked` | 403 | Kakitu has blocked your wallet, or money in it is on hold. Nothing was quoted. Contact support. |
 | `rate_limited` | 429 | Too many requests, or too many bank account lookups, from this wallet. |
-| `rail_unavailable` | 503 | Pricing is temporarily unavailable, or we could not count your budget. Nothing was priced. Retry shortly. |
+| `rail_unavailable` | 503 | Pricing is temporarily unavailable, payout capacity is short right now, or we could not count your budget or check your wallet. Nothing was priced. Retry shortly, or with a smaller amount. |
 | `internal` | 500 | Something went wrong on our side. Quote the `request_id`. |
 
 `payout_amount_above_maximum` is a `400` and not a `429` for a reason: no amount of waiting makes that payout acceptable, only a smaller one. `payout_daily_cap_exceeded` is a `429` because tomorrow it will work.
@@ -1029,6 +1032,7 @@ Everything above, plus:
 | `payout_quote_not_found` | 404 | The quote cannot be used. See [above](#the-quote-is-single-use-and-yours-alone). |
 | `invalid_request` | 400 | The signed transfer does not match the quote, or the body is malformed. **Nothing was sent.** |
 | `payout_not_approved` | 409 | This payout cannot be signed now: not approved, rejected, lapsed, already sent, or its destination was removed after the approval. |
+| `account_blocked` | 403 | Kakitu has blocked your wallet, or money in it is on hold. **Nothing was sent.** |
 | `idempotency_key_acted` | 409 | The payout was submitted and we cannot tell what became of it. **Do not send it again.** |
 
 The general idempotency rules — replays, mismatched bodies, the 24-hour window — are on the [Collections](./collections#idempotency) page and apply here unchanged.

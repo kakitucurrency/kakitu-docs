@@ -132,10 +132,9 @@ HTTP 201
 Registration is instant, and it only ever creates a `pending` merchant. You cannot set `state`, limits or a webhook secret from the request. Running it again updates your record (`200`). See [Merchants](./merchants) for every field and rule.
 
 :::warning Choose business_name carefully
-The business name is what an operator vets, so it is frozen once you have been reviewed. It is
-passed to our payment partner as the account-holder name on an M-Pesa collection, so a payer
-**may** see it in their PIN prompt; what the prompt shows is the partner's decision, not ours. Use
-the name your customers know you by. See [Merchants](./merchants#business_name-is-frozen).
+The business name is what an operator vets, so it is frozen once you have been reviewed. Use
+the name your customers know you by. It is **not** sent with an M-Pesa collection today, so a
+payer will not see it in their PIN prompt: tell the payer the amount and that a prompt is coming. See [Merchants](./merchants#business_name-is-frozen).
 :::
 
 ## 5. Ask for approval
@@ -145,6 +144,8 @@ Write to kakitu@kakitu.org with your registered address. [Going live](./going-li
 ## What approval gets you today
 
 - [Transfers](./transfers): send KSHS from the signing wallet and let us pay the gas.
+- [Collections](./collections): ask a payer's phone for an M-Pesa payment (`POST /v1/charges`), credited to your wallet in KSHS, within your caps.
+- [`transfer.received`](./events#transferreceived) webhooks for payments to your address, if you set a `callback_url`.
 - Everything else on the API was already open to you: [quotes](./quotes), [orders](./orders), [balances](./balances), [limits](./limits) and your webhook [events](./events).
 
-**M-Pesa collections (`POST /v1/charges`) and payouts are not open yet**, for anyone. Until they are, `POST /v1/charges` answers `503 rail_unavailable` and rings nobody, and payouts answer `403`. Accept KSHS as in step 2, and [cash out](./cash-out) from the app.
+**Payouts are not part of approval.** They are off for each merchant until an operator switches them on for yours; until then the payout routes answer `403 payouts_disabled`. To take your own money out, [cash out](./cash-out) from the app.

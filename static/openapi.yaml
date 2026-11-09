@@ -1,25 +1,27 @@
 openapi: 3.1.0
 info:
   title: Kakitu developer API
-  version: 0.3.1
-  summary: Register a business, move KSHS, and (when they open) collect and pay out by M-Pesa.
+  version: 0.4.0
+  summary: Register a business, move KSHS, and collect and pay out by M-Pesa.
   license:
     name: MIT
     identifier: MIT
   description: |
     Kakitu is a Kenyan shilling stablecoin (KSHS). The developer API lets a business register
     its own wallet address, send KSHS with Kakitu paying the gas, read prices, balances and
-    orders, and — once they open — collect an M-Pesa payment credited in KSHS **at its own wallet
-    address** and pay out to M-Pesa. Kakitu is non-custodial: it never holds the merchant's
+    orders, collect an M-Pesa payment credited in KSHS **at its own wallet address**, and pay out
+    to M-Pesa. Kakitu is non-custodial: it never holds the merchant's
     money and never holds the merchant's key.
 
     ## What is open today
 
-    **M-Pesa collections and payouts are not open.** `POST /v1/charges` answers
-    `503 rail_unavailable` before anything is written (nobody is prompted, the reference stays
-    free), and the payout routes answer `403 payouts_disabled`. The live way for a business to
-    be paid is a plain KSHS transfer to its address — the Kakitu extension's `pay()`, a
-    `kakitu:` link or a QR code. An approved merchant is told of it by a signed
+    **M-Pesa collections and payouts are switched on for the platform** (since 30 October 2026).
+    Collections work for an **approved** merchant, within its caps. Payouts also need the
+    merchant's own payout switch, which is off until an operator turns it on; until then the
+    payout routes answer `403 payouts_disabled`. Either platform switch can be turned off by an
+    operator without a release: collections then answer `503 rail_unavailable` before anything
+    is written. A business can also be paid with no registration at all, by a plain KSHS
+    transfer to its address — the Kakitu extension's `pay()`, a `kakitu:` link or a QR code. An approved merchant is told of it by a signed
     `transfer.received` webhook, which carries the payer's `reference`; **a reference is the
     payer's claim, not proof**, so the merchant still checks the amount and the recipient. See
     https://developer.kakitu.org/docs/intro.
@@ -32,8 +34,9 @@ info:
     `POST /v1/payouts/quote`, `POST /v1/payouts`, `POST /v1/payout-destinations`). Every other
     route needs a signed request and nothing more.
 
-    **Payouts are off by default.** They are governed by two switches that are ANDed: a global
-    one for the whole platform, and a per-merchant one on your own record. Both are an
+    **Payouts are off by default for each merchant.** They are governed by two switches that
+    are ANDed: a global one for the whole platform (on today), and a per-merchant one on your
+    own record (off until an operator turns it on). Both are an
     operator's decision and neither can be turned on through this API. Until both are on, the
     two routes that price and send a payout answer an approved merchant with
     `403 payouts_disabled` — and which of the two is off is deliberately not revealed. A
@@ -204,11 +207,11 @@ tags:
   - name: Public
     description: Unauthenticated platform configuration.
   - name: Charges
-    description: Collect an M-Pesa payment and be credited in KSHS. Not open yet — answers `503 rail_unavailable`.
+    description: Collect an M-Pesa payment and be credited in KSHS. Approved merchants only.
   - name: Transfers
     description: Gasless KSHS transfers signed by the caller.
   - name: Payouts
-    description: Send shillings to an M-Pesa number, till, paybill or bank account. Not open yet; off by default and enabled per merchant by an operator. Above a threshold a person approves first.
+    description: Send shillings to an M-Pesa number, till, paybill or bank account. Off by default for each merchant and enabled per merchant by an operator. Above a threshold a person approves first.
   - name: Payout destinations
     description: The places you may pay, and the lock that holds you to them. The lock controls where cash-outs go; it does not stop KSHS transfers to other wallets.
   - name: Reads
@@ -262,9 +265,8 @@ paths:
         `400 invalid_request` naming the key.
 
         `business_name` is frozen once the merchant is past `pending`, because it is the name an
-        operator vetted. It is also passed to the payment partner as the account-holder name on
-        a collection, so a payer **may** see it in the M-Pesa prompt; what the prompt displays
-        is the partner's decision. Submitting a different name then
+        operator vetted. It is not sent with the M-Pesa prompt on a collection today, so a payer
+        does not see it there. Submitting a different name then
         answers `409 merchant_name_frozen`
         and the message states whether anything was saved.
 
@@ -299,7 +301,9 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '401': { $ref: '#/components/responses/AuthFailure' }
         '409':
-          description: '`merchant_name_frozen`'
+          description: |
+            `merchant_name_frozen`, or `open_loan` — this wallet has an open Kakitu loan, so it
+            cannot register as a merchant until the loan is closed. Nothing was saved.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -354,16 +358,22 @@ paths:
         provider status and no internal order id — which rail served the collection is not part
         of the contract, and the `status` vocabulary below is Kakitu's own, never the rail's.
 
-        The server-owned fields `id`, `status`, `currency`, `created_at`, `paid_at` and
-        `settled_at` are accepted and dropped; any other unknown field is `400 invalid_request`.
+        The server-owned fields `id`, `status`, `currency`, `created_at`, `paid_at`,
+        `settled_at`, `fee_kes` and `credited_kes` are accepted and dropped; any other unknown
+        field is `400 invalid_request`.
 
-        **Not open yet.** While collections are switched off this route answers
-        `503 rail_unavailable` before anything is written.
+        Collections are a platform switch, on today. If an operator turns it off, this route
+        answers `503 rail_unavailable` before anything is written. A wallet Kakitu has blocked
+        is refused with `403 account_blocked` before the body is read.
 
         **The merchant is credited less than `amount`.** `amount` is what the payer is asked for;
         the KSHS minted to the merchant is what the payment partner's USDC buys at Kakitu's rate
-        net of the mint spread — never more than `amount`, usually a little less. The credited
-        figure is not in this response or the webhook today; read it on chain.
+        net of the mint spread — never more than `amount`, usually a little less. Once the charge
+        is paid, `fee_kes` and `credited_kes` on the charge and its webhooks carry both numbers;
+        they are `null` until then.
+
+        The largest charge is the lower of your per-charge maximum and the collection partner's
+        per-order ceiling, `deposit_max_per_order_usd` in `GET /config`.
 
         Body limit 16 KiB. **`Idempotency-Key` is REQUIRED.** Retrying with the same key replays
         the first response and the payer's handset rings exactly once.
@@ -397,7 +407,7 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '401': { $ref: '#/components/responses/AuthFailure' }
         '403':
-          description: '`merchant_not_approved` or `merchant_suspended`.'
+          description: '`merchant_not_approved`, `merchant_suspended` or `account_blocked` (nobody is prompted).'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -410,6 +420,11 @@ paths:
           description: |
             `reference_reused`, or one of the idempotency conflicts: `idempotency_key_reuse`,
             `idempotency_key_in_progress`, `idempotency_key_acted`.
+
+            `idempotency_key_acted` can come on the **first** attempt: the request may have
+            reached the rail and the payer's handset may be ringing, and the outcome is not
+            known. The message names the charge id. Do not send it again, with this key or a new
+            reference; read the charge.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -434,14 +449,13 @@ paths:
           description: |
             `rail_unavailable` or `idempotency_unavailable`.
 
-            While collections are switched off, `rail_unavailable` comes before anything is
-            written: nobody is prompted and the `reference` stays free.
-
-            Once they are on, `rail_unavailable` can also come **after** the charge row was
-            written and the rail was asked to prompt the payer. Then the `reference` is consumed
-            and the handset **may already have rung**. Do not retry with a new `reference`
-            until `GET /v1/charges?reference=…` shows no charge for the old one; if one exists,
-            follow it instead of prompting the payer again.
+            `rail_unavailable` on this route always means **nobody was prompted**. Before the
+            charge row is written (collections switched off, the limiter or the block check
+            unavailable) the `reference` stays free. After the row, when the rail refused before
+            dispatching anything, the charge is left `failed` and the `reference` is closed (the
+            message says "retry with a new reference"). `GET /v1/charges?reference=…` tells the
+            two apart. An outcome that cannot be determined is `409 idempotency_key_acted`,
+            never a 503.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -604,7 +618,7 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '401': { $ref: '#/components/responses/AuthFailure' }
         '403':
-          description: '`merchant_not_approved`, or `merchant_suspended` (also used when the wallet itself is frozen).'
+          description: '`merchant_not_approved`, `merchant_suspended` (also used when the wallet itself is frozen), or `account_blocked` (a wallet on the transfer is blocked, or the money is on hold). Nothing was sent.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -669,8 +683,9 @@ paths:
         Prices a payout to a beneficiary's M-Pesa number, till, paybill or bank account (see `PayoutBeneficiary`) and mints the **single-use quote that is the
         only thing `POST /v1/payouts` will accept**. Nothing is created and no money moves.
 
-        **Payouts are off by default**, globally and per merchant. Both switches are an
-        operator's decision; until both are on this route answers `403 payouts_disabled`, and
+        **Payouts are off by default for each merchant.** Two switches must both be on: the
+        platform's (on today) and the merchant's own (off until an operator turns it on). Both
+        are an operator's decision; until both are on this route answers `403 payouts_disabled`, and
         which of the two is off is not revealed. The merchant must also be **approved**.
 
         **No `Idempotency-Key`.** A quote creates nothing, and each call is a request for a
@@ -745,8 +760,9 @@ paths:
         '403':
           description: |
             `merchant_not_approved` or `merchant_suspended` (checked first), then
-            `payouts_disabled` (payouts are not switched on — today they are off for every
-            merchant), `identity_verification_required`, `payout_destination_locked` (the
+            `payouts_disabled` (payouts are not switched on for this merchant — each merchant's
+            own switch is off until an operator turns it on), `account_blocked` (Kakitu has
+            blocked the wallet, or money in it is on hold), `identity_verification_required`, `payout_destination_locked` (the
             merchant is locked to its saved destinations and this is not one that can be paid
             now) or `bank_unavailable` (a paybill or bank that is not a saved destination past
             its cooling-off).
@@ -885,7 +901,8 @@ paths:
         '403':
           description: |
             `merchant_not_approved` or `merchant_suspended` (checked first), then
-            `payouts_disabled`, or `identity_verification_required`.
+            `payouts_disabled`, `account_blocked` (nothing was sent), or
+            `identity_verification_required`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -1447,13 +1464,13 @@ paths:
             `invalid_request` (unknown field, bad `type`, `amount_kes` below 1, missing
             `beneficiary` on a withdrawal, or an amount/phone/beneficiary not valid for this
             wallet), `amount_below_minimum` or `amount_above_maximum` — GET /v1/limits shows the
-            current band.
+            current band — or, on a withdrawal, `insufficient_balance`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '401': { $ref: '#/components/responses/AuthFailure' }
         '403':
-          description: '`identity_verification_required` — this amount needs the customer''s identity verified first.'
+          description: '`identity_verification_required` — this amount needs the customer''s identity verified first; or `account_blocked` — Kakitu has blocked this wallet.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -2045,7 +2062,7 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
     RailUnavailable:
-      description: '`rail_unavailable` — temporarily unavailable, try again shortly.'
+      description: '`rail_unavailable` — temporarily unavailable (the partner, cash-out capacity, or the wallet check), try again shortly. Nothing was created or sent.'
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -2061,8 +2078,7 @@ components:
           maxLength: 100
           description: |
             1 to 100 characters. No control, invisible or text-direction characters. It is the
-            name an operator vets, and it is passed to the payment partner as the
-            account-holder name on a collection, so a payer may see it in the M-Pesa prompt.
+            name an operator vets. It is not sent with the M-Pesa prompt on a collection today.
             Frozen once the merchant is past `pending`.
         contact_email:
           type: string
@@ -2637,10 +2653,11 @@ components:
               description: >-
                 `mobile_money` pays an M-Pesa number, `buy_goods` a till, `paybill` a paybill
                 (which also needs `reference`). Any other value, `mpesa` included, is
-                `400 invalid_request`.
+                `400 invalid_request`. `paybill` withdrawals are closed for every wallet at the
+                moment and are refused (today as `500 internal`).
             number:
               type: string
-              description: The mobile number, till number or paybill number.
+              description: The mobile number, or a till or paybill number of 5 to 9 digits.
             reference:
               type: string
               description: The account reference. Required for `paybill`.
@@ -3083,6 +3100,8 @@ components:
         - merchant_not_approved
         - merchant_suspended
         - merchant_name_frozen
+        - open_loan
+        - account_blocked
         - idempotency_key_required
         - idempotency_key_invalid
         - idempotency_key_reuse
@@ -3126,6 +3145,8 @@ components:
         merchant_not_approved: 403
         merchant_suspended: 403
         merchant_name_frozen: 409
+        open_loan: 409
+        account_blocked: 403
         idempotency_key_required: 400
         idempotency_key_invalid: 400
         idempotency_key_reuse: 409
@@ -3183,7 +3204,7 @@ components:
         treasury_address: { type: string }
         public_rpc_url: { type: string }
         relay_max_per_tx_kes: { type: integer, description: 'Largest single KSHS transfer Kakitu relays, in whole shillings.' }
-        deposit_max_per_order_usd: { type: integer }
+        deposit_max_per_order_usd: { type: integer, description: 'Largest single M-Pesa purchase of KSHS, in US dollars. Also the ceiling on one M-Pesa collection (`POST /v1/charges`).' }
         deposit_min_per_order_usd: { type: integer }
         withdraw_max_per_order_kes: { type: integer, description: 'Largest single cash-out to M-Pesa, in shillings that land. Live from the cash-out partner.' }
         withdraw_min_per_order_kes: { type: integer, description: Smallest single cash-out to M-Pesa. `0` means not known. }
@@ -3202,6 +3223,13 @@ components:
         platform_fee_cap_kshs: { type: integer }
         agent_min_float_usdc: { type: integer }
         order_expiry_minutes: { type: integer }
+        cashout_capacity_kes:
+          type: [integer, 'null']
+          description: |
+            The largest KSHS amount one M-Pesa cash-out may **send** right now that the hot
+            treasury can back (before the fee, unlike the `withdraw_*` band, which is in
+            shillings that land). A cash-out over it is refused at the quote, before anything
+            moves. `null` when it is not known; `0` is a real answer. Moves all day.
     AuthError:
       type: object
       description: |

@@ -9,23 +9,34 @@ Limits exist to protect payers. A collection rings a real handset, so the contro
 
 ## Limits that apply to collections
 
-[Collections](./collections) exist, but they are switched on by a Kakitu operator: your merchant
-must be approved, and collections must be enabled on the platform. While they are switched off,
-`POST /v1/charges` answers `503 rail_unavailable` and no handset is rung. Payouts are separate and
-**off by default**: payouts are enabled per merchant on request (see [Payouts](./payouts)).
+[Collections](./collections) need an approved merchant, and the platform switch on (it is on
+today; if an operator turns it off, `POST /v1/charges` answers `503 rail_unavailable` and no
+handset is rung). Payouts are separate and **off by default for each merchant**: they are enabled
+per merchant on request (see [Payouts](./payouts)).
 
-Once collections are on for you, these apply. Each is its own error code:
+These apply to every charge. Each is its own error code:
 
 | Limit | Code | HTTP |
 |---|---|---|
 | Daily collection cap for your merchant | `daily_cap_exceeded` | 429 |
 | Charges per minute for your merchant | `rate_limited` | 429 |
-| Prompts to one payer per day | `payer_velocity_exceeded` | 429 |
+| Prompts from your merchant to one payer per day | `payer_velocity_exceeded` | 429 |
+| Different merchants prompting one payer per day | `payer_velocity_exceeded` | 429 |
 | Maximum per charge | `amount_above_maximum` | 400 |
 
-Your own `daily_cap_kes` and `per_charge_max_kes` are in `GET /v1/merchants/me`. `0` means the platform default applies. We do not publish the platform defaults here because they are configuration that an operator can change. Read your record, and ask us for a limit raise when you need one.
+Your own `daily_cap_kes` and `per_charge_max_kes` are in `GET /v1/merchants/me`. `0` means the platform default applies. The platform defaults are configuration an operator can change without a release; on 9 November 2026 they were:
 
-The payer limit is deliberate: it stops a merchant, or someone who got hold of a merchant's key, from pestering one person.
+| Platform default | Value on 9 November 2026 |
+|---|---|
+| Daily collection cap per merchant | KES 100,000 |
+| Maximum per charge | KES 70,000, but the collection partner's per-order ceiling (`deposit_max_per_order_usd` in `GET /config`, about KES 13,000) binds first |
+| Charges per minute per merchant | 30 |
+| Prompts from one merchant to one payer per day | 5 |
+| Different merchants that may prompt one payer per day | 3 |
+
+Read your own record rather than hard-coding these, and ask us for a limit raise when you need one. The days are East Africa Time days.
+
+The payer limits are deliberate: they stop a merchant, or someone who got hold of a merchant's key, from pestering one person, and stop one number being worked by many merchants.
 
 ## Reading a 429
 
@@ -85,7 +96,7 @@ Branch on whether `error` is a string or an object, as on the [Errors](./errors#
 
 ## Retry-After
 
-`Retry-After` is sent with three 429s only: the shared per-minute limit (the one the `RateLimit-*` headers describe), the 30-a-minute quote limit, and the per-IP `too_many_requests`. **Every other 429 may come without it**: `daily_cap_exceeded`, `payer_velocity_exceeded`, `payout_daily_cap_exceeded`, and the `rate_limited` answers that come from the charges-per-minute cap, the payer prompt limit or the hourly transfer cap. When it is missing, do not retry in a loop: a daily cap resets at a known time (midnight UTC for transfers, midnight East Africa Time for payouts), and the hourly transfer cap within the hour.
+`Retry-After` is sent with three 429s only: the shared per-minute limit (the one the `RateLimit-*` headers describe), the 30-a-minute quote limit, and the per-IP `too_many_requests`. **Every other 429 may come without it**: `daily_cap_exceeded`, `payer_velocity_exceeded`, `payout_daily_cap_exceeded`, and the `rate_limited` answers that come from the charges-per-minute cap, the payer prompt limit or the hourly transfer cap. When it is missing, do not retry in a loop: a daily cap resets at a known time (midnight UTC for transfers, midnight East Africa Time for collections and payouts), and the hourly transfer cap within the hour.
 
 Do not hammer `GET /v1/merchants/me`; read it when you need it. Each signed request must also be unique (see [replays](./authentication#time-and-replay)), so a tight retry loop that resends an identical request in the same second fails with `replay` rather than being rate limited.
 

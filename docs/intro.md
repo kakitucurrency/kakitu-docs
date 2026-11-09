@@ -22,12 +22,12 @@ Kakitu is a Kenyan-shilling stablecoin. **KSHS is an ERC-20 token on Base, backe
 
 **A reference is the payer's claim, not proof.** Anybody can pay your address with any reference. A screenshot of a payer's phone is not a payment either. Check that there is a `Transfer` log on the KSHS contract (`kshs_contract` in [`GET /config`](https://walletapi.kakitu.org/config)) to your address, for the amount you priced, in a mined block, and match it to exactly one order. [The extension page](./extension#pay-pay) has the rule in full.
 
-**Then cash out.** Import your wallet's 12-word recovery phrase into the Kakitu app and withdraw to an M-Pesa number, till or paybill. See [Cash out](./cash-out), and [Pricing, limits and settlement](./pricing) for what it costs and how much fits in one go.
+**Then cash out.** Import your wallet's 12-word recovery phrase into the Kakitu app and withdraw to an M-Pesa number or a till. See [Cash out](./cash-out), and [Pricing, limits and settlement](./pricing) for what it costs and how much fits in one go.
 
 The [quickstart](./quickstart) sets up a wallet for this in ten minutes.
 
-:::warning M-Pesa collections and payouts are not open yet
-The API below can also **collect** by M-Pesa (a PIN prompt on the payer's phone, settled to you as KSHS) and **pay out** to an M-Pesa number, a till, a paybill or a bank account. Both are switched off for every merchant today. `POST /v1/charges` answers `503 rail_unavailable` and rings nobody, and the payout routes answer `403 payouts_disabled`. Do not build a checkout that depends on either until we announce them. Registering is safe, and the request and response shapes below are final.
+:::info M-Pesa collections and payouts, for approved merchants
+The API below can also **collect** by M-Pesa (a PIN prompt on the payer's phone, settled to you as KSHS) and **pay out** to an M-Pesa number, a till, a paybill or a bank account. Both were switched on for the platform on 30 October 2026, and both need a person at Kakitu first: collections work once your merchant is **approved**, and payouts also need an operator to switch them on **for your merchant**, which is off by default. Each runs under caps; see [Rate limits](./rate-limits) and [`GET /v1/limits`](./limits).
 :::
 
 ## The developer API
@@ -39,8 +39,8 @@ The developer API is in private release. Registration is open; a Kakitu operator
 | Sign requests with a wallet key | Final | [Authentication](./authentication) |
 | `POST /v1/merchants` | Open: anyone can register | [Merchants](./merchants) |
 | `GET /v1/merchants/me` | Open | [Merchants](./merchants) |
-| `POST /v1/charges` | **Not open.** Answers `503 rail_unavailable` | [Collections](./collections) |
-| `GET /v1/charges` | Open (empty until collections open) | [Collections](./collections) |
+| `POST /v1/charges` | Approved merchants | [Collections](./collections) |
+| `GET /v1/charges` | Open | [Collections](./collections) |
 | `GET /v1/charges/{id}` | Open | [Collections](./collections) |
 | `POST /v1/transfers` | Approved merchants | [Transfers](./transfers) |
 | `POST /v1/quotes` | Open | [Quotes](./quotes) |
@@ -49,9 +49,9 @@ The developer API is in private release. Registration is open; a Kakitu operator
 | `GET /v1/limits` | Open | [Limits](./limits) |
 | `GET /v1/events` | Open | [Events](./events) |
 | `POST /v1/events/{id}/replay` | Open | [Events](./events) |
-| `POST /v1/payouts/requests` | **Not open.** Off globally and per merchant | [Payouts](./payouts#approve-first) |
-| `POST /v1/payouts/quote` | **Not open.** Off globally and per merchant | [Payouts](./payouts) |
-| `POST /v1/payouts` | **Not open.** Off globally and per merchant | [Payouts](./payouts) |
+| `POST /v1/payouts/requests` | Approved merchants with payouts switched on for them (off by default) | [Payouts](./payouts#approve-first) |
+| `POST /v1/payouts/quote` | Approved merchants with payouts switched on for them (off by default) | [Payouts](./payouts) |
+| `POST /v1/payouts` | Approved merchants with payouts switched on for them (off by default) | [Payouts](./payouts) |
 | `GET /v1/payouts` | Open: a signed request is enough | [Payouts](./payouts) |
 | `GET /v1/payouts/{id}` | Open: a signed request is enough | [Payouts](./payouts) |
 | `GET`, `POST /v1/payout-destinations`, `DELETE /v1/payout-destinations/{id}`, `POST /v1/payout-destinations/lock` | A registered merchant reads and locks; an approved one saves | [Payouts](./payouts#saved-destinations-and-the-lock) |
@@ -61,14 +61,14 @@ The developer API is in private release. Registration is open; a Kakitu operator
 
 Twenty-one `/v1` routes, and `GET /transfers`, which is the wallet's own. **Only the routes that move money check approval**: `POST /v1/charges` and `POST /v1/transfers` refuse a merchant that is not `approved`, and so do the payout routes, which also need payouts switched on. Every other route needs a signed request and nothing more. Routes scoped to a merchant (`GET /v1/merchants/me`, the charge reads and the event routes) answer `404 merchant_not_registered` until you register; quotes, orders, balances, limits and the payout reads answer any signing wallet.
 
-Paying money **out** is a second decision on top of approval, off by default both globally and per merchant. See [Payouts](./payouts#payouts-are-off-by-default).
+Paying money **out** is a second decision on top of approval: the platform switch is on, and your merchant's own switch is off until an operator turns it on for you. See [Payouts](./payouts#payouts-are-off-by-default).
 
 ## How it fits together
 
 1. Your **wallet address is your API credential.** There are no API keys to leak or rotate. You prove you own the address by signing each request. See [Authentication](./authentication).
 2. You **register** a merchant. It starts as `pending`. See [Merchants](./merchants).
 3. A Kakitu operator **approves** it. This is a person, not an automated step. See [Going live](./going-live).
-4. Once approved you can send [transfers](./transfers) with us paying the gas, and — when they open — create [charges](./collections).
+4. Once approved you can send [transfers](./transfers) with us paying the gas and create [charges](./collections). [Payouts](./payouts) need one more yes from an operator.
 
 Alongside: [quotes](./quotes), [orders](./orders), [balances](./balances), [limits](./limits) and your webhook [events](./events).
 

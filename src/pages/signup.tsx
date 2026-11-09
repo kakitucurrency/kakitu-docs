@@ -433,8 +433,9 @@ function SignupFlow() {
       <p className={styles.lede}>
         Be paid in KSHS straight to your own wallet, and register it with the developer API. This
         page creates the wallet that is both your API credential and the address you are paid
-        at, and submits your registration for review. It takes about two minutes. (M-Pesa
-        collections through the API are not open yet; you can accept KSHS today.)
+        at, and submits your registration for review. It takes about two minutes. You can accept
+        KSHS at that address straight away; M-Pesa collections through the API need an
+        operator's approval first.
       </p>
 
       <ol className={styles.steps}>
@@ -541,9 +542,8 @@ function SignupFlow() {
               required
             />
             <small className={styles.hint}>
-              Your real trading name. It is fixed once your account has been reviewed. It is
-              passed to our payment partner as the account-holder name on an M-Pesa collection,
-              so payers may see it in their PIN prompt.
+              Your real trading name, the one an operator reviews. It is fixed once your account
+              has been reviewed.
             </small>
             {fieldErrors.business_name && (
               <span className={styles.fieldError}>{fieldErrors.business_name}</span>

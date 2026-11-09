@@ -15,7 +15,7 @@ A merchant is a business that collects money. It is identified by the wallet add
 | `state` | Meaning |
 |---|---|
 | `pending` | Registered, not reviewed. Collections are refused. |
-| `approved` | An operator reviewed and approved it. Transfers work, and charges will when collections open. Only `POST /v1/charges`, `POST /v1/transfers` and the two payout-sending routes check this state. |
+| `approved` | An operator reviewed and approved it. Transfers and charges work. Payouts also need the merchant's own payout switch on. Only `POST /v1/charges`, `POST /v1/transfers`, the payout-sending routes and saving a payout destination check this state. |
 | `rejected` | An operator declined it. |
 | `suspended` | An operator stopped it. Collections are refused. |
 
@@ -84,7 +84,7 @@ If you have not written the signing code yet, **[register in your browser](/sign
 
 | Field | Type | Rules |
 |---|---|---|
-| `business_name` | string, required | 1 to 100 characters. No control, invisible or text-direction characters. This is the name an operator vets. It is passed to our payment partner as the account-holder name on a collection, so a payer **may** see it in the M-Pesa prompt. |
+| `business_name` | string, required | 1 to 100 characters. No control, invisible or text-direction characters. This is the name an operator vets. It is not sent with the M-Pesa prompt on a collection today. |
 | `contact_email` | string, required | A plain address such as `a@b.co`. `Name <a@b.co>` is refused. At most 254 characters. |
 | `contact_phone` | string, optional | At most 20 characters: digits, `+`, spaces and hyphens only. |
 | `callback_url` | string, optional | See [callback URLs](#callback-urls). |
@@ -222,11 +222,15 @@ Why: an omitted or misspelt field must never silently wipe a webhook URL and sto
 
 ### business_name is frozen
 
-Once a merchant is past `pending`, `business_name` cannot be changed through the API. A request with a different name is refused with `409 merchant_name_frozen` and **nothing in that request is saved**. Why: it is the name an operator vetted, so it is fixed after vetting. It is also what we pass to our payment partner as the account-holder name on a collection, so a payer **may** see it in the M-Pesa PIN prompt when deciding whether to type a PIN. What the prompt displays is the partner's decision, not ours. A rename needs an operator: write to kakitu@kakitu.org.
+Once a merchant is past `pending`, `business_name` cannot be changed through the API. A request with a different name is refused with `409 merchant_name_frozen` and **nothing in that request is saved**. Why: it is the name an operator vetted, so it is fixed after vetting. It is not sent with the M-Pesa PIN prompt on a collection today, so a payer deciding whether to type a PIN does not see it there. A rename needs an operator: write to kakitu@kakitu.org.
 
 Resubmitting the **same** name with new contact details is fine.
 
 In the rare race where an operator approves you between our check and our write, you also get `merchant_name_frozen`, but your other fields were saved, and the message says so.
+
+### A wallet with an open loan
+
+A wallet that has an open Kakitu loan (a feature of the Kakitu app) cannot register as a merchant. `POST /v1/merchants` answers `409 open_loan` and **nothing in the request is saved**. Register once the loan is closed, or register a wallet made for the business, as the [quickstart](./quickstart#why-a-separate-wallet) recommends anyway.
 
 ### Callback URLs
 

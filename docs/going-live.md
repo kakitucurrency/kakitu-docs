@@ -14,10 +14,10 @@ There is one environment: `https://walletapi.kakitu.org`. There is no separate s
 | Being paid in KSHS at your address (`pay()`, `kakitu:` links, QR) | **Live.** Needs no registration. See [the quickstart](./quickstart#2-take-a-payment). |
 | [Cashing out](./cash-out) to M-Pesa from the Kakitu app | **Live**, within the [limits](./pricing). |
 | Registering, reading, [transfers](./transfers) once approved | **Live.** |
-| M-Pesa collections (`POST /v1/charges`) | **Not open.** Answers `503 rail_unavailable`; nobody is prompted. |
-| Payouts (`POST /v1/payouts/quote`, `POST /v1/payouts`) | **Not open.** Off for every merchant. |
+| M-Pesa collections (`POST /v1/charges`) once approved | **Live** since 30 October 2026, within your [caps](./rate-limits#limits-that-apply-to-collections). |
+| [Payouts](./payouts) (`POST /v1/payouts/quote`, `POST /v1/payouts`) | **Live for a merchant an operator has switched on.** Off for each merchant by default; approval alone does not switch them on. |
 
-Approval does not change the last two rows. We will say here, and write to approved merchants, when they open.
+Both M-Pesa switches are platform settings an operator can turn off without a release. While collections are off, `POST /v1/charges` answers `503 rail_unavailable` and nobody is prompted; while payouts are off, the payout routes answer `403 payouts_disabled`.
 
 ## Why a person approves you
 
@@ -25,13 +25,13 @@ Approval does not change the last two rows. We will say here, and write to appro
 
 ## The path
 
-1. **Register** with `POST /v1/merchants`. Use your real trading name; it is frozen after review, and it is passed to our payment partner as the account-holder name on a collection, so a payer may see it in their M-Pesa prompt.
+1. **Register** with `POST /v1/merchants`. Use your real trading name; it is what an operator vets, and it is frozen after review.
 2. **Write to kakitu@kakitu.org** with your wallet address and what you sell. Expect questions.
 3. **Approval.** An operator sets your state to `approved`, sets your limits, and issues your **webhook secret**. The secret is shown **once**. Store it in a secret manager at once; it cannot be retrieved later.
 4. **Confirm** with `GET /v1/merchants/me` that `state` is `approved`.
-5. **Use it.** [Transfers](./transfers) work at once. [Charges](./collections) will work when collections open.
+5. **Use it.** [Transfers](./transfers) and [charges](./collections) work at once.
 
-Paying money **out** through the API is a separate request and a separate decision: approval does not switch payouts on, and they are not open for anyone yet. See [Payouts](./payouts#payouts-are-off-by-default). To get your own takings out today, [cash out](./cash-out) from the app.
+Paying money **out** through the API is a separate request and a separate decision: approval does not switch payouts on for your merchant. Ask for them specifically. See [Payouts](./payouts#payouts-are-off-by-default). To get your own takings out, [cash out](./cash-out) from the app.
 
 ## Checklist before you take real payments
 
