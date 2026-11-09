@@ -88,7 +88,7 @@ const config: Config = {
         },
         {
           href: 'https://kakitu.org',
-          label: 'Explorer',
+          label: 'kakitu.org',
           position: 'right',
         },
         {

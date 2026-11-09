@@ -1,41 +1,30 @@
-# Website
+# developer.kakitu.org
 
-This website is built using [Docusaurus](https://docusaurus.io/), a modern static website generator.
+The Kakitu developer documentation: a Docusaurus site (`docs/`, `src/pages/`), the OpenAPI
+spec it serves at `/openapi.yaml` and renders at `/api-reference` (`static/openapi.yaml`), and
+the three SDKs (`sdk/ts`, `sdk/python`, `sdk/php`).
 
-## Installation
+**A push to `main` deploys the site** (Railway, `railway.toml`). Work on a branch.
 
-```bash
-yarn
-```
-
-## Local Development
+## Local development
 
 ```bash
-yarn start
+npm ci
+npm start          # dev server with live reload
+npm run build      # runs scripts/check-docs.mjs first, then builds into build/
 ```
 
-This command starts a local development server and opens up a browser window. Most changes are reflected live without having to restart the server.
-
-## Build
+`scripts/check-docs.mjs` fails the build if the docs or the spec have drifted from the
+server's events, error codes, payout states and fields. To also check its own lists against
+the server source, point it at a checkout of the wallet server:
 
 ```bash
-yarn build
+KAKITU_SERVER_DIR=/path/to/kakitu-wallet-server npm run check-docs
 ```
 
-This command generates static content into the `build` directory and can be served using any static contents hosting service.
+Lint the spec with `npx @redocly/cli@1.25.0 lint static/openapi.yaml`.
 
-## Deployment
+## SDKs
 
-Using SSH:
-
-```bash
-USE_SSH=true yarn deploy
-```
-
-Not using SSH:
-
-```bash
-GIT_USER=<Your GitHub username> yarn deploy
-```
-
-If you are using GitHub pages for hosting, this command is a convenient way to build the website and push to the `gh-pages` branch.
+Each SDK has its own README and tests (`npm test` in `sdk/ts`, `pytest` in `sdk/python`,
+`vendor/bin/phpunit` in `sdk/php`). Publishing is manual: see `sdk/PUBLISHING.md`.
