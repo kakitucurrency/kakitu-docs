@@ -20,6 +20,10 @@ final class ErrorCode
     public const MERCHANT_NOT_APPROVED = 'merchant_not_approved';
     public const MERCHANT_SUSPENDED = 'merchant_suspended';
     public const MERCHANT_NAME_FROZEN = 'merchant_name_frozen';
+    /** 409. This wallet has an open Kakitu loan, so it cannot register as a merchant yet. */
+    public const OPEN_LOAN = 'open_loan';
+    /** 403. Kakitu has blocked a wallet this request touches. Nothing moved. */
+    public const ACCOUNT_BLOCKED = 'account_blocked';
     public const IDEMPOTENCY_KEY_REQUIRED = 'idempotency_key_required';
     public const IDEMPOTENCY_KEY_INVALID = 'idempotency_key_invalid';
     public const IDEMPOTENCY_KEY_REUSE = 'idempotency_key_reuse';
@@ -87,6 +91,7 @@ final class ErrorCode
         return [
             self::INVALID_REQUEST, self::UNAUTHORIZED, self::MERCHANT_NOT_REGISTERED,
             self::MERCHANT_NOT_APPROVED, self::MERCHANT_SUSPENDED, self::MERCHANT_NAME_FROZEN,
+            self::OPEN_LOAN, self::ACCOUNT_BLOCKED,
             self::IDEMPOTENCY_KEY_REQUIRED, self::IDEMPOTENCY_KEY_INVALID, self::IDEMPOTENCY_KEY_REUSE,
             self::IDEMPOTENCY_KEY_IN_PROGRESS, self::IDEMPOTENCY_KEY_ACTED, self::IDEMPOTENCY_UNAVAILABLE,
             self::REQUEST_TOO_LARGE, self::AMOUNT_BELOW_MINIMUM, self::AMOUNT_ABOVE_MAXIMUM,

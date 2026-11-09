@@ -127,7 +127,7 @@ def test_the_closed_sets_match_the_server():
         "quoted", "pending_approval", "approved", "rejected", "held", "dispatched", "paid", "failed",
         "cancelled", "expired"}
     assert set(PAYOUT_TERMINAL_STATES) == {"paid", "failed", "cancelled", "rejected", "expired"}
-    assert len(CODES) == 42
+    assert len(CODES) == 44
 
 
 @pytest.mark.parametrize("code,status,cls", [

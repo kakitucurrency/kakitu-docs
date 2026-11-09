@@ -131,7 +131,7 @@ describe("event types", () => {
       "payout_open_requests_exceeded", "payout_destination_locked", "payout_destination_not_found",
       "payout_destinations_full", "bank_unavailable", "unknown_bank", "account_not_found", "insufficient_balance",
     ]) expect(SERVER_ERROR_CODES).toContain(c);
-    expect(SERVER_ERROR_CODES.length).toBe(42);
+    expect(SERVER_ERROR_CODES.length).toBe(44);
   });
 });
 

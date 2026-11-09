@@ -124,7 +124,7 @@ final class DevPitchTest extends TestCase
         $this->assertEqualsCanonicalizing(['paid', 'failed', 'cancelled', 'rejected', 'expired'], PayoutState::terminal());
         $this->assertTrue(PayoutState::isTerminal(PayoutState::REJECTED));
         $this->assertFalse(PayoutState::isTerminal(PayoutState::PENDING_APPROVAL));
-        $this->assertCount(42, ErrorCode::all());
+        $this->assertCount(44, ErrorCode::all());
     }
 
     public function testTheNewCodesRaiseTypedExceptions(): void

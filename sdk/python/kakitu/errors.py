@@ -25,6 +25,12 @@ class MerchantNotRegisteredError(KakituError): ...
 class MerchantNotApprovedError(KakituError): ...
 class MerchantSuspendedError(KakituError): ...
 class MerchantNameFrozenError(KakituError): ...
+class OpenLoanError(KakituError):
+    """409 open_loan. This wallet has an open Kakitu loan, so it cannot register as a merchant
+    until the loan is closed. Nothing was saved."""
+class AccountBlockedError(KakituError):
+    """403 account_blocked. Kakitu has blocked a wallet this request touches. Nothing moved;
+    contact support."""
 class IdempotencyError(KakituError):
     """idempotency_key_required / _invalid / _reuse / _in_progress / _acted / idempotency_unavailable."""
 class RequestTooLargeError(KakituError): ...
@@ -83,6 +89,8 @@ _BY_CODE: dict[str, type[KakituError]] = {
     "merchant_not_approved": MerchantNotApprovedError,
     "merchant_suspended": MerchantSuspendedError,
     "merchant_name_frozen": MerchantNameFrozenError,
+    "open_loan": OpenLoanError,
+    "account_blocked": AccountBlockedError,
     "idempotency_key_required": IdempotencyError,
     "idempotency_key_invalid": IdempotencyError,
     "idempotency_key_reuse": IdempotencyError,

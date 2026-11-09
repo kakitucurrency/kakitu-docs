@@ -1,5 +1,5 @@
 /**
- * Error codes from apiv1/errors.go (a closed set; the server never changes a code).
+ * Error codes from apiv1/errors.go (a closed set: a code is never renamed or reused, and new ones are added here when the server adds them).
  *
  * The PAYOUT codes are deliberately not the collection ones. `payout_daily_cap_exceeded` is a
  * different budget from `daily_cap_exceeded`, on a different setting and a different counter:
@@ -14,6 +14,8 @@ export type ServerErrorCode =
   | "merchant_not_approved"
   | "merchant_suspended"
   | "merchant_name_frozen"
+  | "open_loan"
+  | "account_blocked"
   | "idempotency_key_required"
   | "idempotency_key_invalid"
   | "idempotency_key_reuse"
@@ -56,7 +58,8 @@ export type KakituErrorCode = ServerErrorCode | "network_error" | "unknown";
 
 export const SERVER_ERROR_CODES: readonly ServerErrorCode[] = [
   "invalid_request", "unauthorized", "merchant_not_registered", "merchant_not_approved",
-  "merchant_suspended", "merchant_name_frozen", "idempotency_key_required", "idempotency_key_invalid",
+  "merchant_suspended", "merchant_name_frozen", "open_loan", "account_blocked",
+  "idempotency_key_required", "idempotency_key_invalid",
   "idempotency_key_reuse", "idempotency_key_in_progress", "idempotency_key_acted",
   "idempotency_unavailable", "request_too_large", "amount_below_minimum", "amount_above_maximum",
   "daily_cap_exceeded", "payer_velocity_exceeded", "rate_limited", "charge_not_found",

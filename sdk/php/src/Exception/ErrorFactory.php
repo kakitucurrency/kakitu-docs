@@ -48,7 +48,7 @@ final class ErrorFactory
             ErrorCode::AMOUNT_BELOW_MINIMUM, ErrorCode::AMOUNT_ABOVE_MAXIMUM, ErrorCode::REQUEST_TOO_LARGE,
             ErrorCode::UNKNOWN_BANK, ErrorCode::INSUFFICIENT_BALANCE => InvalidRequestException::class,
             ErrorCode::MERCHANT_NOT_REGISTERED, ErrorCode::MERCHANT_NOT_APPROVED, ErrorCode::MERCHANT_SUSPENDED,
-            ErrorCode::MERCHANT_NAME_FROZEN,
+            ErrorCode::MERCHANT_NAME_FROZEN, ErrorCode::ACCOUNT_BLOCKED,
             // Payouts are off for you. Which switch — the global one or yours — is deliberately
             // not published, so there is nothing more specific to raise.
             ErrorCode::PAYOUTS_DISABLED,
@@ -68,7 +68,7 @@ final class ErrorFactory
             ErrorCode::CHARGE_NOT_FOUND, ErrorCode::ORDER_NOT_FOUND, ErrorCode::EVENT_NOT_FOUND,
             ErrorCode::PAYOUT_NOT_FOUND, ErrorCode::PAYOUT_QUOTE_NOT_FOUND,
             ErrorCode::PAYOUT_DESTINATION_NOT_FOUND => NotFoundException::class,
-            ErrorCode::REFERENCE_REUSED, ErrorCode::PROFILE_REQUIRED,
+            ErrorCode::REFERENCE_REUSED, ErrorCode::PROFILE_REQUIRED, ErrorCode::OPEN_LOAN,
             ErrorCode::PAYOUT_APPROVAL_REQUIRED, ErrorCode::PAYOUT_NOT_APPROVED, ErrorCode::PAYOUT_APPROVAL_MISMATCH,
             ErrorCode::PAYOUT_DESTINATIONS_FULL => ConflictException::class,
             default => ApiException::class,
