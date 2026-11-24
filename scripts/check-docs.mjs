@@ -128,7 +128,7 @@ const FORBIDDEN = [
   [/since 30 October 2026|on 30 October 2026/i, "M-Pesa collections through the old route are gone"],
   [/\bSTK\b|\bBuni\b/, "customer copy never names the bank's API"],
   [/PIN prompt on the payer|M-Pesa PIN prompt|pay out to (a|an) (till|paybill|bank)/i,
-    "M-Pesa collections and third-party payouts are not live (outside a rebuilding fence)"],
+    "M-Pesa collections and third-party payouts are not live (outside a rebuilding fence)", "fenceable"],
   [/Wallet\.createRandom|createRandom\(/, "the docs never make a wallet; a merchant makes it in the Kakitu app"],
   [/\]\(\/signup\)|href=["']\/signup|to: ["']\/signup|developer\.kakitu\.org\/signup/,
     "merchant sign-up is at kakitu.org/merchant, not /signup"],
@@ -261,8 +261,8 @@ for (const [page, phrases] of Object.entries(PHRASES)) {
 const forbiddenScope = { ...text };
 for (const p of sitePages) forbiddenScope[p] = read(p);
 for (const [page, raw] of Object.entries(forbiddenScope)) {
-  const body = stripRebuilding(raw);
-  for (const [re, why] of FORBIDDEN) {
+  for (const [re, why, fenceable] of FORBIDDEN) {
+    const body = fenceable ? stripRebuilding(raw) : raw;
     const m = body.match(re);
     if (m) {
       const line = body.slice(0, m.index).split("\n").length;

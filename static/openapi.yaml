@@ -207,11 +207,11 @@ tags:
   - name: Public
     description: Unauthenticated platform configuration.
   - name: Charges
-    description: Collect an M-Pesa payment and be credited in KSHS. Approved merchants only.
+    description: Coming soon, as a KSHS payment request. Past charges stay readable.
   - name: Transfers
     description: Gasless KSHS transfers signed by the caller.
   - name: Payouts
-    description: Send shillings to an M-Pesa number, till, paybill or bank account. Off by default for each merchant and enabled per merchant by an operator. Above a threshold a person approves first.
+    description: Coming soon, being rebuilt on KCB. Past payouts stay readable.
   - name: Payout destinations
     description: The places you may pay, and the lock that holds you to them. The lock controls where cash-outs go; it does not stop KSHS transfers to other wallets.
   - name: Reads
@@ -265,8 +265,8 @@ paths:
         `400 invalid_request` naming the key.
 
         `business_name` is frozen once the merchant is past `pending`, because it is the name an
-        operator vetted. It is not sent with the M-Pesa prompt on a collection today, so a payer
-        does not see it there. Submitting a different name then
+        person at Kakitu vetted, and it is what shoppers see on the verified-merchant badge.
+        Submitting a different name then
         answers `409 merchant_name_frozen`
         and the message states whether anything was saved.
 
@@ -656,8 +656,14 @@ paths:
     post:
       operationId: createPayoutQuote
       tags: [Payouts]
-      summary: Price a payout and get back exactly what to sign
+      summary: Price a payout and get back exactly what to sign (coming soon)
+      x-kakitu-status: coming-soon
       description: |
+        Coming soon. Payouts are being rebuilt so that Kakitu pays them itself, through KCB.
+        Until then this route answers `403 payouts_disabled`. The shapes below describe the API
+        as it stood and may change when payouts return.
+        See https://developer.kakitu.org/docs/payouts.
+
         Prices a payout to a beneficiary's M-Pesa number, till, paybill or bank account (see `PayoutBeneficiary`) and mints the **single-use quote that is the
         only thing `POST /v1/payouts` will accept**. Nothing is created and no money moves.
 
@@ -754,8 +760,8 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '409':
           description: |
-            `profile_required` — this wallet has no profile (phone number and name), which the
-            cash-out partner needs. There is no `/v1` route for it: save one with the wallet's
+            `profile_required` — this wallet has no profile (phone number and name). There is no
+            `/v1` route for it: save one with the wallet's
             own `POST /profile` (same signature headers; body
             `{"phone": "2547XXXXXXXX", "first_name": "…", "last_name": "…"}`) or in the Kakitu
             app.
@@ -796,8 +802,14 @@ paths:
     post:
       operationId: createPayout
       tags: [Payouts]
-      summary: Confirm a signed payout
+      summary: Confirm a signed payout (coming soon)
+      x-kakitu-status: coming-soon
       description: |
+        Coming soon. Payouts are being rebuilt so that Kakitu pays them itself, through KCB.
+        Until then this route answers `403 payouts_disabled`. The shapes below describe the API
+        as it stood and may change when payouts return.
+        See https://developer.kakitu.org/docs/payouts.
+
         Spends a quote from `POST /v1/payouts/quote` and accepts the payout. The body is the
         quote id plus that quote, signed.
 
@@ -1045,8 +1057,14 @@ paths:
     post:
       operationId: requestPayout
       tags: [Payouts]
-      summary: Ask a person to approve a payout before anything is signed
+      summary: Ask a person to approve a payout before anything is signed (coming soon)
+      x-kakitu-status: coming-soon
       description: |
+        Coming soon. Payouts are being rebuilt so that Kakitu pays them itself, through KCB.
+        Until then this route answers `403 payouts_disabled`. The shapes below describe the API
+        as it stood and may change when payouts return.
+        See https://developer.kakitu.org/docs/payouts.
+
         A payout **above** the merchant's `hold_above_kes` (see `GET /v1/limits`) is decided by
         a person before it is signed. This route asks. **Nothing is priced, signed or counted
         against the day's budget**, so a request can wait as long as a person takes: the answer
@@ -1402,8 +1420,15 @@ paths:
     post:
       operationId: createQuote
       tags: [Reads]
-      summary: Price a deposit or a withdrawal
+      summary: Price a deposit or a withdrawal (not available today)
+      x-kakitu-status: not-available
       description: |
+        Not available today. This route priced deposits and withdrawals on an M-Pesa route
+        Kakitu no longer uses; do not build on it, and expect `503 rail_unavailable`. For the
+        price of a cash-out to the wallet's own M-Pesa number read `kes_offramp_fee_bps` and
+        `kes_offramp_fee_min_kes` in `GET /config`. The rest of this description is the route as
+        it stood.
+
         A price, and only a price. **No order, charge or transfer is created**, which is why this
         `POST` takes **no `Idempotency-Key`** — sending one is harmless but pointless.
 
@@ -1413,7 +1438,7 @@ paths:
           sent. `beneficiary` is **required**.
 
         The response carries no quote id, no rail, no treasury address and no signing amount.
-        There is deliberately no `quote_id`: the pricing partner's own id is not yours to hold,
+        There is deliberately no `quote_id`: an outside id is not yours to hold,
         and there is no route today that would redeem one.
 
         Unknown fields are refused outright (`400 invalid_request`). Body limit 4 KiB.
@@ -1454,8 +1479,8 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '409':
           description: |
-            `profile_required` — this wallet has no profile (phone number and name), which the
-            cash-out partner needs. There is no `/v1` route for it: save one with the wallet's
+            `profile_required` — this wallet has no profile (phone number and name). There is no
+            `/v1` route for it: save one with the wallet's
             own `POST /profile` (same signature headers; body
             `{"phone": "2547XXXXXXXX", "first_name": "…", "last_name": "…"}`) or in the Kakitu
             app.
@@ -2056,8 +2081,8 @@ components:
           maxLength: 100
           description: |
             1 to 100 characters. No control, invisible or text-direction characters. It is the
-            name an operator vets. It is not sent with the M-Pesa prompt on a collection today.
-            Frozen once the merchant is past `pending`.
+            name Kakitu vets and the name on the verified-merchant badge. Frozen once the
+            merchant is past `pending`.
         contact_email:
           type: string
           maxLength: 254

@@ -8,7 +8,7 @@ import TabItem from '@theme/TabItem';
 
 # Orders
 
-An order is one movement of money between shillings and KSHS for your own wallet: a **deposit** (shillings in, KSHS credited) or a **withdrawal** (KSHS sent, shillings paid out).
+An order is one movement of money between shillings and KSHS for your own wallet: a **deposit** (shillings in, KSHS credited) or a **withdrawal** (KSHS sent, shillings paid out). **This page reads the history of past orders** made through Kakitu's earlier M-Pesa deposit and withdrawal route. A [cash-out to your own M-Pesa number](./cash-out) is not an order here: the app and the extension track it themselves.
 
 **This API does not create orders.** There is no `POST /v1/orders`. Orders are created by Kakitu's own deposit and withdrawal flows for the wallet that owns them; this endpoint is how you read one you already have an id for. Collections are a different thing entirely and have their own ids — see [Collections](./collections).
 
@@ -181,7 +181,7 @@ These six are the whole set. Internally an order walks through far more steps th
 
 ## What is not in the response
 
-No reference, no phone number, no transaction hash, no partner name, no partner status, no partner order id, no failure text. Some of it is the payer's, some of it is a partner's, and none of it is yours to be given by us. If you need to reconcile against your own records, use the id.
+No reference, no phone number, no transaction hash, no internal identifiers, no outside status, no failure text. Some of it is the payer's, some of it is not Kakitu's to give, and none of it is yours to be given by us. If you need to reconcile against your own records, use the id.
 
 ## Errors
 
