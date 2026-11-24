@@ -99,14 +99,25 @@ const FIELDS = {
     "kes_offramp_fee_min_kes", "burn_kshs", "phone_not_verified", "destination_locked",
     "POST /ramp/kes/quote",
   ],
-  "docs/extension.md": ["ebcjlgfjbbgoldipdhbcmciebdiadifg", "reference"],
+  "docs/extension.md": [
+    "ebcjlgfjbbgoldipdhbcmciebdiadifg", "reference",
+    // extension 0.2.7: pay() without connect(), its two new refusals, the Lipa button, the badge
+    "ALREADY_PENDING", "RATE_LIMITED", "NOT_CONNECTED", "kakitu:payfailed", "kakitu:paid",
+    "GET /merchants/verified/{address}",
+  ],
   "docs/errors.md": ["deposits_paused"],
   "docs/merchants.md": ["POST /v1/merchants"],
 };
 
 // Prose that must be on the page, as plain text (these are sentences, not fields).
 const PHRASES = {
-  "docs/extension.md": ["Chrome Web Store", "is refused", "spaces or emoji"],
+  "docs/extension.md": [
+    "Chrome Web Store", "is refused", "spaces or emoji",
+    "Lipa na Kakitu", "not proof of payment", "Content-Security-Policy", "Verified Kakitu merchant",
+    // the snippet's distinctive lines, so the docs and the kakitu.org dashboard cannot drift
+    'class="lipa-na-kakitu"', "if (reason !== 'UNCONFIRMED') btn.disabled = false;",
+    "e.reason === 'NOT_CONNECTED'", "amountKes: String(btn.dataset.amount)",
+  ],
   // Merchants onboard at kakitu.org/merchant with a wallet made in the Kakitu app; the docs
   // never make a wallet (founder decision, 2026-11-22).
   "docs/quickstart.md": ["kakitu.org/merchant", "Kakitu app"],
