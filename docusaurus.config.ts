@@ -28,9 +28,8 @@ const config: Config = {
         // https://cdn.jsdelivr.net/npm/@scalar/api-reference with NO version, and it injects
         // that tag into preBodyTags — which is GLOBAL. Every page on this site was loading
         // whatever jsdelivr happened to serve as `latest` at the moment the page opened,
-        // executing with full DOM access. On /signup, which generates a merchant's private
-        // key in the browser, that is a third party we do not control sharing a document with
-        // a secret that controls real money.
+        // executing with full DOM access: a third party we do not control sharing a document
+        // with whatever a reader types into this site.
         //
         // static/js/scalar-api-reference.js is @scalar/api-reference@1.76.0, the version that
         // URL resolved to on 2026-10-26, vendored verbatim.
@@ -82,8 +81,8 @@ const config: Config = {
           label: 'Docs',
         },
         {
-          to: '/signup',
-          label: 'Register',
+          href: 'https://kakitu.org/merchant',
+          label: 'Become a merchant',
           position: 'right',
         },
         {

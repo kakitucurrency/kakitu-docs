@@ -4,10 +4,9 @@ import React, {useEffect} from 'react';
 //
 // WHY IT EXISTS: a redeploy changes every chunk's content hash. A tab that was already open
 // still holds the old page shell, which names chunk filenames that no longer exist on the
-// server, so the next lazy load — navigating to another doc, or pressing "Generate my key" on
-// /signup — fails with the browser's own useless message, "Loading chunk 73 failed". The site
-// is fine; that one tab is stale. A reload fixes it, but nobody outside this team knows that,
-// and on /signup it reads as "the key generator is broken".
+// server, so the next lazy load — navigating to another doc, or opening the API reference —
+// fails with the browser's own useless message, "Loading chunk 73 failed". The site is fine;
+// that one tab is stale. A reload fixes it, but nobody outside this team knows that.
 //
 // So: reload once, automatically. The fresh page names the chunks that do exist.
 //
