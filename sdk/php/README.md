@@ -1,6 +1,8 @@
 # Kakitu PHP SDK
 
-A PHP 8.1+ client for the Kakitu developer API, usable from Laravel, Symfony or plain PHP. There is no WooCommerce plugin; this is a library you call from your own code. M-Pesa collections work for an approved merchant, and payouts once an operator switches them on for yours (see [the introduction](https://developer.kakitu.org/docs/intro)).
+A PHP 8.1+ client for the Kakitu developer API, usable from Laravel, Symfony or plain PHP. There is no WooCommerce plugin; this is a library you call from your own code.
+
+**Status:** merchants apply at [kakitu.org/merchant](https://kakitu.org/merchant) and Kakitu approves them. `charges.create` is coming soon (rebuilt as a KSHS payment request) and the payout-sending calls are coming soon (being rebuilt on KCB); take payment today with a KSHS transfer and a `reference` ([status](https://developer.kakitu.org/docs/going-live#what-is-live)). The reads, transfers and webhooks work today.
 
 Kakitu authenticates by **request signing**, not a bearer token: every request is signed with your
 wallet's private key. This SDK does that for you. You never build a signature, a timestamp or a header.
@@ -44,7 +46,7 @@ $merchant = $kakitu->merchants->register([
 // 2. Check your state at any time.
 echo $kakitu->merchants->me()['state'];   // "pending", then "approved"
 
-// 3. Charge a customer's M-Pesa.
+// 3. Charges are coming soon (as KSHS payment requests); this call is shown for the shape only.
 $charge = $kakitu->charges->create(
     ['amount' => 1500, 'phone' => '+254700000000', 'reference' => 'order-1042'],
     ['idempotency_key' => 'order-1042'],   // optional; see "Safe retries"

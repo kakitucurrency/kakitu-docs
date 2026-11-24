@@ -13,17 +13,18 @@ Base gas, so your customer needs KSHS and nothing else.
 The extension is on the [Chrome Web Store](https://chromewebstore.google.com/detail/ebcjlgfjbbgoldipdhbcmciebdiadifg)
 (extension id `ebcjlgfjbbgoldipdhbcmciebdiadifg`). It is Chrome only, and most of your customers
 will still not have it, so always offer the [phone flow](#pay-with-kakitu-on-a-phone) beside a
-**Pay with Kakitu** button, and build for `getKakituWallet()` resolving `null`.
+**Lipa na Kakitu** button, and build for `getKakituWallet()` resolving `null`.
 :::
 
-This page is the website side. Nothing here uses the signed `/v1` API: a merchant can accept
-extension payments before, or without, registering as a [merchant](./merchants).
+This page is the website side. Nothing here uses the signed `/v1` API: a business can accept
+extension payments before, or without, becoming a [verified merchant](./merchants). Becoming one
+puts the verified badge on your shoppers' payment sheet.
 
 | You want to | You call | Internal request |
 |---|---|---|
 | Know who this visitor is | `kakitu.connect()` | `CONNECT` |
 | Log them in, cryptographically | `kakitu.signIn()` | `SIGN_IN` |
-| Take their money | `kakitu.pay()` | `PAY` |
+| Take their money | `kakitu.pay()`, no `connect()` needed first (extension 0.2.7) | `PAY` |
 | Decide what to render, without a prompt | `kakitu.getState()` | `GET_STATE` |
 
 The internal names appear in the extension's own logs and error reports; your page only ever
@@ -197,7 +198,17 @@ With ethers instead of viem, step 1 is
 also verifies these messages unchanged. There is no Kakitu endpoint that verifies a sign-in for
 you: it is a standard signature and you check it like any other.
 
-## PAY: `pay()`
+## PAY: `pay()` {#pay-pay}
+
+**From extension 0.2.7, `pay()` needs no `connect()` first.** If your site is not connected yet,
+the extension shows its connect sheet and then, if the customer approves, the payment sheet for
+the same call, the way MetaMask does. Your site is connected from then on, and the result is the
+same object as below. If the customer declines the connect, `pay()` rejects with `USER_REJECTED`
+and nothing is signed. A site that is not connected may make at most 3 such payment requests a
+minute (`RATE_LIMITED`), and one request per site waits at a time (`ALREADY_PENDING`). Extensions
+before 0.2.7 reject `pay()` from a site that is not connected with `NOT_CONNECTED`: call
+`connect()`, then `pay()` again. The [Lipa na Kakitu button](#lipa-na-kakitu-button) does that
+for you.
 
 ```ts
 await kakitu.pay({
@@ -237,10 +248,126 @@ shown and echoed but never sent; sanitise it on your page first.
 **A reference is the payer's claim, not proof.** Anybody can pay your address with any reference.
 Use it to find the order, then check the amount and the recipient against that order.
 
-**A resolved `pay()` is not proof of payment.** If you are an approved merchant, wait for
+### A resolved `pay()` is not proof of payment {#not-proof}
+
+If you are an approved merchant, wait for
 `transfer.received`; either way, confirm on Base from your server: a `Transfer` log on the KSHS
 contract (`kshs_contract` in `GET https://walletapi.kakitu.org/config`), to your address, for at
 least the amount *your server* priced, in a mined block, matched to exactly one order.
+
+## Lipa na Kakitu button {#lipa-na-kakitu-button}
+
+A ready-made **Lipa na Kakitu** button for any web page. Paste it in, put your own address in
+`data-to`, and set `data-amount` and `data-reference` for each order. A shopper with the Kakitu
+extension clicks it and the payment sheet opens. A shopper without it sees **Install Kakitu to
+pay**, and a click goes to the Chrome Web Store.
+
+```html
+<!-- Lipa na Kakitu. Set data-amount (shillings, e.g. "1250" or "1250.50") and data-reference (your order number) for each order. -->
+<button type="button" class="lipa-na-kakitu" data-to="0xYOUR_KAKITU_ADDRESS" data-amount="100" data-reference="ORDER-1">Lipa na Kakitu</button>
+<a class="lipa-na-kakitu-install" href="https://chromewebstore.google.com/detail/kakitu-wallet/ebcjlgfjbbgoldipdhbcmciebdiadifg" target="_blank" rel="noopener" hidden>Install Kakitu to pay</a>
+<script>
+(function () {
+  var STORE = 'https://chromewebstore.google.com/detail/kakitu-wallet/ebcjlgfjbbgoldipdhbcmciebdiadifg';
+  function findKakitu(ms) {
+    if (window.kakitu && window.kakitu.isKakitu) return Promise.resolve(window.kakitu);
+    return new Promise(function (resolve) {
+      var done = false;
+      function finish(p) { if (done) return; done = true; window.removeEventListener('kakitu:announceProvider', onAnnounce); resolve(p); }
+      function onAnnounce(e) { if (e.detail && e.detail.info && e.detail.info.rdns === 'org.kakitu.wallet') finish(e.detail.provider); }
+      window.addEventListener('kakitu:announceProvider', onAnnounce);
+      window.dispatchEvent(new Event('kakitu:requestProvider'));
+      setTimeout(function () { finish(null); }, ms);
+    });
+  }
+  function pay(kakitu, params) {
+    return kakitu.pay(params).catch(function (e) {
+      // Kakitu extensions before 0.2.7 ask the site to connect first.
+      if (e && e.reason === 'NOT_CONNECTED') return kakitu.connect({}).then(function () { return kakitu.pay(params); });
+      throw e;
+    });
+  }
+  var buttons = document.querySelectorAll('button.lipa-na-kakitu');
+  findKakitu(1500).then(function (kakitu) {
+    if (!kakitu) document.querySelectorAll('a.lipa-na-kakitu-install').forEach(function (a) { a.hidden = false; });
+  });
+  buttons.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      findKakitu(1500).then(function (kakitu) {
+        if (!kakitu) { window.location.href = STORE; return; }
+        var params = { to: btn.dataset.to, amountKes: String(btn.dataset.amount) };
+        if (btn.dataset.reference) params.reference = btn.dataset.reference;
+        btn.disabled = true;
+        pay(kakitu, params).then(function (result) {
+          btn.disabled = false;
+          btn.dispatchEvent(new CustomEvent('kakitu:paid', { bubbles: true, detail: result }));
+        }, function (e) {
+          var reason = e && e.reason;
+          if (reason !== 'UNCONFIRMED') btn.disabled = false;
+          btn.dispatchEvent(new CustomEvent('kakitu:payfailed', { bubbles: true, detail: { reason: reason, message: e && e.message, txHash: e && e.data && e.data.txHash } }));
+        });
+      });
+    });
+  });
+})();
+</script>
+```
+
+- `data-amount` is shillings, as a string (`"1250"` or `"1250.50"`); `data-reference` is your
+  order number, within the [`reference` rules](#pay-pay).
+- It makes no network call of its own and loads no third-party script. It calls `pay()` directly.
+  On an extension older than 0.2.7, which answers `NOT_CONNECTED`, it calls `connect()` once and
+  tries again, so the button works on every published version.
+- On `UNCONFIRMED` the button **stays disabled**: the money may have moved, and re-enabling it
+  invites a second payment. Every other outcome re-enables it.
+
+The result comes back as a DOM event from the button. Listen on the button or any parent:
+
+| Event | `detail` | When |
+|---|---|---|
+| `kakitu:paid` | The `pay()` result: `txHash`, `confirmed`, `reference` and the rest | The relay accepted the transfer. |
+| `kakitu:payfailed` | `{ reason, message, txHash }`; `txHash` only for `UNCONFIRMED` | The customer said no, or it did not go through. `reason` is one of the [error reasons](#errors). |
+
+```js
+document.addEventListener('kakitu:paid', (e) => {
+  // Not proof of payment. Tell your server the order may be paid, and let it check.
+  fetch('/orders/check', { method: 'POST', body: JSON.stringify({ txHash: e.detail.txHash }) });
+});
+```
+
+**A `kakitu:paid` event is not proof of payment; confirm on your server.** It is something the
+shopper's browser told you. See [A resolved `pay()` is not proof](#not-proof).
+
+**If your site sets a `Content-Security-Policy` that forbids inline scripts**, move the body of
+the `<script>` into a file you host yourself and load it with `<script src="/lipa-na-kakitu.js"></script>`.
+Nothing else changes.
+
+### The verified-merchant badge
+
+When the payment is to the address of a merchant Kakitu has approved, the extension's payment
+sheet shows **Verified Kakitu merchant** and the business name, with a line saying Kakitu has not
+checked that the site belongs to that business. Any other address gets a warning: "Not a verified
+Kakitu merchant — only pay if you trust this site." The badge is about the address being paid,
+never about the site. [Apply at kakitu.org/merchant](./merchants) so your shoppers see it. (The
+badge is rolling out with extension 0.2.7.)
+
+The same answer is public:
+
+```http
+GET /merchants/verified/{address}
+Host: walletapi.kakitu.org
+```
+
+No signature: anybody may ask.
+
+```json
+{ "verified": true, "business_name": "Mama Njeri Groceries" }
+```
+
+or `{"verified": false}`, which is the same answer, byte for byte, for an address that never
+applied and for one that is pending, rejected or suspended. A malformed address is
+`400 invalid_address`; `503 unavailable` means the lookup could not be made, and is never a no.
+Answers are cached for 60 seconds, and the route allows 60 requests a minute per IP.
 
 ## Errors
 
@@ -252,9 +379,11 @@ Every rejection carries `code` (the EIP-1193 number) and `reason` (the Kakitu co
 | `USER_REJECTED` | 4001 | The customer said no. | Nothing. Not an error. |
 | `LOCKED` | 4100 | The wallet is locked. | Ask them to open the extension. |
 | `NO_WALLET` | 4100 | No wallet on this browser yet. | Point them at onboarding. |
-| `NOT_CONNECTED` | 4100 | Your origin has no access, or it was revoked. | Call `connect()`. |
+| `NOT_CONNECTED` | 4100 | Your origin has no access, or it was revoked. Sign-in only, and `pay()` on extensions before 0.2.7. | Call `connect()`. |
 | `FORBIDDEN` | 4100 | Refused, including for flooding the wallet. | Slow down. |
 | `INVALID_PARAMS` | -32602 | Your arguments. | `message` names the field. |
+| `ALREADY_PENDING` | -32002 | A request from your site is already waiting for the customer. | Wait for it. |
+| `RATE_LIMITED` | -32005 | More than 3 payment requests a minute from a site that is not connected. | Wait a minute. |
 | `LIMIT_EXCEEDED` | -32005 | Over the per-transaction or daily cap. | `data.limitKes` is the cap. |
 | `INSUFFICIENT_FUNDS` | -32005 | Not enough KSHS. | Offer a top-up. |
 | `RELAY_UNAVAILABLE` | -32005 | The relayer cannot pay gas right now. | Nothing moved. Retry shortly. |

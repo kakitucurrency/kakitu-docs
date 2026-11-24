@@ -1,33 +1,32 @@
 ---
 sidebar_position: 5
-title: Collections
+title: Collections (coming soon)
 ---
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# Collections
+# Collections (coming soon)
 
-A collection (a *charge*) asks a payer's phone to approve an M-Pesa payment. When they pay, your merchant wallet is credited in KSHS.
+**`POST /v1/charges` is coming soon, rebuilt as a KSHS payment request.** Do not build on it today: new charges cannot be created. Take payment with a KSHS transfer and a `reference`, as below.
 
-**You are credited less than `amount`.** `amount` is what the payer is asked for. Our payment partner converts those shillings to USDC at its rate and takes its fee, and we mint KSHS against the USDC that arrives, at our rate net of the mint spread (`mint_spread_bps` in [`GET /config`](https://walletapi.kakitu.org/config)). The KSHS minted to you is the credit: never more than `amount`, and usually a little less. Once the charge is paid, **the charge and its webhooks carry both numbers**: `fee_kes`, what the collection cost, and `credited_kes`, what reached your wallet (`amount` less `fee_kes`), in whole shillings. Both are `null` until the charge is paid. See [Pricing, limits and settlement](./pricing).
+## Today: a transfer with a reference {#today}
 
-:::info Collections are on for approved merchants
-Merchant collections were switched on in production on 30 October 2026. An **approved** merchant
-can create charges today, within its caps (see [Limits](#limits)). A merchant that is not approved
-is refused before anything happens. Collections stay a platform switch an operator can turn off;
-while it is off, `POST /v1/charges` answers `503 rail_unavailable` and nobody is prompted.
-:::
+Ask the payer to send KSHS to your address with your order number as the `reference`:
 
-## Operator approval is required
+- **On a website**, the [Lipa na Kakitu button](./extension#lipa-na-kakitu-button) or a direct call to the extension's [`pay()`](./extension#pay-pay), with `to`, `amountKes` and `reference`.
+- **On a phone or at a counter**, a [`kakitu:` link or QR code](./extension#pay-with-kakitu-on-a-phone) carrying the reference.
+- **From another business's server**, a [`POST /v1/transfers`](./transfers) with a `reference`.
 
-**Collections only work for an approved merchant.** A `pending`, `rejected` or `suspended` merchant is refused (`merchant_not_approved` or `merchant_suspended`, both 403) before anything else happens.
+You are told by the signed [`transfer.received`](./events#transferreceived) webhook once you are an approved merchant with a `callback_url`; its `transfer.reference` carries your order number. Your dashboard at kakitu.org/merchant lists the same payments, and [`GET /transfers`](./transfers#get-transfers) reads them from your server. **A reference is the payer's claim, not proof**: check the amount and the recipient on chain and match each payment to exactly one order ([the rule](./extension#pay-pay)).
 
-The reason is plain: a collection **rings a stranger's handset with a real M-Pesa PIN prompt**. That prompt is issued by our payment partner, and your `business_name` is not sent with it today, so the payer has to recognise the amount and the moment, not your name. Tell them a prompt is coming before you create the charge. Without a human check, the endpoint would be a phishing tool. So a Kakitu operator reviews every merchant first. See [Going live](./going-live).
+## What is coming {#what-is-coming}
 
-Collections are also a platform-wide switch. It is on today; if an operator turns it off, `POST /v1/charges` answers `503 rail_unavailable` before anything is written: no handset is rung, no charge row exists, and the `reference` stays free.
+A charge will become **a payment request in KSHS**: you create it with an amount and a reference, the payer approves it in the Kakitu app or the extension, and you are told when the transfer lands. No M-Pesa prompt is involved, and nothing about it costs the payer a fee. The request and webhook shapes will be published here before it opens.
 
-**A blocked wallet is refused first.** If Kakitu has blocked your merchant wallet, `POST /v1/charges` answers `403 account_blocked` before the body is read, and nobody is prompted.
+## Past charges
+
+Charges created before this change can still be read. `GET /v1/charges` and `GET /v1/charges/{id}` answer as below, and the [`charge.*` events](./events) that belong to them can still be listed and replayed. Each past charge carries `fee_kes` (what the collection cost) and `credited_kes` (what reached your wallet, `amount` less `fee_kes`), in whole shillings, or `null` if it was never paid.
 
 ## Running these examples
 
@@ -75,164 +74,6 @@ kakitu() {
 query string is inside the signed message, so quote it and change it nowhere else.
 
 </details>
-
-## `POST /v1/charges`
-
-Requires `Idempotency-Key` (below).
-
-| Field | Type | Rules |
-|---|---|---|
-| `amount` | integer, required | Whole KES, greater than zero. Subject to the minimum the rail will collect and your per-charge maximum. |
-| `phone` | string, required | The payer's Kenyan mobile number. Normalised once, then used for everything. |
-| `reference` | string, required | Your own identifier. At most 128 characters. Unique per merchant. |
-
-<Tabs groupId="lang">
-<TabItem value="curl" label="cURL" default>
-
-```bash
-# Idempotency-Key is REQUIRED here. Without it: 400 idempotency_key_required, and no handset
-# is rung. Keep the key: resending the SAME key after a timeout returns the original answer.
-KEY=$(uuidgen)
-kakitu POST /v1/charges \
-  '{"amount":500,"phone":"254700000001","reference":"order-1042"}' \
-  -H "Idempotency-Key: $KEY"
-```
-
-`201`, and `status` is `prompted` when the rail says the push went out, `pending` when it
-accepted the order but could not confirm the prompt. On a timeout, send it again with
-`$KEY` unchanged &mdash; the stored answer comes back with `Idempotent-Replayed: true`.
-
-</TabItem>
-<TabItem value="ts" label="TypeScript">
-
-```ts title="charge.mjs"
-// node charge.mjs - needs kakitu.mjs from the Authentication page beside it.
-import { randomUUID } from "node:crypto";
-import { Wallet } from "ethers";
-import { signedHeaders } from "./kakitu.mjs";
-
-const BASE_URL = "https://walletapi.kakitu.org";
-const wallet = new Wallet(process.env.KAKITU_PRIVATE_KEY);
-
-// call() on the Authentication page sends no Idempotency-Key, and this route REQUIRES one,
-// so build the request here instead.
-export async function createCharge(body, key = randomUUID()) {
-  const raw = JSON.stringify(body);                 // serialise ONCE, sign and send this string
-  const headers = await signedHeaders(wallet, "POST", "/v1/charges", raw);
-  headers["Content-Type"] = "application/json";
-  // REQUIRED. Without it: 400 idempotency_key_required and no handset is rung.
-  headers["Idempotency-Key"] = key;
-  const res = await fetch(BASE_URL + "/v1/charges", { method: "POST", headers, body: raw });
-  return { status: res.status, replayed: res.headers.get("Idempotent-Replayed") === "true",
-           body: await res.json() };
-}
-
-const key = randomUUID();   // keep it: a retry must reuse THIS key, not a fresh one
-const out = await createCharge({ amount: 500, phone: "254700000001", reference: "order-1042" }, key);
-console.log(out.status, out.body.id, out.body.status);   // 201 ... "prompted" or "pending"
-```
-
-</TabItem>
-<TabItem value="py" label="Python">
-
-```python title="charge.py"
-# python charge.py - needs kakitu.py from the Authentication page beside it.
-import json
-import os
-import uuid
-
-import requests
-from eth_account import Account
-from kakitu import BASE_URL, signed_headers
-
-account = Account.from_key(os.environ["KAKITU_PRIVATE_KEY"])
-
-
-# call() on the Authentication page sends no Idempotency-Key, and this route REQUIRES one,
-# so build the request here instead.
-def create_charge(payload, key=None):
-    key = key or str(uuid.uuid4())
-    raw = json.dumps(payload, separators=(",", ":")).encode()   # serialise ONCE, sign and send this
-    headers = signed_headers(account, "POST", "/v1/charges", raw)
-    headers["Content-Type"] = "application/json"
-    # REQUIRED. Without it: 400 idempotency_key_required and no handset is rung.
-    headers["Idempotency-Key"] = key
-    res = requests.post(BASE_URL + "/v1/charges", headers=headers, data=raw, timeout=30)
-    return res.status_code, res.headers.get("Idempotent-Replayed") == "true", res.json()
-
-
-key = str(uuid.uuid4())   # keep it: a retry must reuse THIS key, not a fresh one
-status, replayed, body = create_charge(
-    {"amount": 500, "phone": "254700000001", "reference": "order-1042"}, key)
-print(status, body["id"], body["status"])   # 201 ... "prompted" or "pending"
-```
-
-</TabItem>
-<TabItem value="php" label="PHP">
-
-```php title="charge.php"
-<?php
-// php charge.php - needs kakitu.php from the Authentication page beside it.
-declare(strict_types=1);
-require __DIR__ . '/kakitu.php';
-
-// kakitu_call() on the Authentication page sends no Idempotency-Key, and this route REQUIRES
-// one, so build the request here instead.
-function create_charge(string $privateKeyHex, array $payload, string $key): array
-{
-    $raw = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);  // encode ONCE
-    $headers = kakitu_headers($privateKeyHex, 'POST', '/v1/charges', $raw);
-    $headers['Content-Type'] = 'application/json';
-    // REQUIRED. Without it: 400 idempotency_key_required and no handset is rung.
-    $headers['Idempotency-Key'] = $key;
-
-    $lines = [];
-    foreach ($headers as $k => $v) {
-        $lines[] = "$k: $v";
-    }
-    $ch = curl_init(KAKITU_BASE_URL . '/v1/charges');
-    curl_setopt_array($ch, [
-        CURLOPT_POST => true,
-        CURLOPT_HTTPHEADER => $lines,
-        CURLOPT_POSTFIELDS => $raw,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 30,
-    ]);
-    $out = curl_exec($ch);
-    $status = curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-    curl_close($ch);
-    return [$status, json_decode((string) $out, true)];
-}
-
-// Keep the key: a retry must reuse THIS one, not a fresh one.
-$key = bin2hex(random_bytes(16));
-[$status, $body] = create_charge(getenv('KAKITU_PRIVATE_KEY'), [
-    'amount' => 500, 'phone' => '254700000001', 'reference' => 'order-1042',
-], $key);
-echo $status, ' ', $body['id'], ' ', $body['status'], PHP_EOL;   // 201 ... prompted or pending
-```
-
-</TabItem>
-</Tabs>
-
-Provisional response:
-
-```json
-{
-  "id": "…",
-  "reference": "order-1042",
-  "amount": 500,
-  "currency": "KES",
-  "status": "prompted",
-  "created_at": "2026-10-25T12:00:00Z",
-  "paid_at": null,
-  "settled_at": null,
-  "fee_kes": null,
-  "credited_kes": null
-}
-```
-
-A field the server owns — `id`, `status`, `currency`, `created_at`, `paid_at`, `settled_at`, `fee_kes`, `credited_kes` — is tolerated and dropped if you echo it back from a charge you read, so round-tripping a charge object does not break. It is never obeyed. Any other unknown field is refused with `invalid_request`, and the message names it.
 
 ## `GET /v1/charges/{id}`
 
@@ -437,46 +278,10 @@ The list is scoped to your merchant in the query itself, not by a filter we reme
 |---|---|
 | `pending` | Created, nothing sent yet. |
 | `prompted` | The payer's handset has been rung. |
-| `paid` | The rail says the payer paid. |
-| `settled` | Your wallet has been credited on chain with the KSHS minted for this payment, which is `credited_kes`, less than `amount` ([why](./pricing#fees)). Final. |
+| `paid` | The payer paid. |
+| `settled` | Your wallet was credited on chain with `credited_kes`, which is `amount` less `fee_kes`. Final. |
 | `failed` | The attempt did not complete. |
 | `expired` | The charge ran out of time. |
 | `cancelled` | Cancelled. Final. |
 
-A charge only moves forward. `pending` can also stay `pending` if the rail accepted the order but could not confirm the prompt went out.
-
-## Idempotency
-
-**Every money-moving `POST` requires an `Idempotency-Key` header**: a string you generate, at most 255 characters, a UUID is ideal. It exists so a timeout never means a double charge: if you do not know whether a request worked, resend it with the **same key** and you get the original answer, not a second prompt.
-
-- **Same key, same request:** the stored response is returned with the header `Idempotent-Replayed: true`. Only successful (2xx) responses are stored.
-- **Same key, different body, path or query:** `409 idempotency_key_reuse`. A key names one request. Use a new key for a new request.
-- **Same key while the first is still running:** `409 idempotency_key_in_progress`. Wait and retry with the same key.
-- **No key:** `400 idempotency_key_required`. Over 255 characters: `400 idempotency_key_invalid`.
-- **Store unavailable:** `503 idempotency_unavailable`. Retry with the same key.
-- Keys are held for 24 hours.
-
-### When a retry needs a new reference as well
-
-If the payment rail refuses a charge **before** a handset is rung (for example `amount_below_minimum`, `amount_above_maximum`, `rate_limited` for too many prompts to that payer, or `rail_unavailable` because the rail cannot take a collection right now), the key is released and you may reuse it. But the charge row and its `reference` were already written (the charge is left `failed`), so that **reference is now closed**. A retry must use **the same key and a new `reference`**, otherwise you get `409 reference_reused`. The error message says "retry with a new reference" when this applies.
-
-Refusals made earlier, by Kakitu's own checks (not approved, a blocked wallet, malformed request, a reference you already used, your daily cap, per-charge maximum or per-minute rate, the payer's daily limits, or collections switched off), write no charge row, so the reference stays free. Fix the cause and retry.
-
-### A 503 on a charge
-
-`503 rail_unavailable` on this route always means **nobody was prompted**. It comes in two kinds, and the difference is only whether a charge row was written:
-
-- **Before the row** (collections switched off, our limiter or block check unavailable): the `reference` stays free.
-- **After the row, before the prompt** (the rail refused before dispatching anything): the `reference` is closed, as above.
-
-You cannot tell them apart from the status, so **check before choosing a reference**: read `GET /v1/charges?reference=<your reference>`. If a charge comes back (it will be `failed`), use a new reference; if none does, the old one is still free.
-
-An outcome we cannot determine (the request may have reached the rail and the payer's handset may be ringing) is never a `503`. It is `409 idempotency_key_acted`, below.
-
-### idempotency_key_acted
-
-If the request may have reached the rail, so a handset may have been rung, but the outcome is not known, you get `409 idempotency_key_acted`, **possibly on the first attempt**, and every retry with that key in the 24-hour window gets it too. The message names the charge id. **Do not retry with this key or a new reference.** Read the charge (`GET /v1/charges/{id}` or by `reference`): if the payer pays, it moves to `paid` by itself. Sending again could prompt the payer twice.
-
-## Limits
-
-Per-merchant daily and per-charge caps, a per-minute rate, and two per-payer daily limits apply. See [Rate limits](./rate-limits#limits-that-apply-to-collections) for the codes and today's platform values. The largest single charge is also bounded by the collection partner's per-order ceiling, `deposit_max_per_order_usd` in [`GET /config`](https://walletapi.kakitu.org/config), which is lower than the default per-charge cap: see [Pricing, limits and settlement](./pricing#limits).
+A charge only moves forward.

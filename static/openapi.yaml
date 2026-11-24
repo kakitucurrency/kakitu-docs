@@ -1,49 +1,49 @@
 openapi: 3.1.0
 info:
   title: Kakitu developer API
-  version: 0.4.0
-  summary: Register a business, move KSHS, and collect and pay out by M-Pesa.
+  version: 0.5.0
+  summary: Register a business, move KSHS with Kakitu paying the gas, and be told of every payment.
   license:
     name: MIT
     identifier: MIT
   description: |
-    Kakitu is a Kenyan shilling stablecoin (KSHS). The developer API lets a business register
-    its own wallet address, send KSHS with Kakitu paying the gas, read prices, balances and
-    orders, collect an M-Pesa payment credited in KSHS **at its own wallet address**, and pay out
-    to M-Pesa. Kakitu is non-custodial: it never holds the merchant's
-    money and never holds the merchant's key.
+    Kakitu is a Kenyan shilling stablecoin (KSHS). The developer API lets a business sign
+    requests with its own wallet key, send KSHS with Kakitu paying the gas, read balances and
+    its own history, and receive a signed webhook for every payment to its address. Kakitu is
+    non-custodial: it never holds the merchant's money and never holds the merchant's key.
 
     ## What is open today
 
-    **M-Pesa collections and payouts are switched on for the platform** (since 30 October 2026).
-    Collections work for an **approved** merchant, within its caps. Payouts also need the
-    merchant's own payout switch, which is off until an operator turns it on; until then the
-    payout routes answer `403 payouts_disabled`. Either platform switch can be turned off by an
-    operator without a release: collections then answer `503 rail_unavailable` before anything
-    is written. A business can also be paid with no registration at all, by a plain KSHS
-    transfer to its address — the Kakitu extension's `pay()`, a `kakitu:` link or a QR code. An approved merchant is told of it by a signed
-    `transfer.received` webhook, which carries the payer's `reference`; **a reference is the
-    payer's claim, not proof**, so the merchant still checks the amount and the recipient. See
-    https://developer.kakitu.org/docs/intro.
+    A business is paid by a plain KSHS transfer to its address — the Kakitu extension's
+    `pay()`, a `kakitu:` link or a QR code — with no registration at all. A merchant applies at
+    https://kakitu.org/merchant, signed in with the Kakitu extension, and a person at Kakitu
+    approves it. An approved merchant is told of each payment by a signed `transfer.received`
+    webhook, which carries the payer's `reference`; **a reference is the payer's claim, not
+    proof**, so the merchant still checks the amount and the recipient.
+
+    - `POST /v1/charges` is **coming soon**, rebuilt as a KSHS payment request. New charges
+      cannot be created today.
+    - The payout-sending routes (`POST /v1/payouts/requests`, `POST /v1/payouts/quote`,
+      `POST /v1/payouts`) are **coming soon**, being rebuilt on KCB. Today they answer
+      `403 payouts_disabled`.
+    - `POST /v1/quotes` is **not available today**.
+    - The read routes for past charges, payouts and orders keep working.
+
+    See https://developer.kakitu.org/docs/going-live#what-is-live.
 
     ## Access
 
-    The developer API is in private release. Registration is open to anyone. Only the routes
-    that move money check approval: `POST /v1/charges` and `POST /v1/transfers` refuse a
-    merchant that is not `approved`, and so do the payout routes (`POST /v1/payouts/requests`,
-    `POST /v1/payouts/quote`, `POST /v1/payouts`, `POST /v1/payout-destinations`). Every other
-    route needs a signed request and nothing more.
+    The developer API is in private release. Only the routes that move money check approval:
+    `POST /v1/transfers` refuses a merchant that is not `approved`, and so do the payout routes
+    and saving a payout destination. Every other route needs a signed request and nothing more.
 
     **Payouts are off by default for each merchant.** They are governed by two switches that
-    are ANDed: a global one for the whole platform (on today), and a per-merchant one on your
-    own record (off until an operator turns it on). Both are an
-    operator's decision and neither can be turned on through this API. Until both are on, the
-    two routes that price and send a payout answer an approved merchant with
-    `403 payouts_disabled` — and which of the two is off is deliberately not revealed. A
-    merchant that is not approved gets `403 merchant_not_approved` first. The two read routes,
-    `GET /v1/payouts` and `GET /v1/payouts/{id}`, never answer `payouts_disabled`. Collecting
-    is a separate permission from paying out, with its own caps and its own counter; being
-    approved to collect does not enable payouts.
+    are ANDed: a global one for the whole platform, and a per-merchant one on your own record.
+    Neither can be turned on through this API. Until both are on, the routes that price and
+    send a payout answer an approved merchant with `403 payouts_disabled` — and which of the
+    two is off is deliberately not revealed. A merchant that is not approved gets
+    `403 merchant_not_approved` first. The two read routes, `GET /v1/payouts` and
+    `GET /v1/payouts/{id}`, never answer `payouts_disabled`.
 
     ## Trying requests from this page
 
@@ -181,7 +181,7 @@ info:
     reads keep working.
 
     **3. `POST /v1/quotes`: 30 a minute per address.** A second, process-local limit that holds
-    even when the shared store is down, because every quote is a live partner call. Over it
+    even when the shared store is down. Over it
     answers `429 rate_limited` with `Retry-After` (seconds left in the minute). It is not
     reflected in the `RateLimit-*` headers.
 
@@ -207,11 +207,11 @@ tags:
   - name: Public
     description: Unauthenticated platform configuration.
   - name: Charges
-    description: Collect an M-Pesa payment and be credited in KSHS. Approved merchants only.
+    description: Coming soon, as a KSHS payment request. Past charges stay readable.
   - name: Transfers
     description: Gasless KSHS transfers signed by the caller.
   - name: Payouts
-    description: Send shillings to an M-Pesa number, till, paybill or bank account. Off by default for each merchant and enabled per merchant by an operator. Above a threshold a person approves first.
+    description: Coming soon, being rebuilt on KCB. Past payouts stay readable.
   - name: Payout destinations
     description: The places you may pay, and the lock that holds you to them. The lock controls where cash-outs go; it does not stop KSHS transfers to other wallets.
   - name: Reads
@@ -252,8 +252,8 @@ paths:
 
         Registration is self-serve and instant, but it creates a **pending** merchant and nothing
         more. Approval, the webhook secret and the limits belong to a Kakitu operator; those
-        fields do not exist on this request. A collection rings a stranger's handset with a real
-        M-Pesa PIN prompt, which is why approval is not self-serve.
+        fields do not exist on this request. A merchant applies at https://kakitu.org/merchant and a
+        person at Kakitu approves it; this route then updates the contact email and callback URL.
 
         `contact_phone` and `callback_url` are optional. **Absent or `null` leaves the stored
         value unchanged**; an explicit `""` clears it. Sending the wrong field name would
@@ -265,8 +265,8 @@ paths:
         `400 invalid_request` naming the key.
 
         `business_name` is frozen once the merchant is past `pending`, because it is the name an
-        operator vetted. It is not sent with the M-Pesa prompt on a collection today, so a payer
-        does not see it there. Submitting a different name then
+        person at Kakitu vetted, and it is what shoppers see on the verified-merchant badge.
+        Submitting a different name then
         answers `409 merchant_name_frozen`
         and the message states whether anything was saved.
 
@@ -345,38 +345,21 @@ paths:
     post:
       operationId: createCharge
       tags: [Charges]
-      summary: Create a collection — ring a payer's handset with an M-Pesa prompt
+      summary: Create a charge (coming soon, as a KSHS payment request)
+      x-kakitu-status: coming-soon
       description: |
-        Creates a charge and asks the payment rail to send an M-Pesa PIN prompt to `phone`. The
-        merchant must be **approved**; a `pending` or `rejected` merchant gets
-        `403 merchant_not_approved`, a suspended one `403 merchant_suspended`.
+        Coming soon. A charge is being rebuilt as a **KSHS payment request**: the merchant
+        creates it with an amount and a reference, the payer approves it in the Kakitu app or
+        the Kakitu extension, and the merchant is told when the transfer lands. No M-Pesa prompt
+        is involved. Do not build on this route today: new charges cannot be created, and the
+        request and response shapes below describe the earlier version and may change.
 
-        `reference` is yours and must be unique per merchant: a repeat answers
-        `409 reference_reused`.
+        **Today, take payment with a plain KSHS transfer and a `reference`**: the extension's
+        `pay()`, a `kakitu:` link or QR code, or `POST /v1/transfers`. The approved merchant is
+        told by the signed `transfer.received` webhook, whose `transfer.reference` carries the
+        order number. See https://developer.kakitu.org/docs/collections.
 
-        The response is a DTO. It carries no payer phone number, no payer hash, no rail name, no
-        provider status and no internal order id — which rail served the collection is not part
-        of the contract, and the `status` vocabulary below is Kakitu's own, never the rail's.
-
-        The server-owned fields `id`, `status`, `currency`, `created_at`, `paid_at`,
-        `settled_at`, `fee_kes` and `credited_kes` are accepted and dropped; any other unknown
-        field is `400 invalid_request`.
-
-        Collections are a platform switch, on today. If an operator turns it off, this route
-        answers `503 rail_unavailable` before anything is written. A wallet Kakitu has blocked
-        is refused with `403 account_blocked` before the body is read.
-
-        **The merchant is credited less than `amount`.** `amount` is what the payer is asked for;
-        the KSHS minted to the merchant is what the payment partner's USDC buys at Kakitu's rate
-        net of the mint spread — never more than `amount`, usually a little less. Once the charge
-        is paid, `fee_kes` and `credited_kes` on the charge and its webhooks carry both numbers;
-        they are `null` until then.
-
-        The largest charge is the lower of your per-charge maximum and the collection partner's
-        per-order ceiling, `deposit_max_per_order_usd` in `GET /config`.
-
-        Body limit 16 KiB. **`Idempotency-Key` is REQUIRED.** Retrying with the same key replays
-        the first response and the payer's handset rings exactly once.
+        Past charges stay readable with `GET /v1/charges` and `GET /v1/charges/{id}`.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKeyRequired'
       requestBody:
@@ -407,7 +390,7 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '401': { $ref: '#/components/responses/AuthFailure' }
         '403':
-          description: '`merchant_not_approved`, `merchant_suspended` or `account_blocked` (nobody is prompted).'
+          description: '`merchant_not_approved`, `merchant_suspended` or `account_blocked`.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -421,8 +404,7 @@ paths:
             `reference_reused`, or one of the idempotency conflicts: `idempotency_key_reuse`,
             `idempotency_key_in_progress`, `idempotency_key_acted`.
 
-            `idempotency_key_acted` can come on the **first** attempt: the request may have
-            reached the rail and the payer's handset may be ringing, and the outcome is not
+            `idempotency_key_acted` can come on the **first** attempt: the outcome is not
             known. The message names the charge id. Do not send it again, with this key or a new
             reference; read the charge.
           content:
@@ -436,9 +418,8 @@ paths:
         '429':
           description: |
             `rate_limited`, `daily_cap_exceeded` (the merchant's daily collection cap) or
-            `payer_velocity_exceeded` (this payer has been prompted too often today).
-            `Retry-After` is sent only with the shared per-minute limit; the charges-per-minute
-            cap, the daily cap and the payer limit may come without it.
+            `payer_velocity_exceeded`. `Retry-After` is sent only with the shared per-minute
+            limit.
           headers:
             Retry-After: { $ref: '#/components/headers/RetryAfter' }
           content:
@@ -449,13 +430,10 @@ paths:
           description: |
             `rail_unavailable` or `idempotency_unavailable`.
 
-            `rail_unavailable` on this route always means **nobody was prompted**. Before the
-            charge row is written (collections switched off, the limiter or the block check
-            unavailable) the `reference` stays free. After the row, when the rail refused before
-            dispatching anything, the charge is left `failed` and the `reference` is closed (the
-            message says "retry with a new reference"). `GET /v1/charges?reference=…` tells the
-            two apart. An outcome that cannot be determined is `409 idempotency_key_acted`,
-            never a 503.
+            `rail_unavailable`: the charge could not be made and nothing was asked of the payer.
+            `GET /v1/charges?reference=…` tells you whether a charge row was written (it is
+            then `failed`, and the `reference` is closed). An outcome that cannot be determined
+            is `409 idempotency_key_acted`, never a 503.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -678,8 +656,14 @@ paths:
     post:
       operationId: createPayoutQuote
       tags: [Payouts]
-      summary: Price a payout and get back exactly what to sign
+      summary: Price a payout and get back exactly what to sign (coming soon)
+      x-kakitu-status: coming-soon
       description: |
+        Coming soon. Payouts are being rebuilt so that Kakitu pays them itself, through KCB.
+        Until then this route answers `403 payouts_disabled`. The shapes below describe the API
+        as it stood and may change when payouts return.
+        See https://developer.kakitu.org/docs/payouts.
+
         Prices a payout to a beneficiary's M-Pesa number, till, paybill or bank account (see `PayoutBeneficiary`) and mints the **single-use quote that is the
         only thing `POST /v1/payouts` will accept**. Nothing is created and no money moves.
 
@@ -776,8 +760,8 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '409':
           description: |
-            `profile_required` — this wallet has no profile (phone number and name), which the
-            cash-out partner needs. There is no `/v1` route for it: save one with the wallet's
+            `profile_required` — this wallet has no profile (phone number and name). There is no
+            `/v1` route for it: save one with the wallet's
             own `POST /profile` (same signature headers; body
             `{"phone": "2547XXXXXXXX", "first_name": "…", "last_name": "…"}`) or in the Kakitu
             app.
@@ -818,8 +802,14 @@ paths:
     post:
       operationId: createPayout
       tags: [Payouts]
-      summary: Confirm a signed payout
+      summary: Confirm a signed payout (coming soon)
+      x-kakitu-status: coming-soon
       description: |
+        Coming soon. Payouts are being rebuilt so that Kakitu pays them itself, through KCB.
+        Until then this route answers `403 payouts_disabled`. The shapes below describe the API
+        as it stood and may change when payouts return.
+        See https://developer.kakitu.org/docs/payouts.
+
         Spends a quote from `POST /v1/payouts/quote` and accepts the payout. The body is the
         quote id plus that quote, signed.
 
@@ -1067,8 +1057,14 @@ paths:
     post:
       operationId: requestPayout
       tags: [Payouts]
-      summary: Ask a person to approve a payout before anything is signed
+      summary: Ask a person to approve a payout before anything is signed (coming soon)
+      x-kakitu-status: coming-soon
       description: |
+        Coming soon. Payouts are being rebuilt so that Kakitu pays them itself, through KCB.
+        Until then this route answers `403 payouts_disabled`. The shapes below describe the API
+        as it stood and may change when payouts return.
+        See https://developer.kakitu.org/docs/payouts.
+
         A payout **above** the merchant's `hold_above_kes` (see `GET /v1/limits`) is decided by
         a person before it is signed. This route asks. **Nothing is priced, signed or counted
         against the day's budget**, so a request can wait as long as a person takes: the answer
@@ -1424,8 +1420,15 @@ paths:
     post:
       operationId: createQuote
       tags: [Reads]
-      summary: Price a deposit or a withdrawal
+      summary: Price a deposit or a withdrawal (not available today)
+      x-kakitu-status: not-available
       description: |
+        Not available today. This route priced deposits and withdrawals on an M-Pesa route
+        Kakitu no longer uses; do not build on it, and expect `503 rail_unavailable`. For the
+        price of a cash-out to the wallet's own M-Pesa number read `kes_offramp_fee_bps` and
+        `kes_offramp_fee_min_kes` in `GET /config`. The rest of this description is the route as
+        it stood.
+
         A price, and only a price. **No order, charge or transfer is created**, which is why this
         `POST` takes **no `Idempotency-Key`** — sending one is harmless but pointless.
 
@@ -1435,7 +1438,7 @@ paths:
           sent. `beneficiary` is **required**.
 
         The response carries no quote id, no rail, no treasury address and no signing amount.
-        There is deliberately no `quote_id`: the pricing partner's own id is not yours to hold,
+        There is deliberately no `quote_id`: an outside id is not yours to hold,
         and there is no route today that would redeem one.
 
         Unknown fields are refused outright (`400 invalid_request`). Body limit 4 KiB.
@@ -1476,8 +1479,8 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '409':
           description: |
-            `profile_required` — this wallet has no profile (phone number and name), which the
-            cash-out partner needs. There is no `/v1` route for it: save one with the wallet's
+            `profile_required` — this wallet has no profile (phone number and name). There is no
+            `/v1` route for it: save one with the wallet's
             own `POST /profile` (same signature headers; body
             `{"phone": "2547XXXXXXXX", "first_name": "…", "last_name": "…"}`) or in the Kakitu
             app.
@@ -2062,7 +2065,7 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
     RailUnavailable:
-      description: '`rail_unavailable` — temporarily unavailable (the partner, cash-out capacity, or the wallet check), try again shortly. Nothing was created or sent.'
+      description: '`rail_unavailable` — temporarily unavailable, try again shortly. Nothing was created or sent.'
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -2078,8 +2081,8 @@ components:
           maxLength: 100
           description: |
             1 to 100 characters. No control, invisible or text-direction characters. It is the
-            name an operator vets. It is not sent with the M-Pesa prompt on a collection today.
-            Frozen once the merchant is past `pending`.
+            name Kakitu vets and the name on the verified-merchant badge. Frozen once the
+            merchant is past `pending`.
         contact_email:
           type: string
           maxLength: 254
@@ -2457,7 +2460,7 @@ components:
     PayoutStatus:
       type: string
       description: |
-        Kakitu's own vocabulary, never a payment partner's.
+        Kakitu's own vocabulary.
 
         - `quoted` — priced, nothing signed, nothing moved.
         - `pending_approval` — you asked a person (above `hold_above_kes`). Nothing is signed,
@@ -2483,8 +2486,8 @@ components:
       type: object
       required: [id, status, amount_kes, fee_kes, send_kes, currency, beneficiary, created_at]
       description: |
-        A payout as a developer sees it. No order id, no rail name, no provider status and no
-        pricing partner's quote id — none of that is part of the contract.
+        A payout as a developer sees it. No order id, no route name, no outside status and no
+        outside quote id — none of that is part of the contract.
       properties:
         id: { type: string, format: uuid }
         status: { $ref: '#/components/schemas/PayoutStatus' }
@@ -2840,7 +2843,7 @@ components:
 
         It carries no beneficiary number, account or name (those are on `GET /v1/payouts/{id}` under
         `beneficiary`, never on the wire to a callback URL), no operator identity, no hold
-        reason, no rail name, no pricing partner's quote id and no signed permit. It carries no
+        reason, no route name, no outside quote id and no signed permit. It carries no
         `held_at`, `dispatched_at` or `paid_at` either, because none of them would be true.
       properties:
         id: { type: string, format: uuid }
@@ -3204,10 +3207,15 @@ components:
         treasury_address: { type: string }
         public_rpc_url: { type: string }
         relay_max_per_tx_kes: { type: integer, description: 'Largest single KSHS transfer Kakitu relays, in whole shillings.' }
-        deposit_max_per_order_usd: { type: integer, description: 'Largest single M-Pesa purchase of KSHS, in US dollars. Also the ceiling on one M-Pesa collection (`POST /v1/charges`).' }
-        deposit_min_per_order_usd: { type: integer }
-        withdraw_max_per_order_kes: { type: integer, description: 'Largest single cash-out to M-Pesa, in shillings that land. Live from the cash-out partner.' }
-        withdraw_min_per_order_kes: { type: integer, description: Smallest single cash-out to M-Pesa. `0` means not known. }
+        deposit_max_per_order_usd: { type: integer, deprecated: true, description: 'Describes an older M-Pesa route Kakitu no longer uses. Kept so existing clients keep working.' }
+        deposit_min_per_order_usd: { type: integer, deprecated: true, description: 'Describes an older M-Pesa route Kakitu no longer uses.' }
+        withdraw_max_per_order_kes: { type: integer, deprecated: true, description: 'Describes an older M-Pesa route Kakitu no longer uses. For a cash-out read `kes_offramp_max_kes`.' }
+        withdraw_min_per_order_kes: { type: integer, deprecated: true, description: 'Describes an older M-Pesa route Kakitu no longer uses. For a cash-out read `kes_offramp_min_kes`.' }
+        kes_offramp_enabled: { type: boolean, description: 'Whether cash-out to the wallet''s own proved M-Pesa number is switched on.' }
+        kes_offramp_min_kes: { type: integer, description: 'Smallest single cash-out to the wallet''s own M-Pesa number, in shillings that land.' }
+        kes_offramp_max_kes: { type: integer, description: 'Largest single cash-out to the wallet''s own M-Pesa number, in shillings that land.' }
+        kes_offramp_fee_bps: { type: integer, description: 'Cash-out fee in basis points, added on top of the payout.' }
+        kes_offramp_fee_min_kes: { type: integer, description: 'Smallest cash-out fee, in shillings.' }
         directory_bucket_hex: { type: integer }
         directory_max_buckets: { type: integer }
         min_supported_build: { type: integer }

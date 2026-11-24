@@ -5,81 +5,62 @@ title: Cash out
 
 # Cash out
 
-**A business takes its money out the same way a person does: from the Kakitu app, to M-Pesa.** The [payouts API](./payouts) can do the same from a server (to a phone, a till, a paybill or a bank account), but it is off until an operator switches it on for your merchant, and it is meant for paying other people, under caps.
+**A business takes its money out the same way a person does: from its own wallet, in the Kakitu app or the Kakitu extension.** There are two ways out:
 
-The whole path is: open your business wallet in the app with its recovery phrase, then **Withdraw to M-Pesa**.
+- **At a Kakitu agent**, for cash. Live today.
+- **To your own M-Pesa number.** Kakitu pays M-Pesa itself. This is being switched on: `kes_offramp_enabled` in [`GET /config`](https://walletapi.kakitu.org/config) is `false` until it is, and every route below answers `404 kes_offramp_disabled` until then.
 
-## 1. Open the business wallet in the app
+Paying **other people** from a server is the [payouts API](./payouts), which is coming soon.
 
-You need the wallet's **12-word recovery phrase**. If you made the wallet with the [quickstart](./quickstart#1-make-a-wallet-for-the-business) or the [browser sign-up](/signup), you wrote it down then. The app derives the same address from it (BIP-39, path `m/44'/60'/0'/0/0`), so after importing you see the same balance your server sees.
+## Cash out in the app or the extension
 
-1. Install the Kakitu app ([Android](https://play.google.com/store/apps/details?id=com.kakitu.app); the store links are also `store_url_android` and `store_url_ios` in [`GET /config`](https://walletapi.kakitu.org/config)).
-2. On the welcome screen choose **Import Wallet**, and type the 12 words.
-3. Check that the address the app shows is the one you registered.
+Open the business wallet (the one you made in the Kakitu app and restored in the extension, see [the quickstart](./quickstart)) and choose the M-Pesa cash-out. Type the shillings that must land on your phone. The confirm screen shows the fee and the KSHS that will leave the wallet; nothing leaves until you approve.
 
-**The app holds one wallet per phone.** If your personal Kakitu wallet is on your phone, do not import the business phrase over it without its own phrase written down. A phone kept for the business is simpler.
+## Your own number {#your-own-number}
 
-A bare private key (a `0x…` hex string) cannot be imported into the app. If that is all you have, the only way out is to send the KSHS on chain to a wallet that does have a phrase — a [transfer](./transfers) if you are approved, or any wallet software that can send an ERC-20 on Base, which needs a little ETH on Base for gas.
+**The money always goes to this wallet's own proved M-Pesa number.** You never type a number for a cash-out, and a program cannot send one: the server reads the number this wallet has proved it owns in the Kakitu app.
 
-## 2. A profile, once
+- A wallet with no proved number is refused with `403 phone_not_verified`. Prove the number in the Kakitu app first.
+- **A number proved less than 24 hours ago cannot receive a cash-out yet** (`403 phone_too_new`, with `retry_after`). The wait protects a wallet whose phone or phrase has been taken: a thief who adds their own number has to wait a day. The 24 hours is set by Kakitu.
 
-The first time you send money out, the app asks for a **phone number, first name and last name**. The cash-out partner needs a name and number on every order; without them the server answers `profile_required` and nothing is priced. It is asked once per wallet.
+## Limits and fees {#limits-and-fees}
 
-The number must be a Kenyan mobile number. If it is already the number of another Kakitu wallet that can be found by its number — your personal one, say — saving is refused (`phone_in_use`). Make the other wallet not discoverable by number first, or use a different number.
+| | Today | Read it from |
+|---|---|---|
+| One cash-out | **KES 100 to KES 20,000** landed | `kes_offramp_min_kes`, `kes_offramp_max_kes` in `/config` |
+| Fee | **1%**, at least **KES 10**, on top of the payout | `kes_offramp_fee_bps` (100) and `kes_offramp_fee_min_kes` (10) in `/config` |
+| Per wallet, rolling 24 hours | **KES 50,000** | Set by Kakitu |
+| Waits for a person's approval | Cash-outs **above KES 10,000** | Set by Kakitu |
 
-From a server, the same profile is `POST /profile`, signed with the same three headers as every `/v1` call:
+The values in `/config` are the live ones; read them rather than hard-coding these. The fee is added on top, so the KSHS that leave your wallet are the payout plus the fee:
 
-```http
-POST /profile
-Content-Type: application/json
-
-{ "phone": "254712345678", "first_name": "Wanjiru", "last_name": "Kamau" }
+```
+burn_kshs = payout_kes + fee_kes
 ```
 
-`phone` must match `^254[17]\d{8}$`. Each name is at most 64 **bytes** after trimming, which is fewer than 64 characters if you use accents. This is the app's own route, not part of `/v1`: a refusal uses the older shape, `{"error": "invalid_request"}` or `{"error": "phone_in_use"}` with `409`.
+**Example.** You cash out KES 1,000. The fee is 1% of 1,000, which is 10, and the minimum is also 10, so `fee_kes` is 10. **KSHS 1,010 leave the wallet** and KES 1,000 land on your M-Pesa. The wallet must hold the whole 1,010: short of it, the quote is refused with `insufficient_balance`, which says what you have and what you need.
 
-## 3. Withdraw to M-Pesa
+Each cash-out is also one gasless transfer from your wallet, so it counts against the **50 relayed transfers a day** each address gets. See [Pricing, limits and settlement](./pricing).
 
-In the app: **Withdraw to M-Pesa**, then the amount and where it goes.
+## What happens {#what-happens}
 
-| Destination | What you enter |
-|---|---|
-| An M-Pesa number | The number. It does not have to be the profile's. |
-| A till (Buy Goods) | The till number, 5 to 9 digits. |
+1. **Quote.** The app asks for a price (`POST /ramp/kes/quote` with `amount_kes`). The answer has `payout_kes`, `fee_kes`, `burn_kshs`, the masked number it will pay, whether it `needs_approval`, and when it expires.
+2. **Confirm.** You approve, and the wallet signs one gasless transfer of `burn_kshs` to Kakitu's treasury (`POST /ramp/kes`).
+3. **Payout.** Kakitu pays your M-Pesa number. A cash-out above KES 10,000 waits for a person's approval first (`awaiting_approval`).
+4. **Burn.** Only after the M-Pesa payout is final are the KSHS burned. **A payout that cannot be made sends back the whole `burn_kshs`, fee included**, and the refund's transaction hash is on the order.
 
-Cashing out from the app to a **paybill or a bank account is closed** for now, for every wallet; the server refuses it. A merchant can pay a paybill or bank through the [payouts API](./payouts#saved-destinations-and-the-lock) once payouts are on for it.
+The app shows the order as it moves: `processing`, `awaiting_approval`, `paid` (with the M-Pesa code), `refunding`, `refunded`, `failed` or `checking`. **`processing` and `checking` mean your KSHS have left the wallet and the payout is under way or being looked at: do not send it again.** `failed` is only ever shown when nothing left your wallet. If an order is still not `paid` after an hour, write to kakitu@kakitu.org with the reference the app shows.
 
-You type the shillings that must **land**. The app quotes the KSHS it will take from your wallet, the fee, and counts down how long the price holds — a few minutes; after that, ask for a new price. Nothing leaves until you approve with your PIN.
+Kakitu can pause cash-outs for a while (`409 kes_offramp_paused`, nothing taken), and refuses a quote it cannot pay right now (`503 payout_unavailable`, nothing taken; try later or a smaller amount). Every code is on the [Errors](./errors#wallet-cash-out-codes) page.
 
-### How much at a time
+## Locked merchants {#locked-merchants}
 
-Between **KES 20 and KES 33,333 per withdrawal** landed, on 9 November 2026. That band comes from our cash-out partner and is published live as `withdraw_min_per_order_kes` and `withdraw_max_per_order_kes` in [`GET /config`](https://walletapi.kakitu.org/config); read it rather than hard-coding it. A larger sum is several withdrawals. A large amount may ask you to verify your identity first.
+A merchant that has [locked itself to its saved payout destinations](./payouts#saved-destinations-and-the-lock) is refused with `403 destination_locked`, because its own phone is not one of those destinations. Lift the lock with `POST /v1/payout-destinations/lock` and `{"locked": false}`; it takes effect after `payout_cooling_off_hours`, and then the cash-out works.
 
-**The treasury can be the tighter limit.** `cashout_capacity_kes` in the same `/config` is the most KSHS one cash-out may send right now that our hot treasury can back (KSHS 9,045 when this was written). A withdrawal over it is refused at the quote, `treasury_short`, before anything is signed or taken; try a smaller amount or later.
+## Agents
 
-Each withdrawal is also one gasless transfer from your wallet, so it counts against the **50 relayed transfers a day** each address gets. See [Pricing, limits and settlement](./pricing).
-
-### What it costs
-
-The quote shows the fee before you confirm, and that number is the one to trust. It is made of two parts:
-
-- **Ours:** the burn spread, a fraction of a percent (30 basis points by default).
-- **The cash-out partner's charge** for paying out to M-Pesa, which varies with the amount and is larger in proportion on small amounts.
-
-On a typical amount, expect a few percent in all. We would rather you saw it on the confirm screen than trusted an estimate here. The same price is available to a program as a withdrawal quote from [`POST /v1/quotes`](./quotes), which returns `send_kes`, `receive_kes` and `fee_kes`.
-
-### How long it takes
-
-**Not instant.** Usually a few minutes. Your KSHS moves to our treasury first; then we fund the partner and the partner pays M-Pesa, which is a job that runs after you have confirmed, not during the request. The app shows the order as on its way until M-Pesa confirms.
-
-It can take longer. The treasury is checked at the quote and again when you confirm, so a shortfall normally refuses the withdrawal before anything moves. If it runs short in the moment between your confirm and the payout, the order **waits** until an operator refills it: your shillings are held in the treasury, not lost, and the order is either completed or the shillings are returned. If a withdrawal is still going through after an hour, write to kakitu@kakitu.org with the reference the app shows. **Do not send it again** while it is still going through.
+An agent wallet cashes out in the Kakitu Agent app, under the agent rules. Here it is refused with `403 use_agent_cashout`.
 
 ## USDC instead of M-Pesa
 
 The Kakitu **browser extension** can also cash out to **USDC on Base**, to an address you name ("Cash out to USDC"). The treasury's balance is checked before your shillings are taken, so a short treasury refuses the order rather than holding it. A Base address is final and nothing can reverse a payment to the wrong one; double-check it. The phone app does not offer this. The extension is on the [Chrome Web Store](https://chromewebstore.google.com/detail/ebcjlgfjbbgoldipdhbcmciebdiadifg); see [the extension page](./extension).
-
-## The payouts API
-
-[`POST /v1/payouts/quote`](./payouts) and `POST /v1/payouts` are **off for a merchant until an operator switches them on**, and answer `403 payouts_disabled` until then. When they are on, they pay **other people's** M-Pesa number, till, paybill or bank account from your wallet, under an operator's caps; a payout above your hold threshold [needs a person to approve it first](./payouts#approve-first). You can also [save the places you cash out to and lock yourself to them](./payouts#saved-destinations-and-the-lock). That lock controls where cash-outs go; it does not stop KSHS transfers to other wallets.
-
-A payout ends `paid` or `failed` and you are told by webhook ([`payout.paid`](./events#payoutpaid-and-payoutfailed), `payout.failed`). Until payouts are on for you, cash out from the app as above.

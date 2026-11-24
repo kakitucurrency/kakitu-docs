@@ -5,14 +5,14 @@ title: Webhooks
 
 # Webhooks
 
-A webhook is a `POST` we make to your `callback_url` when something happens to one of your charges, a payment arrives at your address, a payout moves, or your own payout controls change. This page is the receiving end: where deliveries go, the secret that signs them, what you must answer, and what happens when you do not.
+A webhook is a `POST` we make to your `callback_url` when a payment arrives at your address, your own payout controls change, or one of your past charges or payouts moves. This page is the receiving end: where deliveries go, the secret that signs them, what you must answer, and what happens when you do not.
 
 **The bodies themselves are documented once, on the [Events](./events) page.** Every field of every type, which fields are always present and which may be null, and a worked example of each — [the payload](./events#the-payload). They live there rather than being repeated here so there is only ever one description of them to keep true.
 
 ## Before anything is delivered
 
 - You store a `callback_url` on your merchant. It is validated at registration (https, public, punycode for non-ASCII hostnames) so a bad one fails there rather than silently never delivering. See [Merchants](./merchants#callback-urls).
-- When an operator approves your merchant, a **webhook secret** is issued. It signs every delivery.
+- When Kakitu approves your merchant, a **webhook secret** is issued. It signs every delivery.
 
 ### The webhook secret is shown once
 
@@ -67,6 +67,8 @@ Every delivery carries one of thirteen event types:
 Each body is a three-field envelope (`id`, `type`, `created_at`) wrapped around **one** subject object: `charge`, `transfer`, `payout`, `destination` or `payout_lock`. Only the subject the event is about is present; the other keys are absent, not present-and-`null`. **Branch on `type` and on nothing else.**
 
 **Every field of every type, what is always present, what may be null, and an example body of each: [the payload](./events#the-payload).**
+
+**Today, `transfer.received` is the one to build for.** New charges cannot be created while [collections are being rebuilt](./collections) and the payout-sending routes are [coming soon](./payouts), so the `charge.*` and payout events belong to past charges and payouts. The controls events (`payout_destination.*`, `payout_lock.changed`) are raised today.
 
 :::danger Four payout types mean "not sent", and they are not the same instruction
 `payout.expired`, `payout.cancelled` and `payout.rejected` all mean **nothing left your wallet and

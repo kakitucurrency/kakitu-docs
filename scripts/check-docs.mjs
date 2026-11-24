@@ -49,6 +49,14 @@ const ERROR_CODES = [
 
 // Answered by the wallet's own routes (/ramp/*), not /v1, and documented beside the /v1 codes.
 const WALLET_CODES = ["deposits_paused"];
+// The wallet's own M-Pesa cash-out (/ramp/kes, controller/kesout_c.go). Not /v1 codes, so they
+// are not counted in the forty-four; each needs a table row on the Errors page.
+const KES_OUT_CODES = [
+  "kes_offramp_disabled", "kes_offramp_paused", "phone_not_verified", "phone_too_new",
+  "amount_below_minimum", "amount_over_limit", "daily_limit_reached", "insufficient_balance",
+  "payout_unavailable", "quote_expired", "invalid_relay", "relay_failed", "use_agent_cashout",
+  "destination_locked",
+];
 
 const PAYOUT_STATES = [
   "quoted", "pending_approval", "approved", "rejected", "held", "dispatched", "paid", "failed",
@@ -75,22 +83,46 @@ const FIELDS = {
     "value_wei", "status", "submitted_at", "next_before",
   ],
   "docs/payouts.md": [
+    "payouts_disabled",
     "beneficiary.type", "phone", "till", "paybill", "account", "bank_code", "name",
     "POST /v1/payouts/requests", "approval_expires_at", "payout_id", "pending_approval",
     "GET /v1/payout-destinations", "POST /v1/payout-destinations", "DELETE /v1/payout-destinations/{id}",
     "POST /v1/payout-destinations/lock", "payout_locked", "payout_unlocks_at", "active_at",
     "cooling_off", "holder_name", "payout_cooling_off_hours",
   ],
-  "docs/pricing.md": ["fee_kes", "credited_kes"],
-  "docs/collections.md": ["fee_kes", "credited_kes"],
-  "docs/limits.md": ["deposit_max_per_order_usd"],
-  "docs/extension.md": ["ebcjlgfjbbgoldipdhbcmciebdiadifg", "reference"],
+  "docs/pricing.md": ["kes_offramp_fee_bps", "kes_offramp_fee_min_kes", "agent_fee_bps"],
+  "docs/collections.md": ["reference", "transfer.received"],
+  "docs/limits.md": ["kes_offramp_max_kes"],
+  // The wallet's own cash-out to its proved M-Pesa number (controller/kesout_c.go, /config).
+  "docs/cash-out.md": [
+    "kes_offramp_enabled", "kes_offramp_min_kes", "kes_offramp_max_kes", "kes_offramp_fee_bps",
+    "kes_offramp_fee_min_kes", "burn_kshs", "phone_not_verified", "destination_locked",
+    "POST /ramp/kes/quote",
+  ],
+  "docs/extension.md": [
+    "ebcjlgfjbbgoldipdhbcmciebdiadifg", "reference",
+    // extension 0.2.7: pay() without connect(), its two new refusals, the Lipa button, the badge
+    "ALREADY_PENDING", "RATE_LIMITED", "NOT_CONNECTED", "kakitu:payfailed", "kakitu:paid",
+    "GET /merchants/verified/{address}",
+  ],
   "docs/errors.md": ["deposits_paused"],
+  "docs/merchants.md": ["POST /v1/merchants"],
 };
 
 // Prose that must be on the page, as plain text (these are sentences, not fields).
 const PHRASES = {
-  "docs/extension.md": ["Chrome Web Store", "is refused", "spaces or emoji"],
+  "docs/extension.md": [
+    "Chrome Web Store", "is refused", "spaces or emoji",
+    "Lipa na Kakitu", "not proof of payment", "Content-Security-Policy", "Verified Kakitu merchant",
+    // the snippet's distinctive lines, so the docs and the kakitu.org dashboard cannot drift
+    'class="lipa-na-kakitu"', "if (reason !== 'UNCONFIRMED') btn.disabled = false;",
+    "e.reason === 'NOT_CONNECTED'", "amountKes: String(btn.dataset.amount)",
+  ],
+  // Merchants onboard at kakitu.org/merchant with a wallet made in the Kakitu app; the docs
+  // never make a wallet (founder decision, 2026-11-22).
+  "docs/quickstart.md": ["kakitu.org/merchant", "Kakitu app"],
+  "docs/merchants.md": ["kakitu.org/merchant"],
+  "docs/going-live.md": ["kakitu.org/merchant"],
 };
 
 // Words that must not appear anywhere in the docs or the spec.
@@ -103,8 +135,14 @@ const FORBIDDEN = [
   [/fonbnk/i, "names a rail"],
   [/stolen[- ]key|theft protection|against theft/i, "the payout lock controls where cash-outs go; it is not theft protection"],
   [/\bthirty-one codes\b/i, "the closed set is forty-four codes"],
-  [/\bnot open yet\b|when collections open|collections and payouts are not open/i,
-    "merchant collections and payouts are switched on in production (2026-10-30); payouts are per merchant"],
+  [/\bpartner/i, "Kakitu runs its own M-Pesa ramp; there is no partner to name"],
+  [/since 30 October 2026|on 30 October 2026/i, "M-Pesa collections through the old route are gone"],
+  [/\bSTK\b|\bBuni\b/, "customer copy never names the bank's API"],
+  [/PIN prompt on the payer|M-Pesa PIN prompt|pay out to (a|an) (till|paybill|bank)/i,
+    "M-Pesa collections and third-party payouts are not live (outside a rebuilding fence)", "fenceable"],
+  [/Wallet\.createRandom|createRandom\(/, "the docs never make a wallet; a merchant makes it in the Kakitu app"],
+  [/\]\(\/signup\)|href=["']\/signup|to: ["']\/signup|developer\.kakitu\.org\/signup/,
+    "merchant sign-up is at kakitu.org/merchant, not /signup"],
   [/there is no `payout\.paid`|no `payout\.paid` or `payout\.failed`/i, "payout.paid and payout.failed are raised"],
 ];
 
@@ -113,6 +151,13 @@ const FORBIDDEN = [
 const docsDir = join(root, "docs");
 const pages = readdirSync(docsDir).filter((f) => f.endsWith(".md")).map((f) => `docs/${f}`);
 const text = Object.fromEntries([...pages, "static/openapi.yaml"].map((p) => [p, read(p)]));
+// Pages outside docs/ that a visitor reads: checked for forbidden words only.
+const sitePages = ["src/pages/signup.tsx", "src/pages/index.tsx", "docusaurus.config.ts", "README.md"]
+  .filter((p) => existsSync(join(root, p)));
+// Text between <!-- rebuilding --> and <!-- /rebuilding --> describes an API that is being
+// rebuilt (payouts on KCB). It may describe tills and paybills; nothing outside it may.
+const stripRebuilding = (body) => body.replace(/<!-- rebuilding -->[\s\S]*?<!-- \/rebuilding -->/g,
+  (m) => m.replace(/[^\n]/g, " "));
 
 // What counts as "documented". A bare substring would let `phone`, `name` or `status` pass on any
 // page, so each kind of thing has to appear in the form a reader looks it up by.
@@ -167,6 +212,11 @@ for (const c of ERROR_CODES) {
     fail(`static/openapi.yaml: error code ${c} is not in the ErrorCode enum`);
   }
 }
+for (const c of KES_OUT_CODES) {
+  if (!new RegExp("\\|\\s*`" + c + "`\\s*\\|").test(text["docs/errors.md"])) {
+    fail(`docs/errors.md: wallet cash-out code ${c} has no table row`);
+  }
+}
 const countWord = { 44: "forty-four" };
 if (!text["docs/errors.md"].toLowerCase().includes(countWord[ERROR_CODES.length])) {
   fail(`docs/errors.md: the code count must say ${countWord[ERROR_CODES.length]} (${ERROR_CODES.length} codes)`);
@@ -196,13 +246,34 @@ for (const w of ["reference", "credited_kes", "payout_locked", "approval_expires
   if (!text["static/openapi.yaml"].includes(w)) fail(`static/openapi.yaml: ${w} is missing`);
 }
 
+// Operations a merchant cannot use today. Each says so in the first words of its description,
+// so the API reference and the pages cannot disagree.
+const NOT_TODAY = {
+  createCharge: "Coming soon.", createPayoutQuote: "Coming soon.", createPayout: "Coming soon.",
+  requestPayout: "Coming soon.", createQuote: "Not available today.",
+};
+for (const [op, prefix] of Object.entries(NOT_TODAY)) {
+  const spec = text["static/openapi.yaml"];
+  const at = spec.indexOf("operationId: " + op + "\n");
+  if (at < 0) { fail(`static/openapi.yaml: operation ${op} is missing`); continue; }
+  const next = spec.indexOf("operationId:", at + 1);
+  const block = spec.slice(at, next < 0 ? undefined : next);
+  const d = block.match(/\n\s+description: \|?-?\s*\n?\s*(.*)/);
+  if (!d || !d[1].trim().startsWith(prefix)) {
+    fail(`static/openapi.yaml: ${op}'s description must start "${prefix}"`);
+  }
+}
+
 for (const [page, phrases] of Object.entries(PHRASES)) {
   for (const ph of phrases) if (!text[page].includes(ph)) fail(`${page}: the page must say "${ph}"`);
 }
 
 // words that must not be there
-for (const [page, body] of Object.entries(text)) {
-  for (const [re, why] of FORBIDDEN) {
+const forbiddenScope = { ...text };
+for (const p of sitePages) forbiddenScope[p] = read(p);
+for (const [page, raw] of Object.entries(forbiddenScope)) {
+  for (const [re, why, fenceable] of FORBIDDEN) {
+    const body = fenceable ? stripRebuilding(raw) : raw;
     const m = body.match(re);
     if (m) {
       const line = body.slice(0, m.index).split("\n").length;
@@ -234,9 +305,16 @@ if (serverDir) {
   sameSet("error codes", ERROR_CODES, camel.map((c) => consts[c]).filter(Boolean));
   const states = [...src("models/dbmodels/payout.go").matchAll(/Payout\w+\s+PayoutState\s*=\s*"([a-z_]+)"/g)].map((m) => m[1]);
   sameSet("payout states", PAYOUT_STATES, states);
-  // the per-order collection cap the docs quote is the config's, so the knob must still exist
-  if (!src("controller/config_c.go").includes('json:"deposit_max_per_order_usd"')) {
-    fail("deposit_max_per_order_usd is no longer in /config; limits.md names it");
+  // the cash-out numbers the docs quote are /config's, so the knobs must still be published
+  for (const k of ["kes_offramp_enabled", "kes_offramp_min_kes", "kes_offramp_max_kes", "kes_offramp_fee_bps", "kes_offramp_fee_min_kes"]) {
+    if (!src("controller/config_c.go").includes('json:"' + k + '"')) fail(`${k} is no longer in /config; cash-out.md names it`);
+  }
+  // every wallet cash-out code the Errors page lists is one the cash-out controller answers
+  const kesout = src("controller/kesout_c.go") + src("controller/ramp_c.go");
+  for (const c of KES_OUT_CODES) {
+    if (!kesout.includes('"' + c + '"')) {
+      fail(`wallet cash-out code ${c}: the server's cash-out controllers do not answer it`);
+    }
   }
 }
 

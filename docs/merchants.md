@@ -8,26 +8,44 @@ import TabItem from '@theme/TabItem';
 
 # Merchants
 
-A merchant is a business that collects money. It is identified by the wallet address that signs the request, and that same address is where its collections are paid. Both endpoints below are live.
+A merchant is a business Kakitu has checked. It is identified by its wallet address: the address shoppers pay, and the address that signs its API requests.
+
+## Becoming a merchant
+
+1. **Create the business wallet in the Kakitu app** and write down its 12 words.
+2. **Add the Kakitu extension to Chrome** and restore the same wallet there.
+3. **Sign in at [kakitu.org/merchant](https://kakitu.org/merchant)** with the extension. The extension asks you to approve a sign-in that says "Signing in cannot move money." No password, no SMS, and no website ever asks for your 12 words.
+4. **Apply**: business name, type of business (`shop`, `food`, `beauty`, `transport`, `services`, `online` or `other`), where it is (an optional map pin inside Kenya), and a Kenyan contact phone. Your merchant is now `pending`.
+5. **Kakitu decides.** A person reviews the application. The page checks by itself and opens your dashboard once you are `approved`. A rejection shows the reason, and you can correct the application and send it again.
+
+Once approved:
+
+- **Shoppers see you are verified.** When a shopper pays your address from the Kakitu extension, the payment sheet shows **Verified Kakitu merchant** and your business name; any other address gets a warning to pay only if they trust the site. The same answer is public at [`GET /merchants/verified/{address}`](./extension#the-verified-merchant-badge). (Rolling out with extension 0.2.7.)
+- **The dashboard** at kakitu.org/merchant lists the KSHS transfers into your wallet, newest first, with each payer's `reference`; totals for today, the last 7 and the last 30 days (East Africa Time); and a CSV export of up to 92 days at a time. It is read-only: signing in to it cannot move money.
+- **The API** works for your server: see [the quickstart](./quickstart#3-copy-the-signer-and-check-who-you-are).
+
+The dashboard's routes (`/merchant/*` on `walletapi.kakitu.org`) serve kakitu.org only: sign-in is accepted from kakitu.org and nowhere else. Build your own integration on the `/v1` API and [`GET /transfers`](./transfers#get-transfers), not on them.
+
+The two `/v1` endpoints below read your merchant record and update its contact email and callback URL.
 
 ## States
 
 | `state` | Meaning |
 |---|---|
-| `pending` | Registered, not reviewed. Collections are refused. |
-| `approved` | An operator reviewed and approved it. Transfers and charges work. Payouts also need the merchant's own payout switch on. Only `POST /v1/charges`, `POST /v1/transfers`, the payout-sending routes and saving a payout destination check this state. |
-| `rejected` | An operator declined it. |
-| `suspended` | An operator stopped it. Collections are refused. |
+| `pending` | Applied, not reviewed yet. |
+| `approved` | Kakitu reviewed and approved it. The badge, the dashboard, transfers and webhooks work. Only `POST /v1/transfers`, the payout-sending routes and saving a payout destination check this state. |
+| `rejected` | Kakitu declined it. The reason is shown at kakitu.org/merchant; correct the application and send it again. |
+| `suspended` | Kakitu stopped it. No badge, no dashboard, and the API refuses it. |
 
 You cannot change `state` yourself. See [Going live](./going-live).
 
-### If an operator entered you by hand
+### If Kakitu entered you by hand
 
-An operator can create a merchant from an address you give them — for a business that has no developer, so the paperwork can be done before anyone writes code. That row is created `pending`, with your details already filled in.
+Kakitu can create a merchant from an address you give it, so the paperwork can be done first. That row is created `pending`, with your details already filled in.
 
-**It cannot be approved until a correctly signed request from that address reaches `POST /v1/merchants`.** So you still have to make one signed call, even though your details are already there. Send the registration as below; it will update the existing row rather than create a second one.
+**It cannot be approved until that address proves it holds its key**: sign in at kakitu.org/merchant with the extension and send the application (or make one signed `POST /v1/merchants`). Either updates the existing row rather than creating a second one.
 
-That gate is not bureaucracy. The address is where your money is paid, **on chain**. An operator typing it proves the characters were typed — not that you hold the key, and not that the address is right. If it is wrong by one character, or it is a wallet you cannot spend from, every payment you ever take is gone and there is nobody to ask for it back. A signed request is the only thing that proves the key is yours. It approves nothing by itself; it only clears the way for the operator's decision.
+That gate is not bureaucracy. The address is where your money is paid, **on chain**. Somebody typing it proves the characters were typed — not that you hold the key, and not that the address is right. If it is wrong by one character, or it is a wallet you cannot spend from, every payment you ever take is gone and there is nobody to ask for it back. A signed request is the only thing that proves the key is yours. It approves nothing by itself; it only clears the way for Kakitu's decision.
 
 ## Running these examples
 
@@ -78,13 +96,13 @@ query string is inside the signed message, so quote it and change it nowhere els
 
 ## POST /v1/merchants
 
-Registers the signing wallet as a merchant, or updates its details. Signed request; no `Idempotency-Key` is needed because registration does not move money.
+Updates the signing wallet's merchant details: contact email, contact phone and callback URL. Signed request; no `Idempotency-Key` is needed because it does not move money.
 
-If you have not written the signing code yet, **[register in your browser](/signup)** instead: it generates a key, signs this request and submits it. It calls this same endpoint with the same rules, so everything below still applies.
+**Apply at [kakitu.org/merchant](https://kakitu.org/merchant) first.** If the signing wallet has no merchant record, this route creates a `pending` one, but that is not how a merchant is reviewed: the application at kakitu.org/merchant is. Send `business_name` exactly as you applied with it; once you are reviewed it is frozen.
 
 | Field | Type | Rules |
 |---|---|---|
-| `business_name` | string, required | 1 to 100 characters. No control, invisible or text-direction characters. This is the name an operator vets. It is not sent with the M-Pesa prompt on a collection today. |
+| `business_name` | string, required | 1 to 100 characters. No control, invisible or text-direction characters. The name Kakitu vets and the name on the verified badge. Frozen once reviewed. |
 | `contact_email` | string, required | A plain address such as `a@b.co`. `Name <a@b.co>` is refused. At most 254 characters. |
 | `contact_phone` | string, optional | At most 20 characters: digits, `+`, spaces and hyphens only. |
 | `callback_url` | string, optional | See [callback URLs](#callback-urls). |
@@ -205,7 +223,7 @@ Response: `201` for a first registration, `200` for an update. The body is the m
 }
 ```
 
-`daily_cap_kes` and `per_charge_max_kes` are set by an operator. `0` means no per-merchant value has been set, and the platform default then applies. The webhook secret is never in this record.
+`daily_cap_kes` and `per_charge_max_kes` are set by Kakitu. `0` means no per-merchant value has been set, and the platform default then applies. The webhook secret is never in this record.
 
 ### Clearing and leaving fields alone
 
@@ -222,15 +240,15 @@ Why: an omitted or misspelt field must never silently wipe a webhook URL and sto
 
 ### business_name is frozen
 
-Once a merchant is past `pending`, `business_name` cannot be changed through the API. A request with a different name is refused with `409 merchant_name_frozen` and **nothing in that request is saved**. Why: it is the name an operator vetted, so it is fixed after vetting. It is not sent with the M-Pesa PIN prompt on a collection today, so a payer deciding whether to type a PIN does not see it there. A rename needs an operator: write to kakitu@kakitu.org.
+Once a merchant is past `pending`, `business_name` cannot be changed through the API. A request with a different name is refused with `409 merchant_name_frozen` and **nothing in that request is saved**. Why: it is the name Kakitu vetted and the name shoppers see on the verified badge, so it is fixed after vetting. A rename needs Kakitu: write to kakitu@kakitu.org.
 
 Resubmitting the **same** name with new contact details is fine.
 
-In the rare race where an operator approves you between our check and our write, you also get `merchant_name_frozen`, but your other fields were saved, and the message says so.
+In the rare race where Kakitu approves you between our check and our write, you also get `merchant_name_frozen`, but your other fields were saved, and the message says so.
 
 ### A wallet with an open loan
 
-A wallet that has an open Kakitu loan (a feature of the Kakitu app) cannot register as a merchant. `POST /v1/merchants` answers `409 open_loan` and **nothing in the request is saved**. Register once the loan is closed, or register a wallet made for the business, as the [quickstart](./quickstart#why-a-separate-wallet) recommends anyway.
+A wallet that has an open Kakitu loan (a feature of the Kakitu app) cannot register as a merchant. `POST /v1/merchants` answers `409 open_loan` and **nothing in the request is saved**. Apply once the loan is closed, or apply with a wallet made for the business, as the [quickstart](./quickstart#why-a-separate-wallet) recommends anyway.
 
 ### Callback URLs
 

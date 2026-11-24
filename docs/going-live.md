@@ -5,44 +5,46 @@ title: Going live
 
 # Going live
 
-There is one environment: `https://walletapi.kakitu.org`. There is no separate sandbox for the developer API yet. Registering a merchant is safe, because a `pending` merchant can do nothing that costs money.
+There is one environment: `https://walletapi.kakitu.org`. There is no separate sandbox for the developer API yet. Applying is safe, because a `pending` merchant can do nothing that costs money.
 
-## What is live, and what is not
+## What is live, and what is not {#what-is-live}
 
 | | Status today |
 |---|---|
-| Being paid in KSHS at your address (`pay()`, `kakitu:` links, QR) | **Live.** Needs no registration. See [the quickstart](./quickstart#2-take-a-payment). |
-| [Cashing out](./cash-out) to M-Pesa from the Kakitu app | **Live**, within the [limits](./pricing). |
-| Registering, reading, [transfers](./transfers) once approved | **Live.** |
-| M-Pesa collections (`POST /v1/charges`) once approved | **Live** since 30 October 2026, within your [caps](./rate-limits#limits-that-apply-to-collections). |
-| [Payouts](./payouts) (`POST /v1/payouts/quote`, `POST /v1/payouts`) | **Live for a merchant an operator has switched on.** Off for each merchant by default; approval alone does not switch them on. |
-
-Both M-Pesa switches are platform settings an operator can turn off without a release. While collections are off, `POST /v1/charges` answers `503 rail_unavailable` and nobody is prompted; while payouts are off, the payout routes answer `403 payouts_disabled`.
+| Being paid in KSHS at your address (`pay()`, the Lipa na Kakitu button, `kakitu:` links, QR) | **Live.** Needs no registration. See [the quickstart](./quickstart#2-take-a-payment). |
+| Applying at [kakitu.org/merchant](https://kakitu.org/merchant), and the payments dashboard once approved | **Live.** |
+| Registering, reading, [transfers](./transfers) and [`transfer.received`](./events#transferreceived) webhooks once approved | **Live.** |
+| Cash at a Kakitu agent | **Live.** |
+| [Cash-out](./cash-out) to your own M-Pesa number, in the Kakitu app or the extension | **Being switched on.** `kes_offramp_enabled` in [`GET /config`](https://walletapi.kakitu.org/config) is `true` once it is. |
+| The verified-merchant badge in the extension's payment sheet | **Rolling out** with Kakitu extension 0.2.7. |
+| M-Pesa top-ups | **Coming.** |
+| [`POST /v1/charges`](./collections) | **Coming soon**, as a KSHS payment request. Take a transfer with a `reference` today. |
+| [`POST /v1/payouts`](./payouts) and the other payout-sending routes | **Coming soon** (being rebuilt on KCB). |
+| [`POST /v1/quotes`](./quotes) | Not available today. |
 
 ## Why a person approves you
 
-**A collection rings a stranger's handset with a real M-Pesa PIN prompt, and a transfer spends gas we pay for.** If anyone could start those, the API would be a way to phish people and drain our relayer. So every merchant is reviewed by a Kakitu operator before either works. This is manual, deliberately.
+**A transfer spends gas we pay for, and a verified badge tells shoppers they can trust you.** If anyone could get either, the API would be a way to drain our relayer and the badge would mean nothing. So every merchant is reviewed by a person at Kakitu. This is manual, deliberately.
 
 ## The path
 
-1. **Register** with `POST /v1/merchants`. Use your real trading name; it is what an operator vets, and it is frozen after review.
-2. **Write to kakitu@kakitu.org** with your wallet address and what you sell. Expect questions.
-3. **Approval.** An operator sets your state to `approved`, sets your limits, and issues your **webhook secret**. The secret is shown **once**. Store it in a secret manager at once; it cannot be retrieved later.
-4. **Confirm** with `GET /v1/merchants/me` that `state` is `approved`.
-5. **Use it.** [Transfers](./transfers) and [charges](./collections) work at once.
-
-Paying money **out** through the API is a separate request and a separate decision: approval does not switch payouts on for your merchant. Ask for them specifically. See [Payouts](./payouts#payouts-are-off-by-default). To get your own takings out, [cash out](./cash-out) from the app.
+1. **Make the business wallet in the Kakitu app** and write down its 12 words. Use a wallet made for the business, not your personal one ([why](./quickstart#why-a-separate-wallet)).
+2. **Add the Kakitu extension to Chrome** and restore the same wallet there with the 12 words.
+3. **Apply at [kakitu.org/merchant](https://kakitu.org/merchant).** Sign in with the extension (signing in cannot move money), then give your business name, the kind of business, where it is, and a contact phone. Use your real trading name: it is what Kakitu vets, it is what shoppers see on the badge, and it is frozen after review.
+4. **Approval.** A person at Kakitu reviews the application and sets your state to `approved`. The page shows your state whenever you sign in; a rejection comes with the reason, and you can fix the application and send it again.
+5. **Use it.** The dashboard at kakitu.org/merchant opens: payments in, totals for today, the last 7 and the last 30 days, and a CSV export.
+6. **For the API**, export the wallet's key for your server (see the [quickstart](./quickstart#3-copy-the-signer-and-check-who-you-are)), confirm with `GET /v1/merchants/me` that `state` is `approved`, and set your `callback_url` with [`POST /v1/merchants`](./merchants#post-v1merchants). Kakitu gives you your **webhook secret** once, at approval. Store it in a secret manager at once; it cannot be retrieved later.
 
 ## Checklist before you take real payments
 
-- [ ] The wallet you registered was generated for this business, not your personal wallet ([why](./quickstart#why-a-separate-wallet)).
+- [ ] The wallet you applied with was made for this business in the Kakitu app, not your personal wallet ([why](./quickstart#why-a-separate-wallet)).
 - [ ] Your private key is in a secret manager or environment variable, not in code, not in git.
 - [ ] The 12-word recovery phrase is written down and stored offline. It is both your credential and where your money lands. Losing it loses both.
-- [ ] You have imported the phrase into the Kakitu app and [cashed out](./cash-out) a small amount, so you know the way out works before you need it.
+- [ ] You know how you will take the money out: at a Kakitu agent today, or by [cash-out](./cash-out) to your own M-Pesa number once it is on.
 - [ ] You verify every payment on chain, and never accept a screenshot.
 - [ ] Your `callback_url` is https, public, and punycode if non-ASCII.
-- [ ] You generate a fresh `Idempotency-Key` per logical charge and reuse it only to retry that charge.
-- [ ] You generate a unique `reference` per charge and a new one after a refused charge.
+- [ ] You give every order its own `reference`, and match each payment to exactly one order.
+- [ ] You generate a fresh `Idempotency-Key` per transfer and reuse it only to retry that transfer.
 - [ ] You branch on `code`, never on `message`.
 - [ ] You log the `request_id` from every error.
 - [ ] Your server clock is correct (NTP). Signatures fail beyond 120 seconds of skew.
@@ -57,24 +59,23 @@ What to do, in this order:
 
 1. **Move the money first.** Anything sitting at that address can be spent by whoever holds
    the key. Send it to a wallet you control, straight away.
-2. **Tell us.** Contact your Kakitu operator and ask for the merchant to be **suspended**. A
-   suspended merchant is refused everywhere — no new charge, no payout, no transfer — so an
-   attacker holding your key cannot create collections in your name.
-3. **Register again** with a key generated fresh, and be approved again. It is a new merchant
-   row: new webhook secret, and your integration must send the new address.
+2. **Tell us.** Write to kakitu@kakitu.org and ask for the merchant to be **suspended**. A
+   suspended merchant is refused everywhere — no transfer through the API, no verified badge,
+   no dashboard — so an attacker holding your key cannot act as your business.
+3. **Apply again** with a new wallet made in the Kakitu app, and be approved again. It is a new
+   merchant: new webhook secret, and your integration must use the new address.
 
-Charges already settled are settled. They are on chain, at an address somebody else now has
-the key to, and nothing about that is reversible.
+Payments already received are on chain, at an address somebody else now has the key to, and
+nothing about that is reversible.
 
 Rotate on your own terms too — before an employee with production access leaves, for instance.
 The steps are the same minus the hurry.
 
-## Changes that need an operator
+## Changes that need Kakitu
 
 - Renaming the business.
 - Raising limits.
-- Switching payouts on, and setting the payout caps. These are separate from your collection caps.
 - Getting a new webhook secret.
-- Reinstating a suspended or rejected merchant.
+- Reinstating a suspended merchant. (A rejected one fixes its application at kakitu.org/merchant and sends it again.)
 
 Write to kakitu@kakitu.org and quote your address.

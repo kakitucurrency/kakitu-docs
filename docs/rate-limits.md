@@ -5,42 +5,11 @@ title: Rate limits
 
 # Rate limits
 
-Limits exist to protect payers. A collection rings a real handset, so the controls are about how often and how much, not just request volume.
-
-## Limits that apply to collections
-
-[Collections](./collections) need an approved merchant, and the platform switch on (it is on
-today; if an operator turns it off, `POST /v1/charges` answers `503 rail_unavailable` and no
-handset is rung). Payouts are separate and **off by default for each merchant**: they are enabled
-per merchant on request (see [Payouts](./payouts)).
-
-These apply to every charge. Each is its own error code:
-
-| Limit | Code | HTTP |
-|---|---|---|
-| Daily collection cap for your merchant | `daily_cap_exceeded` | 429 |
-| Charges per minute for your merchant | `rate_limited` | 429 |
-| Prompts from your merchant to one payer per day | `payer_velocity_exceeded` | 429 |
-| Different merchants prompting one payer per day | `payer_velocity_exceeded` | 429 |
-| Maximum per charge | `amount_above_maximum` | 400 |
-
-Your own `daily_cap_kes` and `per_charge_max_kes` are in `GET /v1/merchants/me`. `0` means the platform default applies. The platform defaults are configuration an operator can change without a release; on 9 November 2026 they were:
-
-| Platform default | Value on 9 November 2026 |
-|---|---|
-| Daily collection cap per merchant | KES 100,000 |
-| Maximum per charge | KES 70,000, but the collection partner's per-order ceiling (`deposit_max_per_order_usd` in `GET /config`, about KES 13,000) binds first |
-| Charges per minute per merchant | 30 |
-| Prompts from one merchant to one payer per day | 5 |
-| Different merchants that may prompt one payer per day | 3 |
-
-Read your own record rather than hard-coding these, and ask us for a limit raise when you need one. The days are East Africa Time days.
-
-The payer limits are deliberate: they stop a merchant, or someone who got hold of a merchant's key, from pestering one person, and stop one number being worked by many merchants.
+Limits exist to protect people and to protect the relayer that pays everybody's gas. The controls are about how often and how much, not just request volume.
 
 ## Reading a 429
 
-Branch on `code`. A `429` does not mean your request was lost: check the code, wait, and retry. A refused charge that was stopped by these checks writes no charge, so its `reference` stays free.
+Branch on `code`. A `429` does not mean your request was lost: check the code, wait, and retry.
 
 ## Limits that apply to transfers
 
@@ -69,11 +38,11 @@ Three headers come back on every `/v1` response:
 
 Over the limit you get `429 rate_limited`, plus **`Retry-After`** in seconds, and the message names the wait. The default allowance is 120 requests a minute; read `RateLimit-Limit` rather than hardcoding it, because an operator can change it.
 
-Unlike the money controls, this one **fails open**: if our counter is unavailable your request goes through. It protects us from load; it is not a safety control, and a Redis outage must not stop you reading your own charges.
+Unlike the money controls, this one **fails open**: if our counter is unavailable your request goes through. It protects us from load; it is not a safety control, and a Redis outage must not stop you reading your own history.
 
 ### Quotes: 30 a minute
 
-`POST /v1/quotes` has a second, tighter limit of its own: **30 a minute per address**, counted on our side even when the shared counter is down, because every quote is a live call to a pricing partner. Over it you get `429 rate_limited` with `Retry-After` set to the seconds left in the minute. It does not appear in the `RateLimit-*` headers, which describe the shared limit only.
+`POST /v1/quotes` has a second, tighter limit of its own: **30 a minute per address**, counted on our side even when the shared counter is down. `POST /v1/quotes` is [not available today](./quotes); the limit still applies to it. Over it you get `429 rate_limited` with `Retry-After` set to the seconds left in the minute. It does not appear in the `RateLimit-*` headers, which describe the shared limit only.
 
 ## The per-IP limit in front of everything
 
@@ -96,7 +65,7 @@ Branch on whether `error` is a string or an object, as on the [Errors](./errors#
 
 ## Retry-After
 
-`Retry-After` is sent with three 429s only: the shared per-minute limit (the one the `RateLimit-*` headers describe), the 30-a-minute quote limit, and the per-IP `too_many_requests`. **Every other 429 may come without it**: `daily_cap_exceeded`, `payer_velocity_exceeded`, `payout_daily_cap_exceeded`, and the `rate_limited` answers that come from the charges-per-minute cap, the payer prompt limit or the hourly transfer cap. When it is missing, do not retry in a loop: a daily cap resets at a known time (midnight UTC for transfers, midnight East Africa Time for collections and payouts), and the hourly transfer cap within the hour.
+`Retry-After` is sent with three 429s only: the shared per-minute limit (the one the `RateLimit-*` headers describe), the 30-a-minute quote limit, and the per-IP `too_many_requests`. **Every other 429 may come without it**: `daily_cap_exceeded`, `payout_daily_cap_exceeded`, and the `rate_limited` answer from the hourly transfer cap. When it is missing, do not retry in a loop: a daily cap resets at a known time (midnight UTC for transfers), and the hourly transfer cap within the hour.
 
 Do not hammer `GET /v1/merchants/me`; read it when you need it. Each signed request must also be unique (see [replays](./authentication#time-and-replay)), so a tight retry loop that resends an identical request in the same second fails with `replay` rather than being rate limited.
 

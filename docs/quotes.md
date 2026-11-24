@@ -1,12 +1,20 @@
 ---
 sidebar_position: 8
-title: Quotes
+title: Quotes (not available today)
 ---
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# Quotes
+# Quotes (not available today)
+
+:::warning Not available today
+`POST /v1/quotes` priced deposits and withdrawals on an M-Pesa route Kakitu no longer uses. **Do not build on it**: it is not available today and may refuse with `503 rail_unavailable`. The reference below describes the route as it stood.
+
+For the price of a cash-out to your own M-Pesa number, read `kes_offramp_fee_bps` and `kes_offramp_fee_min_kes` in [`GET /config`](https://walletapi.kakitu.org/config), or see [Cash out](./cash-out#limits-and-fees).
+:::
+
+<!-- rebuilding -->
 
 A quote is a **price**: what a payment in or out would cost right now, and what would land. Asking for one creates no order, no charge and no transfer, and commits you to nothing.
 
@@ -253,7 +261,7 @@ HTTP 200
 
 **A quote from this endpoint is a number you show somebody, not a reservation.** There is no id in the response and nothing here can be handed back to us.
 
-That is not an oversight: the only id a quote has internally belongs to the pricing partner, and no partner identifier goes over this API. For the same reason nothing in the response names a rail, a treasury address or an amount to sign.
+That is not an oversight: the only id a quote has internally is not Kakitu's to give, and no outside identifier goes over this API. For the same reason nothing in the response names a route, a treasury address or an amount to sign.
 
 If you want a price you can **act on**, that is [`POST /v1/payouts/quote`](./payouts#post-v1payoutsquote). It issues an id of its own, in its own namespace, and that id is the only thing `POST /v1/payouts` accepts. A quote from this page cannot be spent there, and neither can one from the wallet app's `/ramp/*` routes — both are refused exactly as an id that never existed.
 
@@ -266,12 +274,12 @@ If you want a price you can **act on**, that is [`POST /v1/payouts/quote`](./pay
 | `unauthorized` | 401 | The request was not signed. |
 | `amount_below_minimum` | 400 | Under the band. `GET /v1/limits` shows it. |
 | `amount_above_maximum` | 400 | Over the band. |
-| `profile_required` | 409 | This wallet has no profile yet: a phone number and name, which the cash-out partner needs on every order. There is no `/v1` route for it; save one with `POST /profile` or in the Kakitu app. See [Cash out](./cash-out#2-a-profile-once). |
+| `profile_required` | 409 | This wallet has no profile yet: a phone number and name. There is no `/v1` route for it; save one with `POST /profile` or in the Kakitu app. |
 | `identity_verification_required` | 403 | This amount needs the customer's identity verified first. |
 | `account_blocked` | 403 | Kakitu has blocked this wallet. Nothing was quoted. |
 | `insufficient_balance` | 400 | Withdrawal only: the wallet does not hold the KSHS this withdrawal would send. Nothing was quoted. |
 | `rate_limited` | 429 | Too many requests from this wallet: the shared per-minute limit, or the **30 quotes a minute** this route allows on its own. `Retry-After` says how long to wait. |
-| `rail_unavailable` | 503 | Pricing is temporarily unavailable, M-Pesa deposits are briefly paused, cash-out capacity is short for this amount (see `cashout_capacity_kes` in `GET /config`), or the wallet could not be checked. Nothing was quoted. Retry shortly, or with a smaller amount. |
+| `rail_unavailable` | 503 | Pricing is temporarily unavailable, M-Pesa deposits are briefly paused, cash-out capacity is short for this amount, or the wallet could not be checked. Nothing was quoted. Retry shortly, or with a smaller amount. |
 | `internal` | 500 | Something went wrong on our side. Quote the `request_id`; do not retry in a loop. |
 
 A `500` here is worth treating differently from a `503`. `rail_unavailable` means try again shortly. `internal` can mean our own arithmetic disagreed with itself, and retrying that gets the same answer faster.
@@ -279,3 +287,5 @@ A `500` here is worth treating differently from a `503`. `rail_unavailable` mean
 ## What a quote does not tell you
 
 The band from [`GET /v1/limits`](./limits) is cached and can be minutes old. **A quote is live.** If the two disagree, the quote is right — it is the thing that decides whether an amount is accepted.
+
+<!-- /rebuilding -->

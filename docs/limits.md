@@ -57,7 +57,11 @@ query string is inside the signed message, so quote it and change it nowhere els
 
 ## GET /v1/limits
 
-Two things: the current withdrawal band — the smallest and largest payout the rail will accept — and, if you are a registered merchant, **your own payout limits**. Signed request, no body, no `Idempotency-Key`.
+Two things: a withdrawal band, and, if you are a registered merchant, **your own payout limits**. Signed request, no body, no `Idempotency-Key`.
+
+:::caution The withdrawal band is not the cash-out band
+`withdrawal` describes the older M-Pesa withdrawal route, which Kakitu no longer uses. It is kept so that existing clients keep working; do not use it to price anything. The numbers for a [cash-out to your own M-Pesa number](./cash-out#limits-and-fees) are `kes_offramp_min_kes` and `kes_offramp_max_kes` in [`GET /config`](https://walletapi.kakitu.org/config). The payout block below describes [payouts](./payouts), which are coming soon.
+:::
 
 <Tabs groupId="lang">
 <TabItem value="curl" label="cURL" default>
@@ -186,7 +190,7 @@ HTTP 200
 }
 ```
 
-The two halves are not the same kind of number. The **withdrawal band** is the rail's, shared by everybody, and cached. The **payout block** is yours, and exact.
+The two halves are not the same kind of number. The **withdrawal band** is shared by everybody, cached, and describes a route Kakitu no longer uses. The **payout block** is yours, and exact.
 
 ## `source` says whether the band is real
 
@@ -211,7 +215,7 @@ Today it is `300`. Do not hardcode that: read it. If an operator widens the refr
 
 Use it to shape a form — to grey out an obviously impossible amount, or to tell someone the rough range before they type. Do not use it to promise that a particular amount will go through, and do not treat a quote that disagrees with it as a bug. The quote is live; this is a cache.
 
-The band also leaves out what our hot treasury can pay right now. That is `cashout_capacity_kes` in [`GET /config`](https://walletapi.kakitu.org/config), in KSHS sent rather than shillings landed, and when it is lower than `max_kes` it is the limit that binds: a withdrawal or payout over it is refused at the quote with `503 rail_unavailable`, before anything moves.
+The band also leaves out what Kakitu can pay right now: a quote that cannot be paid is refused before anything moves.
 
 ## `payout` — your own limits {#payout-limits}
 
@@ -271,7 +275,6 @@ It publishes the **withdrawal** band and your **payout** limits. These live else
 
 | Limit | Where |
 |---|---|
-| Your daily collection cap and per-charge maximum | `daily_cap_kes` and `per_charge_max_kes` in [`GET /v1/merchants/me`](./merchants) |
+| One cash-out to your own M-Pesa number | `kes_offramp_min_kes` and `kes_offramp_max_kes` in `GET /config`. See [Cash out](./cash-out#limits-and-fees) |
 | The largest single [transfer](./transfers) | `relay_max_per_tx_kes` in `GET /config` |
-| The largest single M-Pesa collection | The collection partner's per-order ceiling, `deposit_max_per_order_usd` in `GET /config` (USD 99, about KES 13,000 at the current buying rate). It binds before your `per_charge_max_kes` does. Over it: `amount_above_maximum` |
-| Requests per minute, prompts per payer, charges per minute | [Rate limits](./rate-limits) |
+| Requests per minute | [Rate limits](./rate-limits) |

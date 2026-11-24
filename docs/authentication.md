@@ -8,7 +8,7 @@ import TabItem from '@theme/TabItem';
 
 # Authentication
 
-**Your wallet address is your API credential.** There is no API key to issue, leak or rotate. Every request is signed with the wallet's private key, and the server recovers the address from the signature. That address is also where your collections are settled, so a body that could name a different address would let anyone register as someone else. For that reason the address is never a body field.
+**Your wallet address is your API credential.** There is no API key to issue, leak or rotate. Every request is signed with the wallet's private key, and the server recovers the address from the signature. That address is also where you are paid, so a body that could name a different address would let anyone register as someone else. For that reason the address is never a body field.
 
 ## The scheme
 
@@ -73,7 +73,7 @@ composer require kakitu/kakitu-php:@dev
 ```
 :::
 
-Each of these is a whole program: it builds the message, signs it, sends the request and prints the answer. Run on its own, each makes one read-only call, `GET /v1/merchants/me`; import its `call` function to make others, as the [quickstart](./quickstart#4-register) does to register. Each reads the key from `KAKITU_PRIVATE_KEY`. Do not put a key in source code or paste one into a support ticket, and make it a key generated for this integration rather than your personal wallet's — see [why a separate wallet](./quickstart#why-a-separate-wallet).
+Each of these is a whole program: it builds the message, signs it, sends the request and prints the answer. Run on its own, each makes one read-only call, `GET /v1/merchants/me`; import its `call` function to make others, as the [quickstart](./quickstart#4-set-your-contact-email-and-callback-url) does. Each reads the key from `KAKITU_PRIVATE_KEY`. Do not put a key in source code or paste one into a support ticket, and make it the key of a wallet made for the business rather than your personal wallet's — see [why a separate wallet](./quickstart#why-a-separate-wallet).
 
 <Tabs groupId="lang">
 <TabItem value="ts" label="TypeScript" default>
@@ -317,6 +317,14 @@ Branch on `reason`. It is a string you can match, but unlike `code` on other err
 | `unreadable_body` | The body could not be read, or exceeded 1 MiB. |
 | `auth_unavailable` | The replay store is down. The request was refused rather than risk accepting a replay. Retry shortly with a fresh signature. |
 
-## Idempotency is separate
+## Idempotency is separate {#idempotency}
 
-Signing proves who you are. It does not make a retry safe. Requests that move money also need an `Idempotency-Key` header. See [Collections](./collections#idempotency).
+Signing proves who you are. It does not make a retry safe. **Every money-moving `POST` requires an `Idempotency-Key` header**: a string you generate, at most 255 characters; a UUID is ideal. It exists so a timeout never means a double payment: if you do not know whether a request worked, resend it with the **same key** and you get the original answer, not a second transfer.
+
+- **Same key, same request:** the stored response is returned with the header `Idempotent-Replayed: true`. Only successful (2xx) responses are stored.
+- **Same key, different body, path or query:** `409 idempotency_key_reuse`. A key names one request. Use a new key for a new request.
+- **Same key while the first is still running:** `409 idempotency_key_in_progress`. Wait and retry with the same key.
+- **No key:** `400 idempotency_key_required`. Over 255 characters: `400 idempotency_key_invalid`.
+- **Store unavailable:** `503 idempotency_unavailable`. Retry with the same key.
+- **Outcome unknown:** `409 idempotency_key_acted`, possibly on the first attempt. The money may already have moved: **do not retry**, with this key or a new one. Check state first. See [Transfers](./transfers#the-two-answers-that-are-not-retry).
+- Keys are held for 24 hours.

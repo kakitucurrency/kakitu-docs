@@ -19,7 +19,7 @@ Every `/v1/` endpoint answers an error with one envelope:
 
 **`code` is the contract. `message` is for humans and may be reworded at any time. Never branch on `message`.** Codes are a closed set, and each code has exactly one HTTP status, so you can handle errors by code alone.
 
-`request_id` is always present. Quote it when you contact support; it is the only handle we have on your request. For `internal` errors the message is always the same fixed sentence, because the real cause can contain a provider's or a payer's details and is kept in our logs.
+`request_id` is always present. Quote it when you contact support; it is the only handle we have on your request. For `internal` errors the message is always the same fixed sentence, because the real cause can contain somebody else's or a payer's details and is kept in our logs.
 
 ## Every code
 
@@ -47,10 +47,10 @@ Every `/v1/` endpoint answers an error with one envelope:
 | `rate_limited` | 429 | Too many requests per minute, too many charges per minute, too many prompts, or too many transfers this hour. See [Rate limits](./rate-limits). |
 | `charge_not_found` | 404 | No such charge for this merchant. |
 | `reference_reused` | 409 | This merchant already has a charge with that reference. |
-| `rail_unavailable` | 503 | The thing you asked for is temporarily unavailable: the partner, our cash-out capacity, or our own check of whether a wallet is blocked. Retry shortly. On a route that moves money it means **nothing was sent** and no handset was rung. |
+| `rail_unavailable` | 503 | The feature is unavailable or paused, capacity is short right now, or our own check of whether a wallet is blocked could not run. Retry shortly. On a route that moves money it means **nothing was sent**. |
 | `order_not_found` | 404 | No such order. See [Orders](./orders). |
 | `event_not_found` | 404 | No such webhook event. See [Events](./events). |
-| `payouts_disabled` | 403 | Payouts are not switched on for this merchant. See [Payouts](./payouts#payouts-are-off-by-default). |
+| `payouts_disabled` | 403 | Payouts are not switched on for this merchant. Payouts are [coming soon](./payouts#coming-soon). |
 | `payout_daily_cap_exceeded` | 429 | The merchant's daily **payout** budget is spent. Not the collection cap. Resets at midnight EAT. |
 | `payout_amount_above_maximum` | 400 | Over the largest single payout allowed for this merchant. |
 | `payout_not_found` | 404 | No such payout for this merchant. See [Payouts](./payouts). |
@@ -66,7 +66,7 @@ Every `/v1/` endpoint answers an error with one envelope:
 | `unknown_bank` | 400 | `bank_code` is not a bank we can pay. |
 | `account_not_found` | 422 | The bank does not hold that account, or no longer under the name it was saved with. |
 | `insufficient_balance` | 400 | The wallet does not hold the KSHS this payout or withdrawal burns. Nothing was quoted or sent. |
-| `profile_required` | 409 | This wallet has no profile yet: a phone number and name, which the cash-out partner needs on every order. There is no `/v1` route for it; save one with `POST /profile` or in the Kakitu app. See [Cash out](./cash-out#2-a-profile-once). |
+| `profile_required` | 409 | This wallet has no profile yet: a phone number and name. There is no `/v1` route for it; save one with `POST /profile` or in the Kakitu app. |
 | `identity_verification_required` | 403 | The amount needs the customer's identity verified first. |
 | `internal` | 500 | Something went wrong on our side. Quote the request_id. |
 
@@ -88,12 +88,33 @@ The wallet's own routes (`/ramp/*`, which the Kakitu app and extension call) ans
 
 | `error` | HTTP | Meaning |
 |---|---|---|
-| `deposits_paused` | 409 | M-Pesa top-ups are paused for a short while. **Nothing was charged**, no prompt was sent, and the customer is texted when top-ups reopen. Not a failure to retry in a loop. |
-| `treasury_short` | 409 | The hot treasury cannot pay this cash-out right now. Refused at the quote or the confirm, before anything was signed or taken. Try a smaller amount (`cashout_capacity_kes` in [`GET /config`](https://walletapi.kakitu.org/config)) or later. |
+| `deposits_paused` | 409 | M-Pesa top-ups are paused. **Nothing was charged** and no prompt was sent. Not a failure to retry in a loop. |
+| `treasury_short` | 409 | The hot treasury cannot pay this cash-out right now. Refused at the quote or the confirm, before anything was signed or taken. Try a smaller amount or later. |
 | `account_blocked` | 403 | Kakitu has blocked this wallet, or the other wallet on a transfer. Nothing moved. |
 | `cashout_on_hold` | 403 | Money paid in from an M-Pesa number new to this wallet can be held for a while before it may leave. Nothing moved. |
 
-On those routes `insufficient_balance` is the same fact as the `/v1` code above, and `rail_unavailable` is not used: a partner that fails is `502 provider_error`.
+On those routes `insufficient_balance` is the same fact as the `/v1` code above, and `rail_unavailable` is not used: an upstream failure is `502 provider_error`.
+
+### Codes from the wallet cash-out (`/ramp/kes`) {#wallet-cash-out-codes}
+
+The [cash-out to the wallet's own M-Pesa number](./cash-out) answers in the same older shape. These codes are not part of the forty-four `/v1` codes; some carry extra fields beside `error`.
+
+| `error` | HTTP | Meaning |
+|---|---|---|
+| `kes_offramp_disabled` | 404 | Cash-out to M-Pesa is not switched on yet (`kes_offramp_enabled` is `false` in `GET /config`). |
+| `kes_offramp_paused` | 409 | Kakitu has paused cash-outs for now. Nothing was taken from the wallet. |
+| `phone_not_verified` | 403 | This wallet has no proved M-Pesa number. Prove it in the Kakitu app. |
+| `phone_too_new` | 403 | The number was proved less than 24 hours ago. `retry_after` says when it can be paid. |
+| `amount_below_minimum` | 400 | Under `kes_offramp_min_kes`. The answer carries `min_kes` and `max_kes`. |
+| `amount_over_limit` | 400 | Over `kes_offramp_max_kes`. The answer carries `min_kes` and `max_kes`. |
+| `daily_limit_reached` | 409 | Over the rolling 24-hour limit. `remaining_kes` is what is left. |
+| `insufficient_balance` | 400 | The wallet does not hold the payout plus the fee. `balance_kes` and `need_kes` say by how much. |
+| `payout_unavailable` | 503 | Kakitu cannot pay this right now. Nothing was taken; try later or a smaller amount. |
+| `quote_expired` | 400 | The price ran out. Ask for a new quote. |
+| `invalid_relay` | 400 | The signed transfer does not match the quote. Nothing moved. |
+| `relay_failed` | 400 | The transfer was refused before it was sent. Nothing left the wallet; try again. |
+| `use_agent_cashout` | 403 | An agent wallet cashes out in the Kakitu Agent app. |
+| `destination_locked` | 403 | This merchant is [locked to its saved payout destinations](./cash-out#locked-merchants). |
 
 ## Authentication failures
 
@@ -110,9 +131,9 @@ Here `error` is a string and `reason` is one of `missing_auth_headers`, `bad_tim
 
 | Situation | What to do |
 |---|---|
-| `503` (`idempotency_unavailable`, `rail_unavailable`) | Retry with backoff, same `Idempotency-Key`. On a charge, a `rail_unavailable` can also have closed the `reference`: see [Collections](./collections#a-503-on-a-charge). |
+| `503` (`idempotency_unavailable`, `rail_unavailable`) | Retry with backoff, same `Idempotency-Key`. |
 | `409 idempotency_key_in_progress` | Wait, retry with the same key. |
 | `429` | Back off. See [Rate limits](./rate-limits). |
-| `409 idempotency_key_acted` | **Do not retry**, with this key or a new one. The money may already have moved — check state first. On [charges](./collections#idempotency_key_acted), [transfers](./transfers#the-two-answers-that-are-not-retry) and [payouts](./payouts#the-one-answer-that-is-not-retry) you can get this on the first attempt. |
+| `409 idempotency_key_acted` | **Do not retry**, with this key or a new one. The money may already have moved — check state first. On charges, [transfers](./transfers#the-two-answers-that-are-not-retry) and [payouts](./payouts#the-one-answer-that-is-not-retry) you can get this on the first attempt. |
 | `reference_reused` after a refused charge | Same key, **new reference**. |
 | `4xx` otherwise | Fix the request. Retrying will not help. |
