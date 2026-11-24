@@ -1035,7 +1035,7 @@ Everything above, plus:
 | `account_blocked` | 403 | Kakitu has blocked your wallet, or money in it is on hold. **Nothing was sent.** |
 | `idempotency_key_acted` | 409 | The payout was submitted and we cannot tell what became of it. **Do not send it again.** |
 
-The general idempotency rules — replays, mismatched bodies, the 24-hour window — are on the [Collections](./collections#idempotency) page and apply here unchanged.
+The general idempotency rules — replays, mismatched bodies, the 24-hour window — are on the [Collections](./authentication#idempotency) page and apply here unchanged.
 
 ### GET /v1/payouts/\{id\}
 

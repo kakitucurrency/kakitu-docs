@@ -27,7 +27,7 @@ A merchant's integration branches on `type` and on nothing else, so each of thes
 | `type` | About | What it tells you |
 |---|---|---|
 | `charge.paid` | a charge | The payer paid. |
-| `charge.settled` | a charge | The KSHS is at your address: the amount minted for this payment, which is less than `charge.amount`. |
+| `charge.settled` | a charge | The KSHS is at your address: `charge.credited_kes`, which is `charge.amount` less `charge.fee_kes`. |
 | `charge.failed` | a charge | The charge did not go through. |
 | `transfer.received` | a payment | KSHS arrived at your address on chain, from anybody, by any route. Carries the payer's `reference` if they sent one. |
 | `payout.approved` | a payout | **A person said yes. Quote and sign it now**, before `payout.approval_expires_at`. |
@@ -41,6 +41,8 @@ A merchant's integration branches on `type` and on nothing else, so each of thes
 | `payout_lock.changed` | your controls | **The payout lock moved.** It went on, or somebody asked for it to come off. |
 
 The last three are the alarm for your own payout controls: if you did not make the change, somebody else holds your key.
+
+**Which of these you will see today.** `transfer.received` is the event that matters now: it is how you learn of every payment to your address. New charges cannot be created while [collections are being rebuilt](./collections), so the `charge.*` events belong to charges made before; the payout-sending routes are [coming soon](./payouts), so `payout.approved`, `payout.rejected`, `payout.expired`, `payout.cancelled`, `payout.paid` and `payout.failed` belong to past payouts. The three controls events are raised today, because saved destinations and the lock work today.
 
 ### The approve-first events
 
@@ -97,7 +99,7 @@ One consequence of "state at the time it was raised": because delivery retries f
 
 ### `charge.paid`
 
-The rail says the payer paid. The KSHS is not at your address yet — wait for `charge.settled` before you release goods.
+The payer paid. The KSHS is not at your address yet — wait for `charge.settled` before you release goods.
 
 | Field | Type | Present |
 |---|---|---|
@@ -138,7 +140,7 @@ The KSHS is at your address on chain. This is the event to release goods on.
 |---|---|---|
 | `charge.id` | string, UUID | **Always.** |
 | `charge.reference` | string | **Always, and never empty.** |
-| `charge.amount` | integer | **Always.** Whole shillings the payer was asked for. **Not** what you were credited: the KSHS minted to you is less, by our partner's fee and our spread. See [below](#charges-and-payouts-name-their-amounts-differently). |
+| `charge.amount` | integer | **Always.** Whole shillings the payer was asked for. **Not** what you were credited: that is `charge.credited_kes`, `amount` less `charge.fee_kes`. See [below](#charges-and-payouts-name-their-amounts-differently). |
 | `charge.currency` | string | **Always** `"KES"`. |
 | `charge.status` | string | **Always** `"settled"` on this type. |
 | `charge.paid_at` | string, RFC 3339 UTC | **Always a timestamp on this type**, never `null`. If the charge jumped straight to settled without a `charge.paid` ever being raised, this is the moment it settled. |
@@ -200,7 +202,7 @@ The collection did not go through, or a payment that had gone through was refund
 }
 ```
 
-**There is no reason, code or message on a `charge.failed`.** Why a collection failed is a rail's word about a payer, and it is not part of this contract. If you need to tell "never paid" from "paid and refunded", `paid_at` is the field that answers it.
+**There is no reason, code or message on a `charge.failed`.** Why a collection failed is not part of this contract. If you need to tell "never paid" from "paid and refunded", `paid_at` is the field that answers it.
 
 ### `transfer.received`
 
@@ -405,7 +407,7 @@ A `charge.*` body never carries:
 
 - the payer's phone number, or any hash or masked form of it;
 - the payer's wallet address;
-- the name of the payment rail or partner that served the collection, or that partner's own status string;
+- the name of the route that moved the money, or any status string from outside Kakitu;
 - Kakitu's internal order id or order reference;
 - your own merchant address;
 - the charge's `created_at` (that one is on [`GET /v1/charges`](./collections), not here).
@@ -414,9 +416,9 @@ A `payout.*` body never carries:
 
 - the beneficiary's number, account or name (they are on [`GET /v1/payouts/{id}`](./payouts), under `beneficiary`, but never on the wire to your endpoint);
 - the identity of the operator who decided it, or the reason they recorded;
-- the rail name, the pricing partner's quote id, the signed permit or its deadline.
+- the name of the route that moved the money, any outside quote id, the signed permit or its deadline.
 
-**If your integration needs the payer's number, it will never arrive in a webhook.** Hold it on your side against your own `reference` and match on that; `reference` is on every `charge.*` body for exactly this purpose. There is a test in the server that asserts, by literal string, that a payer phone number, a payer address, a rail name, a partner status and an internal order id are absent from a rendered charge payload — so this is a property of the build, not a convention.
+**If your integration needs the payer's number, it will never arrive in a webhook.** Hold it on your side against your own `reference` and match on that; `reference` is on every `charge.*` body for exactly this purpose. There is a test in the server that asserts, by literal string, that a payer phone number, a payer address, a route name, an outside status and an internal order id are absent from a rendered charge payload — so this is a property of the build, not a convention.
 
 ### Verifying the signature
 

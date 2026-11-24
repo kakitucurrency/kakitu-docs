@@ -12,7 +12,7 @@ A webhook is a `POST` we make to your `callback_url` when something happens to o
 ## Before anything is delivered
 
 - You store a `callback_url` on your merchant. It is validated at registration (https, public, punycode for non-ASCII hostnames) so a bad one fails there rather than silently never delivering. See [Merchants](./merchants#callback-urls).
-- When an operator approves your merchant, a **webhook secret** is issued. It signs every delivery.
+- When Kakitu approves your merchant, a **webhook secret** is issued. It signs every delivery.
 
 ### The webhook secret is shown once
 
@@ -67,6 +67,8 @@ Every delivery carries one of thirteen event types:
 Each body is a three-field envelope (`id`, `type`, `created_at`) wrapped around **one** subject object: `charge`, `transfer`, `payout`, `destination` or `payout_lock`. Only the subject the event is about is present; the other keys are absent, not present-and-`null`. **Branch on `type` and on nothing else.**
 
 **Every field of every type, what is always present, what may be null, and an example body of each: [the payload](./events#the-payload).**
+
+**Today, `transfer.received` is the one to build for.** New charges cannot be created while [collections are being rebuilt](./collections) and the payout-sending routes are [coming soon](./payouts), so the `charge.*` and payout events belong to past charges and payouts. The controls events (`payout_destination.*`, `payout_lock.changed`) are raised today.
 
 :::danger Four payout types mean "not sent", and they are not the same instruction
 `payout.expired`, `payout.cancelled` and `payout.rejected` all mean **nothing left your wallet and

@@ -113,6 +113,6 @@ Here `error` is a string and `reason` is one of `missing_auth_headers`, `bad_tim
 | `503` (`idempotency_unavailable`, `rail_unavailable`) | Retry with backoff, same `Idempotency-Key`. On a charge, a `rail_unavailable` can also have closed the `reference`: see [Collections](./collections#a-503-on-a-charge). |
 | `409 idempotency_key_in_progress` | Wait, retry with the same key. |
 | `429` | Back off. See [Rate limits](./rate-limits). |
-| `409 idempotency_key_acted` | **Do not retry**, with this key or a new one. The money may already have moved — check state first. On [charges](./collections#idempotency_key_acted), [transfers](./transfers#the-two-answers-that-are-not-retry) and [payouts](./payouts#the-one-answer-that-is-not-retry) you can get this on the first attempt. |
+| `409 idempotency_key_acted` | **Do not retry**, with this key or a new one. The money may already have moved — check state first. On [charges](./authentication#idempotency), [transfers](./transfers#the-two-answers-that-are-not-retry) and [payouts](./payouts#the-one-answer-that-is-not-retry) you can get this on the first attempt. |
 | `reference_reused` after a refused charge | Same key, **new reference**. |
 | `4xx` otherwise | Fix the request. Retrying will not help. |
