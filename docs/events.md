@@ -866,7 +866,7 @@ foreach ($page['data'] as $e) {
 
 ## Who can call these
 
-A registered merchant. **A suspended merchant can still read and replay its own events** — doing so moves no money and tells nobody anything new. Suspension stops new charges, not your access to your own delivery history.
+A registered merchant. **A suspended merchant can still read and replay its own events** — doing so moves no money and tells nobody anything new. Suspension stops your money-moving routes, not your access to your own delivery history.
 
 ## Errors
 

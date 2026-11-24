@@ -8,7 +8,7 @@ import TabItem from '@theme/TabItem';
 
 # Authentication
 
-**Your wallet address is your API credential.** There is no API key to issue, leak or rotate. Every request is signed with the wallet's private key, and the server recovers the address from the signature. That address is also where your collections are settled, so a body that could name a different address would let anyone register as someone else. For that reason the address is never a body field.
+**Your wallet address is your API credential.** There is no API key to issue, leak or rotate. Every request is signed with the wallet's private key, and the server recovers the address from the signature. That address is also where you are paid, so a body that could name a different address would let anyone register as someone else. For that reason the address is never a body field.
 
 ## The scheme
 
@@ -73,7 +73,7 @@ composer require kakitu/kakitu-php:@dev
 ```
 :::
 
-Each of these is a whole program: it builds the message, signs it, sends the request and prints the answer. Run on its own, each makes one read-only call, `GET /v1/merchants/me`; import its `call` function to make others, as the [quickstart](./quickstart#4-register) does to register. Each reads the key from `KAKITU_PRIVATE_KEY`. Do not put a key in source code or paste one into a support ticket, and make it a key generated for this integration rather than your personal wallet's — see [why a separate wallet](./quickstart#why-a-separate-wallet).
+Each of these is a whole program: it builds the message, signs it, sends the request and prints the answer. Run on its own, each makes one read-only call, `GET /v1/merchants/me`; import its `call` function to make others, as the [quickstart](./quickstart#4-set-your-contact-email-and-callback-url) does. Each reads the key from `KAKITU_PRIVATE_KEY`. Do not put a key in source code or paste one into a support ticket, and make it the key of a wallet made for the business rather than your personal wallet's — see [why a separate wallet](./quickstart#why-a-separate-wallet).
 
 <Tabs groupId="lang">
 <TabItem value="ts" label="TypeScript" default>

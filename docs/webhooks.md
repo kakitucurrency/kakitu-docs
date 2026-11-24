@@ -5,7 +5,7 @@ title: Webhooks
 
 # Webhooks
 
-A webhook is a `POST` we make to your `callback_url` when something happens to one of your charges, a payment arrives at your address, a payout moves, or your own payout controls change. This page is the receiving end: where deliveries go, the secret that signs them, what you must answer, and what happens when you do not.
+A webhook is a `POST` we make to your `callback_url` when a payment arrives at your address, your own payout controls change, or one of your past charges or payouts moves. This page is the receiving end: where deliveries go, the secret that signs them, what you must answer, and what happens when you do not.
 
 **The bodies themselves are documented once, on the [Events](./events) page.** Every field of every type, which fields are always present and which may be null, and a worked example of each — [the payload](./events#the-payload). They live there rather than being repeated here so there is only ever one description of them to keep true.
 

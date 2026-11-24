@@ -743,7 +743,7 @@ A key is **released** by a refusal that provably happened before anything was si
 
 A key is **held** by anything else, including an unknown outcome. That is deliberate: freeing a key after money may have moved makes the retry send it again, while holding one only costs you a new key.
 
-General idempotency rules — replays, mismatched bodies, the 24-hour window — are on the [Collections](./authentication#idempotency) page and apply here unchanged.
+General idempotency rules — replays, mismatched bodies, the 24-hour window — are on the [Authentication](./authentication#idempotency) page and apply here unchanged.
 
 ## Limits
 
