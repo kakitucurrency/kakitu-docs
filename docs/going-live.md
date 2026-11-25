@@ -16,7 +16,7 @@ There is one environment: `https://walletapi.kakitu.org`. There is no separate s
 | The signed developer API: reading, [transfers](./transfers) and [`transfer.received`](./events#transferreceived) webhooks once approved | **Live on the server**, but server-side signing for wallets made in the Kakitu app is **coming soon**: there is no safe way yet to put their key on a server. See [the quickstart](./quickstart#server-side-signing). |
 | Cash at a Kakitu agent | **Live.** |
 | [Cash-out](./cash-out) to your own M-Pesa number, in the Kakitu app or the extension | **Not available.** `mpesa_rails_visible` is `false` in [`GET /config`](./config): M-Pesa is hidden, and its routes answer `409 mpesa_hidden` even when cash-out is switched on. `kes_offramp_enabled` is `true` only once both are on. |
-| The verified-merchant badge in the extension's payment sheet | **Not shown yet.** It needs Kakitu extension 0.2.8 or later and the server's verified-merchant lookup, which is not live. [What the extension shows today](./extension#the-verified-merchant-badge). |
+| The verified-merchant badge in the extension's payment sheet | **Live** on Kakitu extension versions 0.2.7 and later; the store's 0.2.4 does not show it ([by version](./extension#the-verified-merchant-badge)). The public lookup `GET /merchants/verified/{address}` is live. |
 | M-Pesa top-ups | **Not available.** Hidden with the rest of M-Pesa (`409 mpesa_hidden`); `kes_onramp_enabled` in [`GET /config`](./config) is `true` once they are on. |
 | [`POST /v1/charges`](./collections) | **Not available.** Coming back as a KSHS payment request. Take a transfer with a `reference` today. |
 | [`POST /v1/payouts`](./payouts), the other payout-sending routes and saving a payout destination | **Not available.** Coming back, paid through KCB. |
@@ -24,7 +24,7 @@ There is one environment: `https://walletapi.kakitu.org`. There is no separate s
 
 ## Why a person approves you
 
-**A transfer spends gas we pay for, and a verified badge will tell shoppers they can trust you.** If anyone could get either, the API would be a way to drain our relayer and the badge would mean nothing. So every merchant is reviewed by a person at Kakitu. This is manual, deliberately.
+**A transfer spends gas we pay for, and a verified badge tells shoppers they can trust you.** If anyone could get either, the API would be a way to drain our relayer and the badge would mean nothing. So every merchant is reviewed by a person at Kakitu. This is manual, deliberately.
 
 ## The path
 

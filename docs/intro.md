@@ -21,7 +21,7 @@ Kakitu is a Kenyan-shilling stablecoin. **KSHS is an ERC-20 token on Base, backe
 **Become a verified merchant to be told and to be trusted.** Make your business wallet in the Kakitu app, add it to the Kakitu Chrome extension, sign in at [kakitu.org/merchant](https://kakitu.org/merchant) and apply. That is the only way to become a merchant. Once Kakitu approves you:
 
 - your dashboard at kakitu.org/merchant lists every payment in, with its reference, and exports a CSV;
-- shoppers paying you from Kakitu extension 0.2.8 or later will see **Verified Kakitu merchant** and your business name, once the badge is switched on ([what the extension shows today](./extension#the-verified-merchant-badge));
+- shoppers paying you from Kakitu extension versions 0.2.7 and later see **Verified Kakitu merchant** and your business name (the store's 0.2.4 does not; [by version](./extension#the-verified-merchant-badge));
 - a payment to your address can reach your server as a signed [`transfer.received`](./events#transferreceived) webhook, with the payer's order `reference` if one was sent. Setting the callback URL needs a signed API request, and server-side signing is [coming soon](./quickstart#server-side-signing).
 
 See [Merchants](./merchants) for the steps.

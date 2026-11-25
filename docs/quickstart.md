@@ -57,6 +57,6 @@ What the API needs, when signing opens, is documented on the reference pages ([A
 ## What approval gets you today
 
 - **The dashboard** at kakitu.org/merchant: payments in, with their references; totals for today, 7 and 30 days; a CSV export.
-- **The verified badge**, once it is switched on. Shoppers paying you from Kakitu extension 0.2.8 or later will see **Verified Kakitu merchant** and your business name. It is not shown yet: see [the verified-merchant badge](./extension#the-verified-merchant-badge) for what the extension shows today.
+- **The verified badge.** Shoppers paying you from Kakitu extension versions 0.2.7 and later see **Verified Kakitu merchant** and your business name. The store's 0.2.4 does not show it: see [the verified-merchant badge](./extension#the-verified-merchant-badge).
 
 [Collections](./collections) (as KSHS payment requests), [payouts](./payouts) (rebuilt on KCB) and server-side signing are coming soon. To take your own money out today, use a Kakitu agent; see [Cash out](./cash-out).

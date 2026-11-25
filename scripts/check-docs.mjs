@@ -165,7 +165,7 @@ const PHRASES = {
   "docs/going-live.md": ["kakitu.org/merchant", "This is the only way to become a merchant"],
   // the store version and what needs the newer one
   "docs/extension.md": ["{#which-version}", "The Chrome Web Store has version 0.2.4 today.",
-    "**Not shown yet.**"],
+    "GET /merchants/verified/{address}", "0.2.7 and later"],
   // payouts are off: the real answers, not a blanket 403
   "docs/payouts.md": ["`404 payout_quote_not_found`, for every `quote_id`",
     "| `POST /v1/payout-destinations` (saving a place) | `403 payouts_disabled`. |",

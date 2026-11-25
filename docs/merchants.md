@@ -21,7 +21,7 @@ A merchant is a business Kakitu has checked. It is identified by its wallet addr
 Once approved:
 
 - **The dashboard** at kakitu.org/merchant lists the KSHS transfers into your wallet, newest first, with each payer's `reference`; totals for today, the last 7 and the last 30 days (East Africa Time); and a CSV export of up to 92 days at a time. It is read-only: signing in to it cannot move money.
-- **Shoppers will see you are verified**, once the badge is switched on: a shopper paying your address from Kakitu extension 0.2.8 or later sees **Verified Kakitu merchant** and your business name. It is not shown yet; [the verified-merchant badge](./extension#the-verified-merchant-badge) says exactly what the extension shows today.
+- **Shoppers see you are verified**: a shopper paying your address from Kakitu extension versions 0.2.7 and later sees **Verified Kakitu merchant** and your business name, and anyone may check at [`GET /merchants/verified/{address}`](./extension#the-verified-merchant-badge). The store's 0.2.4 does not show it.
 - **The API** is open to your wallet's signature, but server-side signing for wallets made in the Kakitu app is coming soon: see [the quickstart](./quickstart#server-side-signing).
 
 The dashboard's routes (`/merchant/*` on `walletapi.kakitu.org`) serve kakitu.org only: sign-in is accepted from kakitu.org and nowhere else. Build your own integration on the `/v1` API and [`GET /transfers`](./transfers#get-transfers), not on them.
@@ -33,7 +33,7 @@ The two `/v1` endpoints below read your merchant record and update its contact d
 | `state` | Meaning |
 |---|---|
 | `pending` | Applied, not reviewed yet. |
-| `approved` | Kakitu reviewed and approved it. The dashboard, transfers and webhooks work, and the verified badge once it is switched on. Only `POST /v1/transfers`, the payout-sending routes and saving a payout destination check this state. |
+| `approved` | Kakitu reviewed and approved it. The verified badge, the dashboard, transfers and webhooks work. Only `POST /v1/transfers`, the payout-sending routes and saving a payout destination check this state. |
 | `rejected` | Kakitu declined it. The reason is shown at kakitu.org/merchant; correct the application and send it again. |
 | `suspended` | Kakitu stopped it. No badge and no dashboard. The routes that move money refuse it; reading its own record and events still works. |
 

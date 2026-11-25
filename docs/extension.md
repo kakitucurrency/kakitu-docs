@@ -29,15 +29,15 @@ button](#lipa-na-kakitu-button) already does.
 | `reference` on `pay()` | Shown to the customer and echoed back, but **not sent with the payment**: it never reaches `GET /transfers` or `transfer.received`. Not checked, so spaces are accepted | Sent with the payment. Anything outside `A-Z a-z 0-9 . _ : -` or longer than 64 is refused with `INVALID_PARAMS` |
 | A second request while one is waiting | Rejects with `INVALID_PARAMS` | Rejects with `ALREADY_PENDING` |
 | Too many payment requests from sites that are not connected | No such limit | Rejects with `RATE_LIMITED` |
-| The recipient line on the payment sheet | "Not a Kakitu merchant…" for every site | The [verified-merchant badge](#the-verified-merchant-badge) |
+| The recipient line on the payment sheet | "Not a Kakitu merchant…" for every site | The [verified-merchant badge](#the-verified-merchant-badge) (from 0.2.7, which was never on the store) |
 
 The extension does not tell your page its own version number. (`kakitu.version` is the version of
 the page-facing API, `1.1.0` in both.) Branch on the rejection you get, not on a version.
 
 This page is the website side. Nothing here uses the signed `/v1` API: a business can accept
 extension payments before, or without, becoming a [verified merchant](./merchants). Becoming one
-will put the verified badge on your shoppers' payment sheet, once it is switched on ([what
-they see today](#the-verified-merchant-badge)).
+puts the verified badge on the payment sheet of shoppers on 0.2.7 and later ([by
+version](#the-verified-merchant-badge)).
 
 | You want to | You call | Internal request |
 |---|---|---|
@@ -394,22 +394,21 @@ Nothing else changes.
 
 ### The verified-merchant badge
 
-**Not shown yet.** The badge needs two things: Kakitu extension 0.2.8 or later, and the server's
-public lookup, `GET /merchants/verified/{address}`, which is **not live yet** (it answers `404`
-today). [Apply at kakitu.org/merchant](https://kakitu.org/merchant) so your shoppers see it once
-both are in place.
+**Live.** When a shopper pays the address of a merchant Kakitu has approved, the payment sheet of
+Kakitu extension versions 0.2.7 and later (0.2.8 is the version being submitted to the store; the store's 0.2.4 does not look it up) shows **Verified Kakitu merchant** and the business name, with a line saying Kakitu has not
+checked that the site belongs to that business. [Apply at kakitu.org/merchant](https://kakitu.org/merchant)
+so your shoppers see it.
 
 What the payment sheet shows about the recipient, by version:
 
-| Extension | What the shopper sees, for any address, approved merchant or not |
-|---|---|
-| 0.2.4 (the store today) | A grey line: "Not a Kakitu merchant. Most sites are not — it only means Kakitu has not checked this one, so trust it the way you would any other site." It never looks anything up. |
-| 0.2.8, while the lookup is not live | A warning: "Kakitu could not check this recipient right now — only pay if you trust this site." |
-| 0.2.8, once the lookup is live | For an approved merchant's address: **Verified Kakitu merchant** and the business name, with a line saying Kakitu has not checked that the site belongs to that business. For any other address: "Not a verified Kakitu merchant — only pay if you trust this site." |
+| Extension | Approved merchant's address | Any other address |
+|---|---|---|
+| 0.2.4 (the store today) | A grey line: "Not a Kakitu merchant. Most sites are not — it only means Kakitu has not checked this one, so trust it the way you would any other site." It never looks anything up. | The same grey line. |
+| 0.2.7 and later | **Verified Kakitu merchant** and the business name. | "Not a verified Kakitu merchant — only pay if you trust this site." If the lookup cannot be made: "Kakitu could not check this recipient right now — only pay if you trust this site." |
 
 The badge is about the address being paid, never about the site.
 
-Once it is live, the lookup is public:
+The lookup is public:
 
 ```http
 GET /merchants/verified/{address}
@@ -425,8 +424,7 @@ No signature: anybody may ask.
 or `{"verified": false}`, which is the same answer, byte for byte, for an address that never
 applied and for one that is pending, rejected or suspended. A malformed address is
 `400 invalid_address`; `503 unavailable` means the lookup could not be made, and is never a no.
-Answers are cached for 60 seconds, and the route allows 60 requests a minute per IP. Until it is
-live it answers `404`, which the extension treats as "could not check", never as a no.
+Answers are cached for 60 seconds, and the route allows 60 requests a minute per IP.
 
 ## Errors
 
