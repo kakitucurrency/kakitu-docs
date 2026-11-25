@@ -102,7 +102,7 @@ Updates the contact email, contact phone and callback URL of the signing wallet'
 
 | Field | Type | Rules |
 |---|---|---|
-| `business_name` | string, required | 1 to 100 characters. No control, invisible or text-direction characters. The name Kakitu vets and the name on the verified badge. Frozen once reviewed. |
+| `business_name` | string, required | 1 to 100 characters. No control, invisible or text-direction characters. The name Kakitu vetted and the name on the verified badge. Must be the name you applied with: it is frozen. |
 | `contact_email` | string, required | A plain address such as `a@b.co`. `Name <a@b.co>` is refused. At most 254 characters. |
 | `contact_phone` | string, optional | At most 20 characters: digits, `+`, spaces and hyphens only. |
 | `callback_url` | string, optional | See [callback URLs](#callback-urls). |

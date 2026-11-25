@@ -34,7 +34,7 @@ The signature is an **EIP-191 `personal_sign`** signature over exactly this stri
 Example, a `POST` with a body:
 
 ```
-POST /v1/merchants 1758240002 7a4c4c0f0333102cffe5a64621024fe6d094cbcc71d771c251a3600c43ac19a6
+POST /v1/merchants 1758240002 d28010943fc9ecac1bf4da12110fb4dcae161baafa28b7b5333e68f5231e6c6b
 ```
 
 ### Why it is built this way
