@@ -8,9 +8,13 @@ title: Cash out
 **A business takes its money out the same way a person does: from its own wallet, in the Kakitu app or the Kakitu extension.** There are two ways out:
 
 - **At a Kakitu agent**, for cash. Live today.
-- **To your own M-Pesa number.** Kakitu pays M-Pesa itself. This is being switched on: `kes_offramp_enabled` in [`GET /config`](https://walletapi.kakitu.org/config) is `false` until it is, and every route below answers `404 kes_offramp_disabled` until then.
+- **To your own M-Pesa number.** Kakitu pays M-Pesa itself. **This is not available today.** Two switches stand in front of it, and both must be on:
+  1. **Cash-out itself.** While it is off, every route below answers `404 kes_offramp_disabled`.
+  2. **M-Pesa visibility**, `mpesa_rails_visible` in [`GET /config`](./config), which is `false` today. While it is `false`, M-Pesa is hidden in the Kakitu app and the extension, and a new quote or confirm answers `409 mpesa_hidden` ("M-Pesa isn't available right now. Use an agent.") **even when cash-out itself is switched on**. Orders already under way keep settling, and reading them still works.
 
-Paying **other people** from a server is the [payouts API](./payouts), which is coming soon.
+  `kes_offramp_enabled` in `GET /config` is `true` only when both are on (and cash-outs are not paused). Read it, not either switch on its own.
+
+Paying **other people** from a server is the [payouts API](./payouts), which is not open for integration.
 
 ## Cash out in the app or the extension
 
@@ -51,7 +55,7 @@ Each cash-out is also one gasless transfer from your wallet, so it counts agains
 
 The app shows the order as it moves: `processing`, `awaiting_approval`, `paid` (with the M-Pesa code), `refunding`, `refunded`, `failed` or `checking`. **`processing` and `checking` mean your KSHS have left the wallet and the payout is under way or being looked at: do not send it again.** `failed` is only ever shown when nothing left your wallet. If an order is still not `paid` after an hour, write to kakitu@kakitu.org with the reference the app shows.
 
-Kakitu can pause cash-outs for a while (`409 kes_offramp_paused`, nothing taken), and refuses a quote it cannot pay right now (`503 payout_unavailable`, nothing taken; try later or a smaller amount). Every code is on the [Errors](./errors#wallet-cash-out-codes) page.
+Kakitu can hide M-Pesa (`409 mpesa_hidden`, nothing taken), pause cash-outs for a while (`409 kes_offramp_paused`, nothing taken), and refuses a quote it cannot pay right now (`503 payout_unavailable`, nothing taken; try later or a smaller amount). Every code is on the [Errors](./errors#wallet-cash-out-codes) page.
 
 ## Locked merchants {#locked-merchants}
 

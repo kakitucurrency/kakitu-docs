@@ -15,7 +15,11 @@ npm run build      # runs scripts/check-docs.mjs first, then builds into build/
 ```
 
 `scripts/check-docs.mjs` fails the build if the docs or the spec have drifted from the
-server's events, error codes, payout states and fields. To also check its own lists against
+server's events, error codes, payout states, fields and `/config` keys. It also fails on the
+mistakes the 2026-11-25 audit found: a page or SDK README that asks for, reads or derives
+from a recovery phrase; `POST /v1/merchants` described as registration; a missing
+`mpesa_hidden` row; the spec's "exact bytes" claim about `GET /v1/events`; stale numbers and
+versions; and internal links whose `#anchor` no longer exists. To also check its own lists against
 the server source, point it at a checkout of the wallet server:
 
 ```bash

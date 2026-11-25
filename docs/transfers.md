@@ -14,7 +14,7 @@ That is the only thing we do for you. **You sign the transfer with your own key 
 
 ## Who can call it
 
-An **approved** merchant, and nobody else. A wallet that has not registered gets `404 merchant_not_registered`; one that is `pending` or `rejected` gets `403 merchant_not_approved`; a suspended one gets `403 merchant_suspended`.
+An **approved** merchant, and nobody else. A wallet with no merchant record gets `404 merchant_not_registered`; one that is `pending` or `rejected` gets `403 merchant_not_approved`; a suspended one gets `403 merchant_suspended`.
 
 The reason is money, not ceremony. Our relayer pays Base gas out of one small ETH balance, and when that balance empties **every transfer in the country stops**, not just this API. Addresses are free, so an open route here would be a free tap on it. See [Going live](./going-live).
 
@@ -89,12 +89,12 @@ Idempotency-Key: 8ab0f6c4-6c38-4f0e-9a7e-6b0a2f6b1d33
 | Field | Type | Rules |
 |---|---|---|
 | `from` | string, required | Your own address. It must be the wallet that signed the HTTP request; a body naming anyone else is refused with `invalid_request`. |
-| `to` | string, required | The recipient. A hex address, and not the same as `from`. |
+| `to` | string, required | The recipient. A hex address, and not the same as `from`. The zero address, `0x…dEaD`, the KSHS token and the forwarder are refused with `invalid_request`: KSHS sent there could never be spent again. |
 | `value_wei` | string, required | The amount in the token's smallest unit, as a **decimal string**. KSHS has 18 decimals, so **1 KSHS is `"1000000000000000000"`**. Must be greater than zero. |
 | `deadline` | integer, required | Unix time in **seconds** when the signature stops being valid. It must be in the future and **at most 10 minutes ahead**. Outside that: `invalid_request`. |
 | `v`, `r`, `s` | uint8, string, string | The **EIP-2612 permit** signature. `r` and `s` are `0x` plus 32 bytes (64 hex characters). |
 | `iv`, `ir`, `is` | uint8, string, string | The **EIP-712 intent** signature, in the same shape. |
-| `reference` | string, optional | Your note on the payment, such as an order number: **1 to 64 characters from `A-Z a-z 0-9 . _ : -`**. It is **not signed**, so it can be added after signing. The payee reads it on [`GET /transfers`](#get-transfers) and in the [`transfer.received`](./events#transferreceived) webhook. Anything else is `invalid_request` and nothing is sent. Leave it out when there is none. |
+| `reference` | string, optional | Your note on the payment, such as an order number: **1 to 64 characters from `A-Z a-z 0-9 . _ : -`**. It is **not signed** and **not on chain**: it is stored by Kakitu's relay beside the transfer, so it can be added after signing. The payee reads it on [`GET /transfers`](#get-transfers) and in the [`transfer.received`](./events#transferreceived) webhook. Anything else is `invalid_request` and nothing is sent. Leave it out when there is none. |
 
 `Idempotency-Key` is **required**. Without it: `400 idempotency_key_required`, and nothing is sent.
 
@@ -126,24 +126,28 @@ Two fields, and only ever two.
 
 `id` is the transaction hash. It is your handle on the transfer on Base, and the only one: there is no `GET /v1/transfers/{id}` and no way to cancel. Look it up on a Base explorer, or watch your [balance](./balances).
 
+**A `202` is stored like any success.** Retrying with the same `Idempotency-Key` replays the same `pending` answer, for as long as the key is held (24 hours): it never turns into `confirmed`. Learn the outcome from the chain with the `id`, or from your own [`GET /transfers`](#get-transfers).
+
 ## Being paid: `transfer.received`, `GET /transfers` and the reference
 
-A transfer to your address, from any wallet, by any route (a `pay()` button, a `kakitu:` link, a QR code, this API), is announced to your `callback_url` as a signed [`transfer.received`](./events#transferreceived) event once it is on chain, if you are an approved merchant. It carries the transfer's `tx_hash`, `from`, `to`, the exact amount, and the payer's `reference` when they sent one. You do not have to watch the chain to find out you were paid.
+A transfer to your address, from any wallet, by any route (a `pay()` button, a `kakitu:` link, a QR code, this API), is announced to your `callback_url` as a signed [`transfer.received`](./events#transferreceived) event once it is on chain and confirmed, if you are an approved merchant with a callback URL. It carries the transfer's `tx_hash`, `from`, `to`, the exact amount, and the payer's `reference` when there is one. Some payments are never announced: see [what is not announced](./events#what-is-not-announced). Keep a reconciliation that reads `GET /transfers` or the chain as well.
+
+**A `reference` exists only on a payment made through Kakitu's relay**: the Kakitu app, the Kakitu extension (0.2.8 or later), or `POST /v1/transfers`. A payment from MetaMask or any other wallet goes straight to the chain and never has one.
 
 **A reference is the payer's claim, not proof.** Anybody can send KSHS to your address with any reference, including one that belongs to somebody else's order, or to an order that is already paid. Treat it as the answer to "which order is this for?" and then check that the **amount** and the **recipient** are what that order needs, and that this order has not already been matched to another transfer. The reference never replaces that check.
 
 ### GET /transfers
 
-Your wallet's own KSHS history, sent and received, newest first. It is the wallet's read, not a `/v1` route: it needs only a signed request (the same three headers as every call), not a registered merchant, and it answers with the older error shape.
+Your wallet's own KSHS history, sent and received, newest first. It is the wallet's read, not a `/v1` route: it needs only a signed request (the same three headers as every call), not a registered merchant, and it answers with the older error shape (`500 {"error": "transfers_unavailable"}` when the history cannot be read; retry).
 
 ```http
-GET /transfers?limit=50&before=2026-11-07T08:21:09.123456789Z
+GET /transfers?limit=50&before=2026-11-07T08:21:09.123456789Z_5b0c8a51-6a0e-4f0e-9d5f-3f1d2c7b9e10
 ```
 
 | Query | Rules |
 |---|---|
-| `limit` | A whole number. Default 50, and never more than 100. |
-| `before` | The `next_before` of the previous page, unchanged. RFC 3339. |
+| `limit` | A whole number from 1 to 100. Default 50. A larger value is served as 100, with `next_before` when more rows exist. Anything that is not a whole number above zero is treated as 50. |
+| `before` | The `next_before` of the previous page, **unchanged**. An opaque cursor: do not parse, build or edit one. One that cannot be read is `400 {"error": "invalid_before"}`. |
 
 ```json
 HTTP 200
@@ -161,7 +165,7 @@ HTTP 200
       "reference": "ORD-1042"
     }
   ],
-  "next_before": "2026-11-07T08:21:09.123456789Z"
+  "next_before": "2026-11-07T08:21:09.123456789Z_5b0c8a51-6a0e-4f0e-9d5f-3f1d2c7b9e10"
 }
 ```
 
@@ -176,7 +180,9 @@ HTTP 200
 | `status` | `confirmed` or `unconfirmed`. **`unconfirmed` is not a failure**: it was submitted with no receipt yet, and the money may have moved. Never show it as failed, and never retry it. |
 | `submitted_at` | RFC 3339 UTC. |
 | `reference` | The payer's reference. **Absent** when none was sent. |
-| `next_before` | The cursor for the next page. **Absent** on the last page. |
+| `next_before` | The cursor for the next page. **Present only when more rows exist**; a full last page has none. |
+
+**Page until `next_before` is absent.** Transfers that share a timestamp (Base makes several blocks a second, and an indexed transfer carries its block's time) are not lost between pages: the cursor carries enough to continue after the last row you received.
 
 ## Signing a transfer
 
@@ -185,6 +191,11 @@ This is the part worth getting right once. Both signatures are over EIP-712 type
 | | Permit | Intent |
 |---|---|---|
 | Domain `name` | `Kakitu` | `KakituForwarder` |
+| Domain `version` | `1` | `1` |
+| Domain `verifyingContract` | the KSHS token | the forwarder |
+| Type | `Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)` | `Relay(address owner,address to,uint256 value,uint256 deadline,uint256 nonce)` |
+| `spender` / `to` | the forwarder | the recipient |
+| `nonce` | `token.nonces(owner)` | the same value |
 
 :::warning Get the domain exactly right
 The token's EIP-712 domain name is `Kakitu` — **not** `Kakitu Kenyan Shilling`, which is the
@@ -197,11 +208,6 @@ well-formed signature; it just recovers to a different address, and you get a re
 looks like a key problem rather than a typo. If signatures are rejected and everything else
 looks right, check this line first.
 :::
-| Domain `version` | `1` | `1` |
-| Domain `verifyingContract` | the KSHS token | the forwarder |
-| Type | `Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)` | `Relay(address owner,address to,uint256 value,uint256 deadline,uint256 nonce)` |
-| `spender` / `to` | the forwarder | the recipient |
-| `nonce` | `token.nonces(owner)` | the same value |
 
 The chain id, the token address and the forwarder address are not constants you should paste into your code. Read them from `GET /config`, which is public and needs no signature:
 
@@ -211,7 +217,7 @@ The chain id, the token address and the forwarder address are not constants you 
   "kshs_contract": "0x…",
   "forwarder": "0x…",
   "public_rpc_url": "https://…",
-  "relay_max_per_tx_kes": 500000
+  "relay_max_per_tx_kes": 50000
 }
 ```
 
@@ -705,29 +711,38 @@ The forwarder also exposes `hashRelay(owner, to, value, deadline, nonce)` as a v
 |---|---|---|
 | `idempotency_key_required` | 400 | No `Idempotency-Key`. Nothing was sent. |
 | `invalid_request` | 400 | A malformed body; `from` is not you; a bad address, amount or deadline; a signature that does not verify; or the chain says this transfer would revert. In all of these **nothing was sent**. |
-| `merchant_not_registered` | 404 | This wallet has not registered. |
-| `merchant_not_approved` | 403 | Registered, not yet approved. |
-| `merchant_suspended` | 403 | The merchant is suspended, **or** either address is frozen on the token. |
+| `merchant_not_registered` | 404 | This wallet has no merchant record. |
+| `merchant_not_approved` | 403 | A merchant record, not yet approved. |
+| `merchant_suspended` | 403 | The merchant is suspended, **or** either address is frozen on the token. The message says the wallet is frozen even when it is the recipient that is. |
 | `account_blocked` | 403 | Kakitu has blocked your wallet or the recipient's, or money in your wallet is on hold. **Nothing was sent.** Contact support. |
 | `amount_below_minimum` | 400 | Below the smallest transfer the relayer carries. |
 | `amount_above_maximum` | 400 | Above the largest single transfer allowed. `relay_max_per_tx_kes` in `GET /config` is that ceiling. |
 | `daily_cap_exceeded` | 429 | This wallet has used its transfer allowance for today. |
 | `rate_limited` | 429 | This merchant has reached its hourly transfer limit. Try again within the hour. |
-| `rail_unavailable` | 503 | Transfers are temporarily unavailable. **Nothing was sent.** Retry with the same key. |
+| `rail_unavailable` | 503 | Transfers are unavailable. **Nothing was sent.** Retry with the same key. Usually brief, but if the relayer's day budget (or the lane for wallets that have never brought money in) is spent, it lasts until 00:00 UTC. |
 | `idempotency_key_acted` | 409 | The transfer may already have been delivered. **Do not send it again.** |
+| `idempotency_key_invalid` | 400 | The `Idempotency-Key` is longer than 255 characters. |
+| `idempotency_key_reuse` | 409 | This key was already used with a different request. |
+| `idempotency_key_in_progress` | 409 | A request with this key is still running. Retry with the same key. |
+| `idempotency_unavailable` | 503 | The idempotency store is down. Nothing was sent. Retry with the same key. |
+| `request_too_large` | 413 | The body is over 1 MiB. |
+| `unauthorized` | 401 | The request reached the API without a verified wallet. (A signature failure is answered earlier, in the [older shape](./errors#authentication-failures).) |
+| `internal` | 500 | Something went wrong on our side. Quote the `request_id`. |
 
 Every one of these uses a code from the closed set in [Errors](./errors).
 
 ### 503 and 409 mean opposite things here
 
-**On this route the two statuses are a clean split, and you can rely on it.**
+**On this route the two statuses split in one safe direction, and you can rely on it.**
 
 | Answer | What it means | What to do |
 |---|---|---|
 | `503 rail_unavailable` | **Nothing was sent.** | Retry with the **same** `Idempotency-Key`. |
 | `409 idempotency_key_acted` | **The money may already have moved.** | **Check before doing anything.** |
 
-An outcome we cannot determine — the transfer reached the point where it may have been broadcast and we could not record what came back — now answers `409 idempotency_key_acted`. It used to answer `503 rail_unavailable` with wording that said the outcome was unknown, so `503` carried both readings at once and a client that did the obvious thing with a `503` could send the money twice. That ambiguity was the bug. It is gone: a `503` on this route never means an unknown outcome.
+An outcome we cannot determine — the transfer reached the point where it may have been broadcast and we could not record what came back — answers `409 idempotency_key_acted`. A `503` on this route never means an unknown outcome.
+
+**The split errs towards `409`.** A few refusals that happen before anything is sent also come back as `409 idempotency_key_acted`, with the key held: our check of whether a wallet is blocked could not run, the frozen-account check on chain could not be read, an internal error in that check, or a transfer the chain reverted with your nonce unchanged. In each of these nothing moved, but you are told to check first. That costs you a look at the chain and a new key; the other direction would cost a double payment.
 
 ### The two answers that are not "retry"
 
@@ -739,7 +754,7 @@ Most refusals are safe to retry. These are not, and they are the ones to write c
 
 ### What happens to your key on a refusal
 
-A key is **released** by a refusal that provably happened before anything was signed or broadcast — a bad body, a frozen or blocked account, an amount over or under the limits, a daily cap, the relayer having no ETH, a would-revert. Retry those with the **same** key once you have fixed the cause.
+A key is **released** by a refusal that provably happened before anything was signed or broadcast — a bad body, a frozen or blocked account, an amount over or under the limits, a daily cap, the relayer having no ETH, a would-revert. Retry those with the **same** key once you have fixed the cause. (The exceptions that are held anyway are listed above.)
 
 A key is **held** by anything else, including an unknown outcome. That is deliberate: freeing a key after money may have moved makes the retry send it again, while holding one only costs you a new key.
 
@@ -755,3 +770,6 @@ General idempotency rules — replays, mismatched bodies, the 24-hour window —
 | Transfers per merchant per hour | `rate_limited` |
 
 The hourly limit is a spend control on our gas, not a courtesy limit, and it fails closed: if we cannot count, we refuse. See [Rate limits](./rate-limits).
+
+- **Transfers per merchant per hour**: 60 by **default** (production may differ). The hour is a **fixed UTC clock hour** (10:00 to 10:59), not a rolling 60 minutes, and **every attempt that reaches the relay counts, including ones it then refuses** (an invalid signature, a would-revert). Do not loop on a refusal.
+- **Transfers per wallet per UTC day**: 50 by **default**, so with the defaults the daily allowance binds before the hourly one.

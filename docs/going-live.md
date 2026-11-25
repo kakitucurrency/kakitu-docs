@@ -13,14 +13,14 @@ There is one environment: `https://walletapi.kakitu.org`. There is no separate s
 |---|---|
 | Being paid in KSHS at your address (`pay()`, the Lipa na Kakitu button, `kakitu:` links, QR) | **Live.** Needs no registration. See [the quickstart](./quickstart#2-take-a-payment). |
 | Applying at [kakitu.org/merchant](https://kakitu.org/merchant), and the payments dashboard once approved | **Live.** |
-| Registering, reading, [transfers](./transfers) and [`transfer.received`](./events#transferreceived) webhooks once approved | **Live.** |
+| The signed developer API: reading, [transfers](./transfers) and [`transfer.received`](./events#transferreceived) webhooks once approved | **Live on the server**, but server-side signing for wallets made in the Kakitu app is **coming soon**: there is no safe way yet to put their key on a server. See [the quickstart](./quickstart#server-side-signing). |
 | Cash at a Kakitu agent | **Live.** |
-| [Cash-out](./cash-out) to your own M-Pesa number, in the Kakitu app or the extension | **Being switched on.** `kes_offramp_enabled` in [`GET /config`](https://walletapi.kakitu.org/config) is `true` once it is. |
-| The verified-merchant badge in the extension's payment sheet | **Rolling out** with Kakitu extension 0.2.7. |
-| M-Pesa top-ups | **Coming.** |
-| [`POST /v1/charges`](./collections) | **Coming soon**, as a KSHS payment request. Take a transfer with a `reference` today. |
-| [`POST /v1/payouts`](./payouts) and the other payout-sending routes | **Coming soon** (being rebuilt on KCB). |
-| [`POST /v1/quotes`](./quotes) | Not available today. |
+| [Cash-out](./cash-out) to your own M-Pesa number, in the Kakitu app or the extension | **Not available.** `mpesa_rails_visible` is `false` in [`GET /config`](./config): M-Pesa is hidden, and its routes answer `409 mpesa_hidden` even when cash-out is switched on. `kes_offramp_enabled` is `true` only once both are on. |
+| The verified-merchant badge in the extension's payment sheet | **Live** on Kakitu extension versions 0.2.7 and later; the store's 0.2.4 does not show it ([by version](./extension#the-verified-merchant-badge)). The public lookup `GET /merchants/verified/{address}` is live. |
+| M-Pesa top-ups | **Not available.** Hidden with the rest of M-Pesa (`409 mpesa_hidden`); `kes_onramp_enabled` in [`GET /config`](./config) is `true` once they are on. |
+| [`POST /v1/charges`](./collections) | **Not open for integration.** Planned as a KSHS payment request. Take a transfer with a `reference` today. |
+| [`POST /v1/payouts`](./payouts), the other payout-sending routes and saving a payout destination | **Not open for integration.** Planned to come back, paid through KCB. |
+| [`POST /v1/quotes`](./quotes) | **Not open for integration.** |
 
 ## Why a person approves you
 
@@ -30,17 +30,17 @@ There is one environment: `https://walletapi.kakitu.org`. There is no separate s
 
 1. **Make the business wallet in the Kakitu app** and write down its 12 words. Use a wallet made for the business, not your personal one ([why](./quickstart#why-a-separate-wallet)).
 2. **Add the Kakitu extension to Chrome** and restore the same wallet there with the 12 words.
-3. **Apply at [kakitu.org/merchant](https://kakitu.org/merchant).** Sign in with the extension (signing in cannot move money), then give your business name, the kind of business, where it is, and a contact phone. Use your real trading name: it is what Kakitu vets, it is what shoppers see on the badge, and it is frozen after review.
+3. **Apply at [kakitu.org/merchant](https://kakitu.org/merchant).** This is the only way to become a merchant; no API route makes one. Sign in with the extension (signing in cannot move money), then give your business name, the kind of business, where it is, and a contact phone. Use your real trading name: it is what Kakitu vets, it is what shoppers will see on the badge, and it is frozen after review.
 4. **Approval.** A person at Kakitu reviews the application and sets your state to `approved`. The page shows your state whenever you sign in; a rejection comes with the reason, and you can fix the application and send it again.
 5. **Use it.** The dashboard at kakitu.org/merchant opens: payments in, totals for today, the last 7 and the last 30 days, and a CSV export.
-6. **For the API**, export the wallet's key for your server (see the [quickstart](./quickstart#3-copy-the-signer-and-check-who-you-are)), confirm with `GET /v1/merchants/me` that `state` is `approved`, and set your `callback_url` with [`POST /v1/merchants`](./merchants#post-v1merchants). Kakitu gives you your **webhook secret** once, at approval. Store it in a secret manager at once; it cannot be retrieved later.
+6. **For the API**, wait for server-side signing ([coming soon](./quickstart#server-side-signing)). Never type your 12 words into a script or tool to get a key. When it opens, you confirm with `GET /v1/merchants/me` that `state` is `approved` and set your `callback_url` with [`POST /v1/merchants`](./merchants#post-v1merchants). Your **webhook secret** is made at approval. The first `POST /v1/merchants` that sets your `callback_url` after approval answers with it, once; `POST /v1/merchants/me/webhook-secret` makes a new one ([your webhook secret](./merchants#your-webhook-secret)). Store it in a secret manager at once.
 
 ## Checklist before you take real payments
 
 - [ ] The wallet you applied with was made for this business in the Kakitu app, not your personal wallet ([why](./quickstart#why-a-separate-wallet)).
-- [ ] Your private key is in a secret manager or environment variable, not in code, not in git.
-- [ ] The 12-word recovery phrase is written down and stored offline. It is both your credential and where your money lands. Losing it loses both.
-- [ ] You know how you will take the money out: at a Kakitu agent today, or by [cash-out](./cash-out) to your own M-Pesa number once it is on.
+- [ ] The 12-word recovery phrase is written down and stored offline, and it has been typed into nothing but the Kakitu app and the Kakitu extension. It is both your credential and where your money lands. Losing it loses both.
+- [ ] If you use the API once server-side signing opens: the key is in a secret manager or environment variable, not in code, not in git.
+- [ ] You know how you will take the money out: at a Kakitu agent today. M-Pesa [cash-out](./cash-out) is not available today.
 - [ ] You verify every payment on chain, and never accept a screenshot.
 - [ ] Your `callback_url` is https, public, and punycode if non-ASCII.
 - [ ] You give every order its own `reference`, and match each payment to exactly one order.
@@ -60,8 +60,9 @@ What to do, in this order:
 1. **Move the money first.** Anything sitting at that address can be spent by whoever holds
    the key. Send it to a wallet you control, straight away.
 2. **Tell us.** Write to kakitu@kakitu.org and ask for the merchant to be **suspended**. A
-   suspended merchant is refused everywhere — no transfer through the API, no verified badge,
-   no dashboard — so an attacker holding your key cannot act as your business.
+   suspended merchant gets no transfer through the API, no verified badge and no dashboard,
+   so an attacker holding your key cannot move money or be shown as your business. (Reading
+   its own record and events still works.)
 3. **Apply again** with a new wallet made in the Kakitu app, and be approved again. It is a new
    merchant: new webhook secret, and your integration must use the new address.
 
@@ -75,7 +76,6 @@ The steps are the same minus the hurry.
 
 - Renaming the business.
 - Raising limits.
-- Getting a new webhook secret.
 - Reinstating a suspended merchant. (A rejected one fixes its application at kakitu.org/merchant and sends it again.)
 
 Write to kakitu@kakitu.org and quote your address.

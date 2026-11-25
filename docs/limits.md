@@ -60,7 +60,7 @@ query string is inside the signed message, so quote it and change it nowhere els
 Two things: a withdrawal band, and, if you are a registered merchant, **your own payout limits**. Signed request, no body, no `Idempotency-Key`.
 
 :::caution The withdrawal band is not the cash-out band
-`withdrawal` describes the older M-Pesa withdrawal route, which Kakitu no longer uses. It is kept so that existing clients keep working; do not use it to price anything. The numbers for a [cash-out to your own M-Pesa number](./cash-out#limits-and-fees) are `kes_offramp_min_kes` and `kes_offramp_max_kes` in [`GET /config`](https://walletapi.kakitu.org/config). The payout block below describes [payouts](./payouts), which are coming soon.
+`withdrawal` describes the older M-Pesa withdrawal route, which Kakitu no longer uses. It is kept so that existing clients keep working; do not use it to price anything. The numbers for a [cash-out to your own M-Pesa number](./cash-out#limits-and-fees) are `kes_offramp_min_kes` and `kes_offramp_max_kes` in [`GET /config`](https://walletapi.kakitu.org/config). The payout block below describes [payouts](./payouts), which are not open for integration.
 :::
 
 <Tabs groupId="lang">
@@ -232,7 +232,7 @@ This is what governs [payouts](./payouts), published so you do not have to learn
 
 ### The whole object is missing if you are not a merchant
 
-`payout` is **absent — not `null`, not an empty object** — for a caller that has not registered as a merchant. `GET /v1/limits` is a wallet route too, and an ordinary customer has no payout limits to be told about.
+`payout` is **absent — not `null`, not an empty object** — for a caller that has no merchant record, and also when the merchant row cannot be read or the payout limiter is not running (see [Errors](#errors)). `GET /v1/limits` is a wallet route too, and an ordinary customer has no payout limits to be told about.
 
 So test for the key before reading it. A client that does `limits.payout.enabled` straight off will crash on a wallet that simply never registered, which is not an error condition and gets a `200`.
 
@@ -267,7 +267,7 @@ The day resets at **midnight East Africa Time**, not UTC.
 | `unauthorized` | 401 | The request was not signed. |
 | `rail_unavailable` | 503 | The band is unavailable. Retry shortly. |
 
-There is no error for the payout block. If your merchant row or the payout counter cannot be read, the block is dropped and the withdrawal band is still returned: a merchant-only extra must never be a reason a wallet customer stops getting what they came for.
+There is no error for the payout block. If your merchant row cannot be read, or the payout limiter is not running, the block is **absent** and the withdrawal band is still returned: a merchant-only extra must never be a reason a wallet customer stops getting what they came for. If only the payout counter cannot be read, the block is present with `remaining_today_kes: null`.
 
 ## Limits this endpoint does not cover
 

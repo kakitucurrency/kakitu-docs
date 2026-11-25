@@ -2,14 +2,15 @@
 
 A client for the Kakitu developer API.
 
-**Status:** merchants apply at [kakitu.org/merchant](https://kakitu.org/merchant) and Kakitu approves them. `charges.create` is coming soon (rebuilt as a KSHS payment request) and the payout-sending calls are coming soon (being rebuilt on KCB); take payment today with a KSHS transfer and a `reference` ([status](https://developer.kakitu.org/docs/going-live#what-is-live)). The reads, transfers and webhooks work today.
+**Not published.** `@kakitu/sdk` is not on npm: `npm install @kakitu/sdk` answers 404. Install it from this folder (below), or sign requests directly with the complete signers on [Authentication](https://developer.kakitu.org/docs/authentication).
+
+**Status:** merchants apply at [kakitu.org/merchant](https://kakitu.org/merchant) and Kakitu approves them; no API call makes a merchant. Take payment today with a KSHS transfer and a `reference`, and read it with `transfers.list`. `charges.create` is not open for integration (planned as a KSHS payment request), and the payout-sending calls and `payoutDestinations.save` are not open for integration (planned to come back, paid through KCB). See [what is live](https://developer.kakitu.org/docs/going-live#what-is-live).
+
+**Server-side signing is coming soon.** This SDK signs with a hex private key. There is no safe way yet to get the key of a wallet made in the Kakitu app onto a server: the app and the extension do not export one. **Never type your 12 words into a script or tool to work one out.** See [the quickstart](https://developer.kakitu.org/docs/quickstart#server-side-signing).
 
 The Kakitu API authenticates every request by signing it with your wallet key instead of using a bearer token. This SDK does the signing, so you never build a signature, a timestamp or a header yourself.
 
-## 60-second quickstart
-
-> **SDKs are being published — until then, sign requests directly (see [Authentication](https://developer.kakitu.org/docs/authentication) for complete signers) or copy the reference signer from this sdk/ folder.**
-> `npm install @kakitu/sdk` answers 404 today; install from this folder instead.
+## Quickstart
 
 ```bash
 # npm cannot install from a subfolder of a git repository, and dist/ is not committed,
@@ -17,7 +18,7 @@ The Kakitu API authenticates every request by signing it with your wallet key in
 git clone --depth 1 https://github.com/kakitucurrency/kakitu-docs
 (cd kakitu-docs/sdk/ts && npm ci && npm run build && npm pack)
 npm install ./kakitu-docs/sdk/ts/kakitu-sdk-0.1.0.tgz
-export KAKITU_PRIVATE_KEY=0x...   # your wallet key: use a secret store, never source code
+export KAKITU_PRIVATE_KEY=0x...   # a hex private key: use a secret store, never source code
 ```
 
 ```ts
@@ -25,24 +26,29 @@ import { Kakitu, KakituError } from "@kakitu/sdk";
 
 const kakitu = new Kakitu({ privateKey: process.env.KAKITU_PRIVATE_KEY! });
 
-// 1. Register (instant; creates a PENDING merchant, an operator approves it later)
-await kakitu.merchants.register({
-  business_name: "Mama Njeri Groceries",
+// 1. Check your merchant record (you applied at kakitu.org/merchant)
+const me = await kakitu.merchants.me();
+console.log(me.state); // "pending" until Kakitu approves you
+
+// 2. Read your payments, newest first, with each payer's reference
+for await (const t of kakitu.transfers.listAll({ limit: 100 })) {
+  if (t.direction === "in") console.log(t.tx_hash, t.amount_kes, t.reference ?? "-");
+}
+
+// 3. Once approved: set your contact details and callback URL (this does not make a merchant)
+await kakitu.merchants.update({
+  business_name: "Mama Njeri Groceries",              // exactly as you applied
   contact_email: "owner@example.com",
   callback_url: "https://example.com/kakitu/webhook", // optional
 });
 
-// 2. Check your status
-const me = await kakitu.merchants.me();
-console.log(me.state); // "pending" until approved
-
-// 3. Handle errors by code, never by message text
+// 4. Handle errors by code, never by message text
 try {
   await kakitu.merchants.me();
 } catch (e) {
   if (e instanceof KakituError) {
     switch (e.code) {
-      case "merchant_not_registered": /* call register() */ break;
+      case "merchant_not_registered": /* apply at kakitu.org/merchant */ break;
       case "rate_limited": /* already retried for you */ break;
       default: console.error(e.code, e.requestId); // quote requestId to support
     }
@@ -50,26 +56,29 @@ try {
 }
 ```
 
+A reference is the payer's claim, not proof: check the amount and the recipient, and match each order to one transfer. `merchants.register` is a deprecated alias of `merchants.update`; the route no longer registers anybody.
+
 Your merchant identity and settlement address is the wallet address your key signs as: `kakitu.address`.
 
 ## What's covered
 
 | Namespace | Methods |
 | --- | --- |
-| `merchants` | `register`, `me` |
-| `charges` | `create`, `get`, `list`, `listAll` |
-| `transfers` | `create` |
+| `merchants` | `update` (`register` is a deprecated alias), `me` |
+| `charges` | `get`, `list`, `listAll` (past charges); `create` is not open for integration |
+| `transfers` | `create`, `list`, `listAll` (`GET /transfers`) |
 | `balances` | `retrieve` |
 | `orders` | `get` |
 | `limits` | `retrieve` |
-| `quotes` | `create` |
+| `quotes` | `create`: not open for integration |
 | `events` | `list`, `listAll`, `replay` |
-| `payouts` | `quote`, `create`, `get`, `list`, `listAll` |
+| `payouts` | `get`, `list`, `listAll` (past payouts); `request`, `quote`, `create` are not open for integration |
+| `payoutDestinations` | `list`, `remove`, `setLock`; `save` answers `payouts_disabled` while payouts are off |
 
 ```ts
-const charge = await kakitu.charges.create({ amount: 500, phone: "0712345678", reference: "order-1042" });
 const { kshs, usdc } = await kakitu.balances.retrieve();
-const price = await kakitu.quotes.create({ type: "deposit", amount_kes: 1000, phone: "0712345678" });
+const page = await kakitu.transfers.list({ limit: 50 });   // or hold next_before yourself
+console.log(page.transfers.length, page.next_before);       // next_before is absent on the last page
 ```
 
 ## You sign the money; the SDK signs the request
@@ -98,7 +107,9 @@ const transfer = await kakitu.transfers.create({
 
 `value_wei` is a **string** everywhere, and must stay one. Through a JavaScript number `"1000000000000000000000"` becomes `1e+21` and the signature will not verify.
 
-## Payouts
+## Payouts (not open for integration)
+
+**Payouts are not open for integration**: they are planned to come back, paid through KCB. While they are off for your merchant, `payouts.quote` and `payouts.request` answer `payouts_disabled` and `payouts.create` answers `payout_quote_not_found`. The shape below is the API as it stands and will change.
 
 ```ts
 const quote = await kakitu.payouts.quote({
@@ -114,7 +125,7 @@ if (payout.status === "held") {
 }
 ```
 
-The quote id is single use and expires. States are `quoted`, `held`, `dispatched`, `paid`, `failed`, `cancelled`, `expired`; the last four are terminal and a retry is a **new** payout. `limits.retrieve()` tells you your `hold_above_kes`, `max_kes` and `daily_cap_kes` up front, so you never have to learn them by being refused.
+The quote id is single use and expires. There are ten states: `quoted`, `pending_approval`, `approved`, `rejected`, `held`, `dispatched`, `paid`, `failed`, `cancelled`, `expired`. Five are terminal (`paid`, `failed`, `cancelled`, `rejected`, `expired`), and a retry is a **new** payout. `limits.retrieve()` tells you your `hold_above_kes`, `max_kes` and `daily_cap_kes` up front, so you never have to learn them by being refused.
 
 ## Idempotency
 
@@ -122,9 +133,9 @@ The server does **not** require a key uniformly, and this SDK does not pretend i
 
 | Route | `Idempotency-Key` |
 | --- | --- |
-| `charges.create`, `transfers.create`, `payouts.create` | **required** — generated for you (UUID), or pass your own |
+| `charges.create`, `transfers.create`, `payouts.create`, `payouts.request` | **required** — generated for you (UUID), or pass your own |
 | `quotes.create`, `payouts.quote`, `events.replay` | **never sent** — the server mounts no idempotency on them |
-| `merchants.register` | not sent — an upsert, with no key on the server |
+| `merchants.update` | not sent — it moves no money, and the server mounts no key |
 | every `GET` | not sent |
 
 The generated key is reused across every automatic retry inside one call, which is what makes a retry safe. It lives only in memory, so to survive a crash or a process restart generate and store your own: `create(params, { idempotencyKey: "order-1042-attempt-1" })`. Same key means the same request; a new request needs a new key.
@@ -158,12 +169,14 @@ Retried with exponential backoff and jitter (default 3 retries): HTTP 5xx and 42
 
 ```ts
 import { verifyWebhookSignature } from "@kakitu/sdk";
-const ok = verifyWebhookSignature({ payload: rawBody, header: req.headers["kakitu-signature"], secret: process.env.KAKITU_WEBHOOK_SECRET! });
+const header = req.headers["kakitu-signature"];
+const ok = typeof header === "string"
+  && verifyWebhookSignature({ payload: rawBody, header, secret: process.env.KAKITU_WEBHOOK_SECRET! });
 ```
 
 Header `Kakitu-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>`, 300s tolerance. Pass the **raw** body, not re-serialised JSON: re-marshalling reorders keys and you would verify a different string than the one signed.
 
-Delivery is **at-least-once**. `Kakitu-Event-Id` (and `id` in the payload) is stable across every attempt and across a replay — dedupe on it or you will double-count. Events are `charge.paid`, `charge.settled`, `charge.failed`, `payout.expired`, `payout.cancelled`.
+Delivery is **at-least-once**. `Kakitu-Event-Id` (and `id` in the payload) is stable across every attempt and across a replay — dedupe on it or you will double-count. There are thirteen event types: `transfer.received` (the one that matters today), `charge.paid`, `charge.settled`, `charge.failed`, `payout.approved`, `payout.rejected`, `payout.expired`, `payout.cancelled`, `payout.paid`, `payout.failed`, `payout_destination.added`, `payout_destination.removed` and `payout_lock.changed`. The API also returns `payload_raw`, the exact signed body, on each event (the `Event` type does not declare it yet): check a kept `Kakitu-Signature` over that (or over the raw request body), never over `payload`.
 
 When an endpoint was down and events were abandoned, `events.list({ status: "abandoned" })` shows them and `events.replay(id)` puts one back in the queue with a fresh budget. Replay answers HTTP 202: nothing has been delivered when it returns, and the event id does not change.
 

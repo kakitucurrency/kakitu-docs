@@ -31,6 +31,11 @@ class Merchant:
     state: str
     daily_cap_kes: int
     per_charge_max_kes: int
+    #: Whether the payout lock binds now.
+    payout_locked: bool = False
+    #: RFC 3339, when the lock comes off; ``None`` unless an unlock is pending.
+    payout_unlocks_at: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Merchant":
@@ -39,6 +44,8 @@ class Merchant:
             contact_email=d.get("contact_email", ""), contact_phone=d.get("contact_phone", ""),
             callback_url=d.get("callback_url", ""), state=d["state"],
             daily_cap_kes=int(d.get("daily_cap_kes", 0)), per_charge_max_kes=int(d.get("per_charge_max_kes", 0)),
+            payout_locked=bool(d.get("payout_locked", False)), payout_unlocks_at=d.get("payout_unlocks_at"),
+            raw=d,
         )
 
 
@@ -91,6 +98,49 @@ class Transfer:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Transfer":
         return cls(id=str(d.get("id", "")), status=str(d.get("status", "")), raw=d)
+
+
+@dataclass(frozen=True)
+class WalletTransfer:
+    """One row of ``GET /transfers``: the signing wallet's own KSHS history, newest first.
+
+    ``status`` ``"unconfirmed"`` is NOT a failure: submitted, no receipt yet, the money may have
+    moved. ``reference`` exists only on a payment made through Kakitu's relay, and it is the
+    PAYER's claim, not proof. ``counterpart`` is ``None`` on a mint or a burn.
+    """
+    tx_hash: str
+    direction: str
+    kind: str
+    amount_kes: int
+    value_wei: str
+    status: str
+    submitted_at: str
+    counterpart: str | None = None
+    reference: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "WalletTransfer":
+        return cls(
+            tx_hash=str(d.get("tx_hash", "")), direction=str(d.get("direction", "")),
+            kind=str(d.get("kind", "")), amount_kes=int(d.get("amount_kes", 0)),
+            value_wei=str(d.get("value_wei", "")), status=str(d.get("status", "")),
+            submitted_at=str(d.get("submitted_at", "")), counterpart=d.get("counterpart"),
+            reference=d.get("reference"), raw=d,
+        )
+
+
+@dataclass(frozen=True)
+class WalletTransferPage:
+    """A page of ``GET /transfers``. ``next_before`` is ``None`` on the last page, and only there."""
+    transfers: list[WalletTransfer]
+    next_before: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "WalletTransferPage":
+        return cls(transfers=[WalletTransfer.from_dict(t) for t in d.get("transfers") or []],
+                   next_before=d.get("next_before") or None, raw=d)
 
 
 @dataclass(frozen=True)
@@ -253,7 +303,9 @@ class Event:
     is your dedupe key — a receiver that keys on it sees exactly-once; one that does not
     double-counts.
 
-    Exactly one of ``charge_id`` and ``payout_id`` is set. ``last_error`` is from a closed
+    At most one of ``charge_id`` and ``payout_id`` is set: both are ``None`` on
+    ``transfer.received``, ``payout_destination.*`` and ``payout_lock.changed``, whose subject is
+    in ``payload``. ``last_error`` is from a closed
     vocabulary (``http_503``, ``timeout``, ``no_callback_url``, ...), never a raw error string.
     ``payload`` is the signed body, already decoded.
     """
@@ -283,7 +335,7 @@ class Event:
         )
 
 
-#: The seven payout states (models/dbmodels/payout.go)::
+#: The ten payout states (models/dbmodels/payout.go). Below or at ``hold_above_kes``::
 #:
 #:     quoted ──► held ──► dispatched ──► paid
 #:        │        │            └──────► failed
@@ -291,7 +343,7 @@ class Event:
 #:        │        └──► expired
 #:        └──► expired
 #:
-#: ``paid``, ``failed``, ``cancelled`` and ``expired`` are all terminal: a retry is a NEW payout,
+#: ``paid``, ``failed``, ``cancelled``, ``rejected`` and ``expired`` are all terminal: a retry is a NEW payout,
 #: never this one moving again.
 #: A payout ABOVE ``hold_above_kes`` starts at ``pending_approval`` (see ``Payouts.request``): a
 #: person decides before anything is signed. At or below it, ``quoted`` -> ``held`` -> ``dispatched``.

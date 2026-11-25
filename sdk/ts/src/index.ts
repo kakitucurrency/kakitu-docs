@@ -9,7 +9,8 @@ import type {
   PayoutBeneficiary, PayoutBeneficiaryInput, PayoutDestination, PayoutDestinationList,
   PayoutLimits, PayoutLock, PayoutQuote, PayoutState, Quote, QuoteBeneficiary,
   RegisterMerchantParams, RequestPayoutParams, SavePayoutDestinationParams, SignedTransfer,
-  Transfer, WithdrawalBand, ChargeStatus,
+  Transfer, WithdrawalBand, ChargeStatus, ListWalletTransfersParams, WalletTransfer,
+  WalletTransferPage,
 } from "./types.js";
 
 export { KakituError, SERVER_ERROR_CODES, type KakituErrorCode, type ServerErrorCode } from "./errors.js";
@@ -24,7 +25,7 @@ export type {
   PayoutDestinationType, PayoutLimits, PayoutLock, PayoutQuote, PayoutState, PhoneBeneficiary,
   TillBeneficiary, PaybillBeneficiary, BankBeneficiary, Quote, QuoteBeneficiary,
   RegisterMerchantParams, RequestPayoutParams, SavePayoutDestinationParams, SignedTransfer,
-  Transfer, WithdrawalBand,
+  Transfer, WithdrawalBand, ListWalletTransfersParams, WalletTransfer, WalletTransferPage,
 } from "./types.js";
 export { EVENT_TYPES } from "./types.js";
 
@@ -53,6 +54,13 @@ export class Kakitu {
   readonly #t: Transport;
 
   readonly merchants: {
+    /**
+     * `POST /v1/merchants`: update an existing merchant's contact email, phone and callback URL.
+     * It does not make a merchant: becoming one is the application at https://kakitu.org/merchant
+     * and Kakitu's approval. A wallet with no merchant record gets `merchant_not_registered` (404).
+     */
+    update(params: RegisterMerchantParams): Promise<Merchant>;
+    /** @deprecated The route no longer registers anybody. Use {@link update}; this is the same call. */
     register(params: RegisterMerchantParams): Promise<Merchant>;
     me(): Promise<Merchant>;
   };
@@ -84,6 +92,14 @@ export class Kakitu {
    */
   readonly transfers: {
     create(transfer: SignedTransfer, opts?: RequestOptions): Promise<Transfer>;
+    /**
+     * `GET /transfers`: your wallet's own KSHS history, sent and received, newest first, with
+     * each payment's `reference`. Not a /v1 route: it needs no merchant record. Page with
+     * `next_before`; it is absent on the last page.
+     */
+    list(params?: ListWalletTransfersParams): Promise<WalletTransferPage>;
+    /** Walks every page of `GET /transfers`, following `next_before`, yielding transfers. */
+    listAll(params?: Omit<ListWalletTransfersParams, "before">): AsyncGenerator<WalletTransfer, void, undefined>;
   };
 
   /** Your own KSHS and USDC balances on Base. */
@@ -185,7 +201,8 @@ export class Kakitu {
     };
 
     this.merchants = {
-      // Registration is an upsert and the server mounts no Idempotency-Key on it, so none is sent.
+      // It moves no money and the server mounts no Idempotency-Key on it, so none is sent.
+      update: (p) => postNoKey<Merchant>("/v1/merchants", p),
       register: (p) => postNoKey<Merchant>("/v1/merchants", p),
       me: () => get<Merchant>("/v1/merchants/me"),
     };
@@ -199,6 +216,8 @@ export class Kakitu {
 
     this.transfers = {
       create: (transfer, o) => postWithKey<Transfer>("/v1/transfers", transfer, o),
+      list: (p) => get<WalletTransferPage>("/transfers", p),
+      listAll: (p) => walkTransfers((before) => get<WalletTransferPage>("/transfers", { ...p, before })),
     };
 
     this.balances = { retrieve: () => get<Balances>("/v1/balances") };
@@ -239,4 +258,22 @@ export class Kakitu {
 
   toJSON() { return { address: this.address, baseUrl: this.#t.baseUrl }; }
   [inspect.custom]() { return `Kakitu { address: ${this.address} }`; }
+}
+
+/**
+ * Walks `GET /transfers`, which pages by `next_before` rather than the /v1 `next_cursor`.
+ * It stops when `next_before` is absent, and also when the server repeats one verbatim, rather
+ * than looping for ever.
+ */
+async function* walkTransfers(
+  fetchPage: (before: string | undefined) => Promise<WalletTransferPage>,
+): AsyncGenerator<WalletTransfer, void, undefined> {
+  let before: string | undefined;
+  for (;;) {
+    const page = await fetchPage(before);
+    for (const t of page.transfers ?? []) yield t;
+    const next = page.next_before;
+    if (!next || next === before) return;
+    before = next;
+  }
 }

@@ -15,27 +15,27 @@ A merchant is a business Kakitu has checked. It is identified by its wallet addr
 1. **Create the business wallet in the Kakitu app** and write down its 12 words.
 2. **Add the Kakitu extension to Chrome** and restore the same wallet there.
 3. **Sign in at [kakitu.org/merchant](https://kakitu.org/merchant)** with the extension. The extension asks you to approve a sign-in that says "Signing in cannot move money." No password, no SMS, and no website ever asks for your 12 words.
-4. **Apply**: business name, type of business (`shop`, `food`, `beauty`, `transport`, `services`, `online` or `other`), where it is (an optional map pin inside Kenya), and a Kenyan contact phone. Your merchant is now `pending`.
+4. **Apply**: business name (2 to 100 characters), type of business (`shop`, `food`, `beauty`, `transport`, `services`, `online` or `other`), where it is (3 to 200 characters, plus an optional map pin inside Kenya), and a Kenyan mobile number, which is stored as `2547…` or `2541…` (a number that does not fit that form is refused). Your merchant is now `pending`.
 5. **Kakitu decides.** A person reviews the application. The page checks by itself and opens your dashboard once you are `approved`. A rejection shows the reason, and you can correct the application and send it again.
 
 Once approved:
 
-- **Shoppers see you are verified.** When a shopper pays your address from the Kakitu extension, the payment sheet shows **Verified Kakitu merchant** and your business name; any other address gets a warning to pay only if they trust the site. The same answer is public at [`GET /merchants/verified/{address}`](./extension#the-verified-merchant-badge). (Rolling out with extension 0.2.7.)
 - **The dashboard** at kakitu.org/merchant lists the KSHS transfers into your wallet, newest first, with each payer's `reference`; totals for today, the last 7 and the last 30 days (East Africa Time); and a CSV export of up to 92 days at a time. It is read-only: signing in to it cannot move money.
-- **The API** works for your server: see [the quickstart](./quickstart#3-copy-the-signer-and-check-who-you-are).
+- **Shoppers see you are verified**: a shopper paying your address from Kakitu extension versions 0.2.7 and later sees **Verified Kakitu merchant** and your business name, and anyone may check at [`GET /merchants/verified/{address}`](./extension#the-verified-merchant-badge). The store's 0.2.4 does not show it.
+- **The API** is open to your wallet's signature, but server-side signing for wallets made in the Kakitu app is coming soon: see [the quickstart](./quickstart#server-side-signing).
 
-The dashboard's routes (`/merchant/*` on `walletapi.kakitu.org`) serve kakitu.org only: sign-in is accepted from kakitu.org and nowhere else. Build your own integration on the `/v1` API and [`GET /transfers`](./transfers#get-transfers), not on them.
+The dashboard's routes (`/merchant/*` on `walletapi.kakitu.org`) serve kakitu.org only: sign-in is accepted from kakitu.org and nowhere else. Build your own integration on the `/v1` API and [`GET /transfers`](./transfers#get-transfers), not on them. (The dashboard's own list, `GET /merchant/payments`, pages by the same rules as `GET /transfers`.)
 
-The two `/v1` endpoints below read your merchant record and update its contact email and callback URL.
+The `/v1` endpoints below read your merchant record, update its contact details and callback URL, and replace its webhook secret. **None of them makes a merchant**: the application at kakitu.org/merchant and Kakitu's approval are the only way to become one.
 
 ## States
 
 | `state` | Meaning |
 |---|---|
 | `pending` | Applied, not reviewed yet. |
-| `approved` | Kakitu reviewed and approved it. The badge, the dashboard, transfers and webhooks work. Only `POST /v1/transfers`, the payout-sending routes and saving a payout destination check this state. |
+| `approved` | Kakitu reviewed and approved it. The verified badge, the dashboard, transfers and webhooks work. Only `POST /v1/transfers`, the payout-sending routes and saving a payout destination check this state. |
 | `rejected` | Kakitu declined it. The reason is shown at kakitu.org/merchant; correct the application and send it again. |
-| `suspended` | Kakitu stopped it. No badge, no dashboard, and the API refuses it. |
+| `suspended` | Kakitu stopped it. No badge and no dashboard. The routes that move money refuse it; reading its own record and events still works. |
 
 You cannot change `state` yourself. See [Going live](./going-live).
 
@@ -96,14 +96,16 @@ query string is inside the signed message, so quote it and change it nowhere els
 
 ## POST /v1/merchants
 
-Updates the signing wallet's merchant details: contact email, contact phone and callback URL. Signed request; no `Idempotency-Key` is needed because it does not move money.
+Updates the contact email, contact phone and callback URL of the signing wallet's merchant. Signed request; no `Idempotency-Key` is needed because it does not move money.
 
-**Apply at [kakitu.org/merchant](https://kakitu.org/merchant) first.** If the signing wallet has no merchant record, this route creates a `pending` one, but that is not how a merchant is reviewed: the application at kakitu.org/merchant is. Send `business_name` exactly as you applied with it; once you are reviewed it is frozen.
+**It does not make a merchant, and it is not a way to apply.** It updates a merchant record that already exists, made by the application at [kakitu.org/merchant](https://kakitu.org/merchant) (or by Kakitu). A wallet with no record gets `404 merchant_not_registered` and nothing is saved.
+
+Every field is optional, and an absent field leaves what is stored. `business_name` is accepted only so older clients keep working: it must equal the name on your record, and a different one is refused with `409 merchant_name_frozen`. A pending application's name is changed at kakitu.org/merchant; after review, by Kakitu.
 
 | Field | Type | Rules |
 |---|---|---|
-| `business_name` | string, required | 1 to 100 characters. No control, invisible or text-direction characters. The name Kakitu vets and the name on the verified badge. Frozen once reviewed. |
-| `contact_email` | string, required | A plain address such as `a@b.co`. `Name <a@b.co>` is refused. At most 254 characters. |
+| `business_name` | string, optional | If sent, it must equal the name on your record. It cannot be changed here. |
+| `contact_email` | string, optional | A plain address such as `a@b.co`. `Name <a@b.co>` is refused. At most 254 characters. **It cannot be cleared**: `""` is `400 invalid_request`. |
 | `contact_phone` | string, optional | At most 20 characters: digits, `+`, spaces and hyphens only. |
 | `callback_url` | string, optional | See [callback URLs](#callback-urls). |
 
@@ -113,7 +115,7 @@ The body is limited to 16 KiB (`request_too_large`, 413).
 <TabItem value="curl" label="cURL" default>
 
 ```bash
-# No Idempotency-Key: registration moves no money.
+# No Idempotency-Key: it moves no money.
 kakitu POST /v1/merchants '{
   "business_name": "Mama Njeri Groceries",
   "contact_email": "njeri@example.com",
@@ -121,26 +123,26 @@ kakitu POST /v1/merchants '{
 }'
 ```
 
-`201` on a first registration, `200` on an update. The address in the answer is the one that
-signed: you never send it, and a body that could name another wallet would let anybody
-register as somebody else.
+`200` with your merchant record. The address in the answer is the one that signed: you never
+send it, and a body that could name another wallet would let anybody change somebody else's
+callback URL.
 
 ```bash
-# Absent and null both LEAVE A FIELD ALONE. Only "" clears it.
+# Absent and null both LEAVE A FIELD ALONE. Only "" clears callback_url (or contact_phone).
 kakitu POST /v1/merchants '{"business_name":"Mama Njeri Groceries","contact_email":"njeri@example.com","callback_url":""}'
 ```
 
 </TabItem>
 <TabItem value="ts" label="TypeScript">
 
-```ts title="register.mjs"
-// node register.mjs - needs kakitu.mjs from the Authentication page beside it.
+```ts title="contact.mjs"
+// node contact.mjs - needs kakitu.mjs from the Authentication page beside it.
 import { Wallet } from "ethers";
 import { call } from "./kakitu.mjs";
 
 const wallet = new Wallet(process.env.KAKITU_PRIVATE_KEY);
 
-// No Idempotency-Key: registration moves no money, so call() is the whole of it.
+// No Idempotency-Key: it moves no money, so call() is the whole of it.
 const { status, body } = await call(wallet, "POST", "/v1/merchants", {
   business_name: "Mama Njeri Groceries",
   contact_email: "njeri@example.com",                 // plain address; "Name <a@b.co>" is refused
@@ -149,16 +151,16 @@ const { status, body } = await call(wallet, "POST", "/v1/merchants", {
   // alone. Only "" clears one. That is what stops a misspelt key wiping a webhook URL.
 });
 
-console.log(status);          // 201 first time, 200 on an update
+console.log(status);          // 200; 404 merchant_not_registered if this wallet has no merchant record
 console.log(body.address);    // the wallet that SIGNED - never a field you send
-console.log(body.state);      // "pending": you cannot set this, and sending it is dropped
+console.log(body.state);      // pending | approved | rejected | suspended: you cannot set this, and sending it is dropped
 ```
 
 </TabItem>
 <TabItem value="py" label="Python">
 
-```python title="register.py"
-# python register.py - needs kakitu.py from the Authentication page beside it.
+```python title="contact.py"
+# python contact.py - needs kakitu.py from the Authentication page beside it.
 import os
 
 from eth_account import Account
@@ -166,7 +168,7 @@ from kakitu import call
 
 account = Account.from_key(os.environ["KAKITU_PRIVATE_KEY"])
 
-# No Idempotency-Key: registration moves no money, so call() is the whole of it.
+# No Idempotency-Key: it moves no money, so call() is the whole of it.
 status, body = call(account, "POST", "/v1/merchants", {
     "business_name": "Mama Njeri Groceries",
     "contact_email": "njeri@example.com",   # plain address; "Name <a@b.co>" is refused
@@ -175,21 +177,21 @@ status, body = call(account, "POST", "/v1/merchants", {
     # alone. Only "" clears one. That is what stops a misspelt key wiping a webhook URL.
 })
 
-print(status)            # 201 first time, 200 on an update
+print(status)            # 200; 404 merchant_not_registered if this wallet has no merchant record
 print(body["address"])   # the wallet that SIGNED - never a field you send
-print(body["state"])     # "pending": you cannot set this, and sending it is dropped
+print(body["state"])     # pending | approved | rejected | suspended: you cannot set this, and sending it is dropped
 ```
 
 </TabItem>
 <TabItem value="php" label="PHP">
 
-```php title="register.php"
+```php title="contact.php"
 <?php
-// php register.php - needs kakitu.php from the Authentication page beside it.
+// php contact.php - needs kakitu.php from the Authentication page beside it.
 declare(strict_types=1);
 require __DIR__ . '/kakitu.php';
 
-// No Idempotency-Key: registration moves no money, so kakitu_call() is the whole of it.
+// No Idempotency-Key: it moves no money, so kakitu_call() is the whole of it.
 [$status, $body] = kakitu_call(getenv('KAKITU_PRIVATE_KEY'), 'POST', '/v1/merchants', [
     'business_name' => 'Mama Njeri Groceries',
     'contact_email' => 'njeri@example.com',   // plain address; "Name <a@b.co>" is refused
@@ -198,17 +200,17 @@ require __DIR__ . '/kakitu.php';
     // alone. Only '' clears one. That is what stops a misspelt key wiping a webhook URL.
 ]);
 
-echo $status, PHP_EOL;            // 201 first time, 200 on an update
+echo $status, PHP_EOL;            // 200; 404 merchant_not_registered if this wallet has no merchant record
 echo $body['address'], PHP_EOL;   // the wallet that SIGNED - never a field you send
-echo $body['state'], PHP_EOL;     // "pending": you cannot set this, and sending it is dropped
+echo $body['state'], PHP_EOL;     // pending | approved | rejected | suspended: you cannot set this, and sending it is dropped
 ```
 
 </TabItem>
 </Tabs>
 
-**Unknown fields are refused** with `invalid_request`, and the message names the field. A misspelt key fails loudly instead of being ignored. The exception is a small set of fields you must never set: `state`, `webhook_secret`, `daily_cap_kes`, `per_charge_max_kes`, `address`, `reviewed_by`, `review_note`. If you send one it is accepted and **dropped**, and the answer shows the real stored state. A client that sends `"state":"approved"` gets `201` with `"state":"pending"`.
+**Unknown fields are refused** with `invalid_request`, and the message names the field. A misspelt key fails loudly instead of being ignored. The exception is a small set of fields you must never set: `state`, `webhook_secret`, `daily_cap_kes`, `per_charge_max_kes`, `address`, `reviewed_by`, `review_note`. If you send one it is accepted and **dropped**, and the answer shows the real stored values. A client that sends `"daily_cap_kes": 1000000` gets `200` with the cap Kakitu set.
 
-Response: `201` for a first registration, `200` for an update. The body is the merchant record:
+Response: `200`. The body is the merchant record, plus `webhook_secret` on the one answer described in [your webhook secret](#your-webhook-secret):
 
 ```json
 {
@@ -217,13 +219,33 @@ Response: `201` for a first registration, `200` for an update. The body is the m
   "contact_email": "njeri@example.com",
   "contact_phone": "",
   "callback_url": "",
-  "state": "pending",
+  "state": "approved",
   "daily_cap_kes": 0,
-  "per_charge_max_kes": 0
+  "per_charge_max_kes": 0,
+  "payout_locked": false
 }
 ```
 
-`daily_cap_kes` and `per_charge_max_kes` are set by Kakitu. `0` means no per-merchant value has been set, and the platform default then applies. The webhook secret is never in this record.
+| Field | Meaning |
+|---|---|
+| `address` | The wallet that signed. It is the merchant. |
+| `business_name` | The name Kakitu vetted. |
+| `contact_email`, `contact_phone`, `callback_url` | Yours to update with this route. `""` when unset. |
+| `state` | `pending`, `approved`, `rejected` or `suspended`. See [States](#states). |
+| `daily_cap_kes`, `per_charge_max_kes` | Set by Kakitu. `0` means no per-merchant value has been set, and the platform default then applies. |
+| `payout_locked` | Whether your [payout lock](./payouts#saved-destinations-and-the-lock) binds now. Always present. |
+| `payout_unlocks_at` | RFC 3339 UTC. **Present only while an unlock is pending**: when the lock comes off. |
+
+Apart from that one answer the webhook secret is never in this record, and neither are the application's own fields (type of business, location, when you applied): those are on kakitu.org/merchant.
+
+### Your webhook secret {#your-webhook-secret}
+
+Kakitu makes your webhook secret when it approves you, and the person who approves you sees it once. Two signed calls hand it to you, each answering with `Cache-Control: no-store`:
+
+- **The first `POST /v1/merchants` from an approved merchant that sets a non-empty `callback_url`** answers with `"webhook_secret": "…"` beside the record, once. It is the secret made at approval, not a new one. Every later answer leaves it out, and so does every answer after you have rotated the secret. A pending merchant may set its callback URL early, and sends it again after approval to collect the secret.
+- **`POST /v1/merchants/me/webhook-secret`** (no body) makes a new secret and answers `200 {"webhook_secret": "…"}`, once. The old secret stops verifying at once. Use it if you lost the secret or think it leaked. A wallet with no record gets `404 merchant_not_registered`; a merchant that is not `approved` gets `403 merchant_not_approved`.
+
+Store it in a secret manager the moment you receive it. No route ever shows it again. `GET /v1/merchants/me` never carries it.
 
 ### Clearing and leaving fields alone
 
@@ -236,23 +258,23 @@ For `contact_phone` and `callback_url` there are three cases, and they differ:
 | `""` (empty string) | Stored value is **cleared** |
 | a value | Stored value is replaced |
 
+`contact_email` follows the same rules except that `""` is refused with `400 invalid_request`.
+
 Why: an omitted or misspelt field must never silently wipe a webhook URL and stop deliveries with nobody told. To clear, say so explicitly with `""`.
 
 ### business_name is frozen
 
-Once a merchant is past `pending`, `business_name` cannot be changed through the API. A request with a different name is refused with `409 merchant_name_frozen` and **nothing in that request is saved**. Why: it is the name Kakitu vetted and the name shoppers see on the verified badge, so it is fixed after vetting. A rename needs Kakitu: write to kakitu@kakitu.org.
+`business_name` cannot be changed through the API. A request with a different name is refused with `409 merchant_name_frozen` and **nothing in that request is saved**. While your application is pending, change the name at kakitu.org/merchant. Why: it is the name Kakitu vetted and the name shoppers see on the verified badge, so it is fixed after vetting. A rename needs Kakitu: write to kakitu@kakitu.org.
 
 Resubmitting the **same** name with new contact details is fine.
 
-In the rare race where Kakitu approves you between our check and our write, you also get `merchant_name_frozen`, but your other fields were saved, and the message says so.
-
 ### A wallet with an open loan
 
-A wallet that has an open Kakitu loan (a feature of the Kakitu app) cannot register as a merchant. `POST /v1/merchants` answers `409 open_loan` and **nothing in the request is saved**. Apply once the loan is closed, or apply with a wallet made for the business, as the [quickstart](./quickstart#why-a-separate-wallet) recommends anyway.
+A wallet that has an open Kakitu loan (a feature of the Kakitu app) cannot become a merchant: the application at kakitu.org/merchant is refused, and nothing is saved. Apply once the loan is closed, or apply with a wallet made for the business, as the [quickstart](./quickstart#why-a-separate-wallet) recommends anyway.
 
 ### Callback URLs
 
-`callback_url` is where webhooks will be delivered (see [Webhooks](./webhooks)). It is validated at registration, so a bad one fails now rather than silently later. It must be:
+`callback_url` is where webhooks will be delivered (see [Webhooks](./webhooks)). **This route is the only way to set it**: the application at kakitu.org/merchant has no callback field, so a merchant receives no webhooks until it has set one here. It is validated when you set it, so a bad one fails now rather than silently later. It must be:
 
 - `https`, on port 443, at most 512 characters, no credentials in the URL, no whitespace.
 - **Public.** Loopback, private, link-local and other reserved addresses are refused, as are `localhost`, `.local`, `.internal`, `.lan` and similar names, and wildcard-DNS names such as `nip.io` that resolve to private addresses. The reason is that webhooks are fetched by our servers, and a private target would let a callback URL point us at internal systems.
@@ -265,7 +287,7 @@ Failures return `invalid_request` with a message saying which rule was broken.
 Returns the merchant record for the signing wallet. No body.
 
 - `200`: the record above.
-- `404 merchant_not_registered`: this wallet has not registered.
+- `404 merchant_not_registered`: this wallet has no merchant record. Apply at kakitu.org/merchant.
 
 Use it to read your `state`, which is how you know you have been approved.
 
@@ -276,7 +298,7 @@ Use it to read your `state`, which is how you know you have been approved.
 kakitu GET /v1/merchants/me | jq -r '.state'
 ```
 
-`404 merchant_not_registered` if this wallet has never registered.
+`404 merchant_not_registered` if this wallet has no merchant record.
 
 </TabItem>
 <TabItem value="ts" label="TypeScript">
@@ -288,7 +310,7 @@ import { call } from "./kakitu.mjs";
 const wallet = new Wallet(process.env.KAKITU_PRIVATE_KEY);
 const { status, body } = await call(wallet, "GET", "/v1/merchants/me");
 
-if (status === 404) throw new Error("this wallet has not registered");   // merchant_not_registered
+if (status === 404) throw new Error("this wallet has no merchant record");   // merchant_not_registered
 console.log(body.state);   // pending | approved | rejected | suspended
 ```
 
@@ -305,7 +327,7 @@ account = Account.from_key(os.environ["KAKITU_PRIVATE_KEY"])
 status, body = call(account, "GET", "/v1/merchants/me")
 
 if status == 404:   # merchant_not_registered
-    raise SystemExit("this wallet has not registered")
+    raise SystemExit("this wallet has no merchant record")
 print(body["state"])   # pending | approved | rejected | suspended
 ```
 
@@ -320,7 +342,7 @@ require __DIR__ . '/kakitu.php';
 [$status, $body] = kakitu_call(getenv('KAKITU_PRIVATE_KEY'), 'GET', '/v1/merchants/me');
 
 if ($status === 404) {   // merchant_not_registered
-    exit("this wallet has not registered\n");
+    exit("this wallet has no merchant record\n");
 }
 echo $body['state'], PHP_EOL;   // pending | approved | rejected | suspended
 ```

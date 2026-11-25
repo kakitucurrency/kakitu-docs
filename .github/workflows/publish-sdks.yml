@@ -28,7 +28,7 @@ on:
         default: true
         type: boolean
       test_registry:
-        description: "Publish to TestPyPI / the npm dry-run instead of the real registry"
+        description: "Python: publish to TestPyPI instead of PyPI. TypeScript: publish nothing (only the npm pack dry run runs)"
         required: true
         default: true
         type: boolean

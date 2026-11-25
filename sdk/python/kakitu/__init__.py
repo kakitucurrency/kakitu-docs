@@ -6,7 +6,7 @@ from .models import (
     CHARGE_STATUSES, DESTINATION_TYPES, EVENT_STATUSES, EVENT_TYPES, ORDER_STATUSES, PAYOUT_STATES,
     PAYOUT_TERMINAL_STATES, Balances, Beneficiary, Charge, EIP712Domain, Event, Limits, Merchant,
     Order, Payout, PayoutDestination, PayoutDestinations, PayoutLimits, PayoutLock, PayoutQuote,
-    Quote, Transfer,
+    Quote, Transfer, WalletTransfer, WalletTransferPage,
 )
 from .pagination import Page, auto_paginate
 from .webhooks import WebhookVerificationError, verify_webhook
@@ -17,7 +17,7 @@ __all__ = [
     # models
     "Merchant", "Charge", "Transfer", "Balances", "Order", "Limits", "PayoutLimits", "Quote",
     "Event", "Payout", "PayoutQuote", "EIP712Domain", "Beneficiary", "PayoutDestination",
-    "PayoutDestinations", "PayoutLock",
+    "PayoutDestinations", "PayoutLock", "WalletTransfer", "WalletTransferPage",
     # closed sets
     "CHARGE_STATUSES", "ORDER_STATUSES", "EVENT_TYPES", "EVENT_STATUSES", "PAYOUT_STATES",
     "PAYOUT_TERMINAL_STATES", "DESTINATION_TYPES",

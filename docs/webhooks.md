@@ -11,14 +11,16 @@ A webhook is a `POST` we make to your `callback_url` when a payment arrives at y
 
 ## Before anything is delivered
 
-- You store a `callback_url` on your merchant. It is validated at registration (https, public, punycode for non-ASCII hostnames) so a bad one fails there rather than silently never delivering. See [Merchants](./merchants#callback-urls).
-- When Kakitu approves your merchant, a **webhook secret** is issued. It signs every delivery.
+- You store a `callback_url` on your merchant with a signed [`POST /v1/merchants`](./merchants#post-v1merchants). **That is the only way to set one**: the application at kakitu.org/merchant has no callback field, so a merchant approved there receives no webhooks until it has set one. It is validated when you set it (https on port 443, a public host, no credentials in the URL, at most 512 characters, punycode for non-ASCII hostnames) so a bad one fails there rather than silently never delivering. See [Merchants](./merchants#callback-urls). Setting it needs your wallet's key on a server, and server-side signing is [coming soon](./quickstart#server-side-signing).
+- When Kakitu approves your merchant, a **webhook secret** is made. It signs every delivery.
+
+Until a `callback_url` is set, your events wait with `last_error: "no_callback_url"` and are abandoned after 24 hours like any other failure; [replay](./events#post-v1eventsidreplay) brings them back once you have one.
 
 ### The webhook secret is shown once
 
-The secret is shown **once, at approval**, and is **never retrievable afterwards**. It is not in `GET /v1/merchants/me`, and no endpoint returns it or anything derived from it. A secret that can be read back over an API is not a secret.
+The secret reaches you **once**: in the answer to the first `POST /v1/merchants` from your approved merchant that sets a non-empty `callback_url`. After that it is **never retrievable**: it is not on kakitu.org/merchant and not in `GET /v1/merchants/me`; the only other way to hold one is to make a new one. A secret that can be read back over an API is not a secret.
 
-Store it in a secret manager the moment you receive it. If you lose it, an operator has to issue a new one; write to kakitu@kakitu.org.
+Store it in a secret manager the moment you receive it. If you lose it, or think it leaked, `POST /v1/merchants/me/webhook-secret` makes a new one and answers with it once; the old one stops signing at once. See [your webhook secret](./merchants#your-webhook-secret).
 
 A merchant cannot be approved without a secret, and a delivery is never sent without one: an unsigned delivery is one you could not tell from a forgery, so there is no "just this once".
 
@@ -42,7 +44,7 @@ Your callback URL and your secret are read **fresh on every attempt**, so fixing
 
 The timestamp is **inside** the signed string, not merely alongside it, which is what makes checking it worth anything: move `t` and the signature breaks. The `.` is a separator rather than decoration — without it `"1" + "23.x"` and `"12" + "3.x"` would sign identically and a replayer could shift the clock by trimming the body.
 
-Verify against the **exact bytes** of the request body. Parsing and re-serialising before you verify reorders keys and changes whitespace, and you will then be checking a different string from the one we signed. There is a worked implementation on the Events page: [verifying the signature](./events#verifying-the-signature).
+Verify against the **exact bytes** of the request body. Parsing and re-serialising before you verify reorders keys and changes whitespace, and you will then be checking a different string from the one we signed. To re-check a delivery later, use `payload_raw` from [`GET /v1/events`](./events#re-checking-an-event-you-read-here): it is the exact signed body. The parsed `payload` beside it is not for checking signatures. There is a worked implementation on the Events page: [verifying the signature](./events#verifying-the-signature).
 
 ## The body
 
@@ -53,7 +55,7 @@ Every delivery carries one of thirteen event types:
 | `charge.paid` | The payer paid. Your wallet is not credited yet. |
 | `charge.settled` | The KSHS is at your address. This is the one to release goods on for a charge. |
 | `charge.failed` | The collection did not go through, or was refunded. |
-| `transfer.received` | **KSHS arrived at your address**, from anybody. Carries the payer's `reference` if they sent one. A reference is their claim, not proof: check the amount and the recipient. |
+| `transfer.received` | **KSHS arrived at your address**, from anybody. Carries the payer's `reference` if there is one. A reference is their claim, not proof: check the amount and the recipient. Some payments are [never announced](./events#what-is-not-announced). |
 | `payout.approved` | **A person said yes. Quote and sign now**, before `approval_expires_at`. |
 | `payout.rejected` | **A person said no. Do not ask again.** |
 | `payout.expired` | **It was not sent. Ask again with a new payout.** |
@@ -68,7 +70,7 @@ Each body is a three-field envelope (`id`, `type`, `created_at`) wrapped around 
 
 **Every field of every type, what is always present, what may be null, and an example body of each: [the payload](./events#the-payload).**
 
-**Today, `transfer.received` is the one to build for.** New charges cannot be created while [collections are being rebuilt](./collections) and the payout-sending routes are [coming soon](./payouts), so the `charge.*` and payout events belong to past charges and payouts. The controls events (`payout_destination.*`, `payout_lock.changed`) are raised today.
+**Today, `transfer.received` is the one to build for.** [Charges](./collections) and [payouts](./payouts) are not open for integration, so do not build for `charge.*` and payout events; you may meet them for past charges and payouts. The controls events (`payout_destination.*`, `payout_lock.changed`) are raised today.
 
 :::danger Four payout types mean "not sent", and they are not the same instruction
 `payout.expired`, `payout.cancelled` and `payout.rejected` all mean **nothing left your wallet and

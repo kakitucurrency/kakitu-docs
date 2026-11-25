@@ -141,6 +141,29 @@ describe("cursor pagination: one contract, one pager", () => {
     expect(first.data).toHaveLength(1);
   });
 
+  it("transfers.listAll walks GET /transfers by next_before and stops when it is absent", async () => {
+    const { k, calls } = harness([
+      json(200, { transfers: [{ tx_hash: "0xa" }, { tx_hash: "0xb" }], next_before: "2026-11-07T08:21:09.1Z" }),
+      json(200, { transfers: [{ tx_hash: "0xc", reference: "ORD-1" }] }),
+    ]);
+    const hashes: string[] = [];
+    for await (const t of k.transfers.listAll({ limit: 2 })) hashes.push(t.tx_hash);
+    expect(hashes).toEqual(["0xa", "0xb", "0xc"]);
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://example.test/transfers?limit=2",
+      "https://example.test/transfers?limit=2&before=2026-11-07T08%3A21%3A09.1Z",
+    ]);
+    expect(headersOf(calls[0]!)["Idempotency-Key"]).toBeUndefined();
+  });
+
+  it("transfers.listAll stops on a repeated next_before instead of looping", async () => {
+    const { k, calls } = harness([json(200, { transfers: [{ tx_hash: "0xa" }], next_before: "same" })]);
+    const hashes: string[] = [];
+    for await (const t of k.transfers.listAll()) hashes.push(t.tx_hash);
+    expect(hashes).toEqual(["0xa", "0xa"]);
+    expect(calls).toHaveLength(2);
+  });
+
   it("omits undefined filters from the query string", async () => {
     const { k, calls } = harness([json(200, { data: [], next_cursor: null })]);
     await k.events.list({ type: "payout.expired" });

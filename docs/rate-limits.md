@@ -17,7 +17,7 @@ The hourly limit on [`POST /v1/transfers`](./transfers) is not a courtesy. Our r
 
 | Limit | Code | HTTP |
 |---|---|---|
-| Transfers per merchant per hour | `rate_limited` | 429 |
+| Transfers per merchant per fixed UTC clock hour (60 by default; refused attempts count too) | `rate_limited` | 429 |
 | Transfers per wallet per UTC day | `daily_cap_exceeded` | 429 |
 | Largest single transfer | `amount_above_maximum` | 400 |
 | Smallest transfer | `amount_below_minimum` | 400 |
@@ -42,7 +42,7 @@ Unlike the money controls, this one **fails open**: if our counter is unavailabl
 
 ### Quotes: 30 a minute
 
-`POST /v1/quotes` has a second, tighter limit of its own: **30 a minute per address**, counted on our side even when the shared counter is down. `POST /v1/quotes` is [not available today](./quotes); the limit still applies to it. Over it you get `429 rate_limited` with `Retry-After` set to the seconds left in the minute. It does not appear in the `RateLimit-*` headers, which describe the shared limit only.
+`POST /v1/quotes` has a second, tighter limit of its own: **30 a minute per address**, counted on our side even when the shared counter is down. `POST /v1/quotes` is [not open for integration](./quotes); the limit still applies to it. Over it you get `429 rate_limited` with `Retry-After` set to the seconds left in the minute. It does not appear in the `RateLimit-*` headers, which describe the shared limit only.
 
 ## The per-IP limit in front of everything
 

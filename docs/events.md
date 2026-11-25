@@ -27,9 +27,9 @@ A merchant's integration branches on `type` and on nothing else, so each of thes
 | `type` | About | What it tells you |
 |---|---|---|
 | `charge.paid` | a charge | The payer paid. |
-| `charge.settled` | a charge | The KSHS is at your address: `charge.credited_kes`, which is `charge.amount` less `charge.fee_kes`. |
+| `charge.settled` | a charge | The KSHS is at your address: `charge.credited_kes`, normally `charge.amount` less `charge.fee_kes`. |
 | `charge.failed` | a charge | The charge did not go through. |
-| `transfer.received` | a payment | KSHS arrived at your address on chain, from anybody, by any route. Carries the payer's `reference` if they sent one. |
+| `transfer.received` | a payment | KSHS arrived at your address on chain, from anybody, by any route. Carries the payer's `reference` if there is one. Some payments are [not announced](#what-is-not-announced). |
 | `payout.approved` | a payout | **A person said yes. Quote and sign it now**, before `payout.approval_expires_at`. |
 | `payout.rejected` | a payout | **A person said no. Do not ask again.** Nothing was signed or sent. |
 | `payout.expired` | a payout | **It was not sent. Ask again with a new payout.** An approval nobody signed in time, or a held payout whose signature lapsed. |
@@ -42,7 +42,7 @@ A merchant's integration branches on `type` and on nothing else, so each of thes
 
 The last three are the alarm for your own payout controls: if you did not make the change, somebody else holds your key.
 
-**Which of these you will see today.** `transfer.received` is the event that matters now: it is how you learn of every payment to your address. New charges cannot be created while [collections are being rebuilt](./collections), so the `charge.*` events belong to charges made before; the payout-sending routes are [coming soon](./payouts), so `payout.approved`, `payout.rejected`, `payout.expired`, `payout.cancelled`, `payout.paid` and `payout.failed` belong to past payouts. The three controls events are raised today, because saved destinations and the lock work today.
+**Which of these you will see today.** `transfer.received` is the event that matters now: it is how you learn of payments to your address. [Charges](./collections) and [payouts](./payouts) are not open for integration, so do not build for `charge.*` and the payout types; you may meet them for past charges and payouts. The three controls events are raised whenever a destination is saved or removed or the lock moves (saving answers `403 payouts_disabled` for a merchant without payouts).
 
 ### The approve-first events
 
@@ -111,7 +111,7 @@ The payer paid. The KSHS is not at your address yet — wait for `charge.settled
 | `charge.paid_at` | string, RFC 3339 UTC | **Always a timestamp on this type**, never `null`. |
 | `charge.settled_at` | `null` | **Always `null` on this type.** The key is present and its value is `null`; nothing has settled yet. |
 | `charge.fee_kes` | integer | **Always a number on this type.** What the collection cost, in whole shillings. |
-| `charge.credited_kes` | integer | **Always a number on this type.** What reaches your wallet: `charge.amount` less `charge.fee_kes`. |
+| `charge.credited_kes` | integer | **Always a number on this type.** What reaches your wallet: normally `charge.amount` less `charge.fee_kes`, less again if the settlement was repriced for a short payment. Book this number, not a subtraction. |
 
 ```json
 {
@@ -146,7 +146,7 @@ The KSHS is at your address on chain. This is the event to release goods on.
 | `charge.paid_at` | string, RFC 3339 UTC | **Always a timestamp on this type**, never `null`. If the charge jumped straight to settled without a `charge.paid` ever being raised, this is the moment it settled. |
 | `charge.settled_at` | string, RFC 3339 UTC | **Always a timestamp on this type**, never `null`. It equals the envelope's `created_at`. |
 | `charge.fee_kes` | integer | **Always a number on this type.** What the collection cost, in whole shillings. |
-| `charge.credited_kes` | integer | **Always a number on this type.** What reached your wallet: `charge.amount` less `charge.fee_kes`. |
+| `charge.credited_kes` | integer | **Always a number on this type.** What reached your wallet: normally `charge.amount` less `charge.fee_kes`, less again if the settlement was repriced for a short payment. Book this number, not a subtraction. |
 
 ```json
 {
@@ -206,7 +206,7 @@ The collection did not go through, or a payment that had gone through was refund
 
 ### `transfer.received`
 
-**KSHS arrived at your address.** This is the notification for a payment made with `pay()`, a `kakitu:` link, a QR code or any wallet: it is raised from the chain, for a transfer **to** your address, whoever sent it and by whatever route. Mints and burns are never announced. Only an approved merchant receives it.
+**KSHS arrived at your address.** This is the notification for a payment made with `pay()`, a `kakitu:` link, a QR code or any wallet: it is raised from the chain, for a confirmed transfer **to** your address, whoever sent it and by whatever route. Mints and burns are never announced. Only an approved merchant receives it, and only at a `callback_url` it has set.
 
 | Field | Type | Present |
 |---|---|---|
@@ -217,8 +217,8 @@ The collection did not go through, or a payment that had gone through was refund
 | `transfer.amount_kes` | string | **Always.** The exact amount as a decimal **string**, such as `"99.5"`, not whole shillings: a KES 99.50 invoice must not read as 99. |
 | `transfer.value_wei` | string | **Always.** The same amount in the token's smallest unit. A string, because it does not fit a JSON number. |
 | `transfer.block_number` | integer | **Always.** |
-| `transfer.observed_at` | string, RFC 3339 UTC | **Always.** When we saw it on chain. |
-| `transfer.reference` | string | **Only when the payer sent one.** The key is absent otherwise. 1 to 64 characters from `[A-Za-z0-9._:-]`. |
+| `transfer.observed_at` | string, RFC 3339 UTC | **Always.** The time of the transfer: its block's timestamp, or, for a payment made through Kakitu's relay, when the relay submitted it. Not the moment Kakitu noticed it. |
+| `transfer.reference` | string | **Only when there is one.** The key is absent otherwise. 1 to 64 characters from `[A-Za-z0-9._:-]`. A reference is not on chain: only a payment made through Kakitu's relay (the Kakitu app, extension 0.2.8 or later, `POST /v1/transfers`) can carry one, and a payment from any other wallet never does. |
 
 ```json
 {
@@ -241,7 +241,17 @@ The collection did not go through, or a payment that had gone through was refund
 
 **A reference is the payer's claim, not proof.** Anybody can send KSHS to your address with any reference they like, including one that belongs to somebody else's order. Before you release goods, check the amount and the recipient against the order the reference names, and match each order to one transfer. The reference tells you which order to look at; it does not tell you the order is paid.
 
-**Do not release on a payment that is not in this event.** A screenshot of a payer's phone is not a payment.
+**Do not release on a screenshot.** A screenshot of a payer's phone is not a payment.
+
+#### What is not announced {#what-is-not-announced}
+
+`transfer.received` is not a complete ledger. These payments to your address are **never** announced, and nothing in `GET /v1/events` will replay them:
+
+- **Payments made before your merchant was approved.** They are not sent later.
+- **Payments more than about 24 hours old** (432,000 blocks behind the chain's head) by the time the notifier reaches them. A notifier outage of more than a day loses those notices for good.
+- **Payments from before the notifier first started**, and transfers from your address to itself.
+
+The payments are still on chain and still in your [`GET /transfers`](./transfers#get-transfers) history. Reconcile against that, or the chain, as well as the webhook.
 
 ### `payout.approved`
 
@@ -526,7 +536,9 @@ function kakitu_verify_webhook(string $secret, string $header, string $raw): boo
 </TabItem>
 </Tabs>
 
-Your webhook secret is issued once, when an operator approves you, and is never retrievable afterwards. See [Webhooks](./webhooks).
+Your webhook secret is made when Kakitu approves you and handed to you once. See [your webhook secret](./merchants#your-webhook-secret).
+
+**The example bodies on this page are spaced for reading.** Always verify over the raw request body you received, never over parsed and re-serialised JSON.
 
 ### What counts as delivered
 
@@ -619,11 +631,11 @@ let target = "/v1/events?status=abandoned&limit=50";
 for (;;) {
   const { body } = await call(wallet, "GET", target);   // the query is part of the signature
   for (const e of body.data) {
-    // charge_id is NULLABLE now: exactly one of charge_id and payout_id is set. Reading
+    // charge_id is NULLABLE: at most one of charge_id and payout_id is set. Reading
     // charge_id and assuming a string breaks on the first payout event you receive.
     const subject = e.charge_id ?? e.payout_id;
     console.log(e.id, e.type, subject, e.status, e.attempts, e.last_error ?? "");
-    // payload is the exact body we sent, already parsed - no second JSON.parse.
+    // payload is for reading; payload_raw is the exact signed body. payload is already parsed - no second JSON.parse.
     console.log(e.payload.type);
   }
   if (!body.next_cursor) break;
@@ -647,11 +659,11 @@ target = "/v1/events?status=abandoned&limit=50"
 while target:
     _, body = call(account, "GET", target)   # the query is part of the signature
     for e in body["data"]:
-        # charge_id is NULLABLE now: exactly one of charge_id and payout_id is set. Reading
+        # charge_id is NULLABLE: at most one of charge_id and payout_id is set. Reading
         # charge_id and assuming a str breaks on the first payout event you receive.
         subject = e["charge_id"] or e["payout_id"]
         print(e["id"], e["type"], subject, e["status"], e["attempts"], e.get("last_error", ""))
-        # payload is the exact body we sent, already parsed - no second json.loads.
+        # payload is for reading; payload_raw is the exact signed body. payload is already parsed - no second json.loads.
         print(e["payload"]["type"])
     cursor = body["next_cursor"]
     target = f"/v1/events?status=abandoned&limit=50&cursor={quote(cursor)}" if cursor else None
@@ -671,12 +683,12 @@ $target = '/v1/events?status=abandoned&limit=50';
 while ($target !== null) {
     [, $body] = kakitu_call($key, 'GET', $target);   // the query is part of the signature
     foreach ($body['data'] as $e) {
-        // charge_id is NULLABLE now: exactly one of charge_id and payout_id is set. Reading
+        // charge_id is NULLABLE: at most one of charge_id and payout_id is set. Reading
         // charge_id and assuming a string breaks on the first payout event you receive.
         $subject = $e['charge_id'] ?? $e['payout_id'];
         echo $e['id'], ' ', $e['type'], ' ', $subject, ' ', $e['status'], ' ',
              $e['attempts'], ' ', ($e['last_error'] ?? ''), PHP_EOL;
-        // payload is the exact body we sent, already decoded - no second json_decode.
+        // payload is for reading; payload_raw is the exact signed body. payload is already decoded - no second json_decode.
         echo $e['payload']['type'], PHP_EOL;
     }
     $cursor = $body['next_cursor'];
@@ -697,7 +709,7 @@ while ($target !== null) {
 | `limit` | A whole number from 1 to 100. Default 20. |
 | `cursor` | `next_cursor` from the previous page, unchanged. |
 
-A value outside those sets is refused with `invalid_request` rather than quietly matching nothing. If you are debugging "why is my list empty", a typo tells you so instead of leaving you hunting for events that were never going to match.
+A value outside those sets is refused with `invalid_request` rather than quietly matching nothing. (The error's message may name only some of the types; all thirteen are accepted.) If you are debugging "why is my list empty", a typo tells you so instead of leaving you hunting for events that were never going to match.
 
 ```json
 HTTP 200
@@ -710,12 +722,13 @@ HTTP 200
       "payout_id": null,
       "created_at": "2026-10-26T09:14:02Z",
       "status": "abandoned",
-      "attempts": 12,
+      "attempts": 13,
       "next_attempt_at": null,
-      "last_attempt_at": "2026-10-27T08:40:11Z",
+      "last_attempt_at": "2026-10-27T05:44:31Z",
       "delivered_at": null,
       "last_error": "http_502",
-      "payload": { "id": "4e7c2b18-0f2a-4a1b-9a44-1b2c3d4e5f60", "type": "charge.settled", "created_at": "2026-10-26T09:14:02Z", "charge": { "id": "a1f0c9d2-55b1-4f3e-8a0d-77c1e2b3a4d5", "reference": "order-1042", "amount": 500, "currency": "KES", "status": "settled", "paid_at": "2026-10-26T09:13:44Z", "settled_at": "2026-10-26T09:14:02Z", "fee_kes": 15, "credited_kes": 485 } }
+      "payload": { "id": "4e7c2b18-0f2a-4a1b-9a44-1b2c3d4e5f60", "type": "charge.settled", "created_at": "2026-10-26T09:14:02Z", "charge": { "id": "a1f0c9d2-55b1-4f3e-8a0d-77c1e2b3a4d5", "reference": "order-1042", "amount": 500, "currency": "KES", "status": "settled", "paid_at": "2026-10-26T09:13:44Z", "settled_at": "2026-10-26T09:14:02Z", "fee_kes": 15, "credited_kes": 485 } },
+      "payload_raw": "{\"id\":\"4e7c2b18-0f2a-4a1b-9a44-1b2c3d4e5f60\",\"type\":\"charge.settled\",\"created_at\":\"2026-10-26T09:14:02Z\",\"charge\":{…}}"
     }
   ],
   "next_cursor": "MjAyNi0xMC0yNlQwOToxNDowMloucy4u"
@@ -727,12 +740,13 @@ HTTP 200
 | `charge_id` | The charge this event is about. **Nullable:** it is `null` on every event that is not about a charge. |
 | `payout_id` | The payout this event is about. `null` on every event that is not about a payout. **Both are `null` on `transfer.received` and on the three controls events**: read the id from `payload`. |
 | `status` | `pending` (not yet delivered), `delivered` (your endpoint answered 2xx), `abandoned` (the 24-hour budget is spent). |
-| `attempts` | How many attempts have failed so far. |
+| `attempts` | How many attempts have been made. On a `delivered` event it includes the one that succeeded. |
 | `next_attempt_at` | When we will try again. **`null` unless the event is `pending`** — a next attempt that is not coming would be a lie. |
 | `last_attempt_at` | When we last tried. `null` if we never have. |
 | `delivered_at` | When your endpoint accepted it. |
 | `last_error` | Why the last attempt failed. Absent if none has. See the table below. |
-| `payload` | The exact body we sent, as JSON rather than as a quoted string, so you can read it without a second parse. Its shape is [the payload](#the-payload), decided by `type`. |
+| `payload` | The event body as JSON, so you can read it without a second parse. Its shape is [the payload](#the-payload), decided by `type`. For reading, not for checking a signature. |
+| `payload_raw` | **The exact body that is signed and POSTed**, as a string. Check a signature over this. See [re-checking an event](#re-checking-an-event-you-read-here). |
 
 :::warning charge_id is nullable now
 `charge_id` used to be present on every event, because a charge was the only thing an event
@@ -744,6 +758,14 @@ a charge. Check which one is set before you use it, and read the subject from `p
 :::
 
 `next_cursor` is `null` on the last page. It is an opaque string, not a page number: events arrive while you are paging, and an offset would show you the same row twice. Pass it back unchanged; anything else is `invalid_request`.
+
+### Re-checking an event you read here
+
+**`payload_raw` is the exact string of bytes that Kakitu signs and POSTs.** To re-check a delivery, take its `Kakitu-Signature` header, which you kept when it arrived, and verify it over `payload_raw` (UTF-8, exactly as decoded from the JSON string) just as you would over the raw request body. `GET /v1/events` does not return the signature itself: each attempt is signed with its own timestamp and with the secret you had at that moment, so a rotated secret does not verify an older delivery.
+
+Do not check a signature over `payload`, or over anything you parsed and serialised again. Events created before this field was added carry the body as it is stored, which is also what was sent for them.
+
+When you only want to read events, no signature check is needed: the answer comes over HTTPS to a request you signed yourself.
 
 ### `last_error`
 
@@ -774,13 +796,14 @@ HTTP 202
   "status": "pending",
   "attempts": 0,
   "next_attempt_at": "2026-10-27T09:00:00Z",
-  "last_attempt_at": "2026-10-27T08:40:11Z",
+  "last_attempt_at": "2026-10-27T05:44:31Z",
   "delivered_at": null,
-  "payload": { "…": "…" }
+  "payload": { "…": "…" },
+  "payload_raw": "{…}"
 }
 ```
 
-**`202`, not `200`: nothing has been delivered when this returns.** The worker picks the row up on its next tick. What you get back is the queued state, not a receipt.
+**`202`, not `200`: nothing has been delivered when this returns.** `next_attempt_at` is the moment of the replay: the event is due at once, and the worker picks it up on its next tick, within about 5 seconds. What you get back is the queued state, not a receipt.
 
 **No `Idempotency-Key` is needed.** Replay is idempotent by construction — requeuing an already-requeued event sets the same row to the same state. Calling it five times is one replay.
 

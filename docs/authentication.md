@@ -34,7 +34,7 @@ The signature is an **EIP-191 `personal_sign`** signature over exactly this stri
 Example, a `POST` with a body:
 
 ```
-POST /v1/merchants 1758240002 7a4c4c0f0333102cffe5a64621024fe6d094cbcc71d771c251a3600c43ac19a6
+POST /v1/merchants 1758240002 d28010943fc9ecac1bf4da12110fb4dcae161baafa28b7b5333e68f5231e6c6b
 ```
 
 ### Why it is built this way
@@ -73,7 +73,11 @@ composer require kakitu/kakitu-php:@dev
 ```
 :::
 
-Each of these is a whole program: it builds the message, signs it, sends the request and prints the answer. Run on its own, each makes one read-only call, `GET /v1/merchants/me`; import its `call` function to make others, as the [quickstart](./quickstart#4-set-your-contact-email-and-callback-url) does. Each reads the key from `KAKITU_PRIVATE_KEY`. Do not put a key in source code or paste one into a support ticket, and make it the key of a wallet made for the business rather than your personal wallet's — see [why a separate wallet](./quickstart#why-a-separate-wallet).
+Each of these is a whole program: it builds the message, signs it, sends the request and prints the answer. Run on its own, each makes one read-only call, `GET /v1/merchants/me`; import its `call` function to make others, as the [Merchants](./merchants#post-v1merchants) page does. Each reads a hex private key from `KAKITU_PRIVATE_KEY`, and none of them reads, asks for or derives anything from a recovery phrase. Do not put a key in source code or paste one into a support ticket.
+
+:::caution Server-side signing is coming soon
+Kakitu offers no safe way yet to put the key of a wallet made in the Kakitu app on a server: the app and the extension do not export one. Never type your 12 words into a script or tool to get one. Until server-side signing opens, approved merchants use the dashboard at [kakitu.org/merchant](https://kakitu.org/merchant). See [the quickstart](./quickstart#server-side-signing).
+:::
 
 <Tabs groupId="lang">
 <TabItem value="ts" label="TypeScript" default>
@@ -280,20 +284,20 @@ Run: `KAKITU_PRIVATE_KEY=0x... php kakitu.php`
 
 ## Check your signer against known answers
 
-Before you debug your integration, check your signer. These are test vectors produced by the server's own signing code, using the public BIP-39 test key (mnemonic `abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about`, path `m/44'/60'/0'/0/0`), whose address is `0x9858EfFD232B4033E47d90003D41EC34EcaEda94`. **That key is published in every BIP-39 test suite. Use it for these vectors only, never for real money.** If your signer produces these signatures, the signing is right and any remaining problem is in the request. All three programs above produce them.
+Before you debug your integration, check your signer. These vectors are made with the public test key `0x1ab42cc412b618bdea3a599e3c9bae199ebf030895b039e9db1e30dafb12b727`, whose address is `0x9858EfFD232B4033E47d90003D41EC34EcaEda94`. It is the first account of the standard BIP-39 test wallet, published in every Ethereum test suite. **Everybody has this key. Use it for these vectors only, never for real money.** The signatures are EIP-191 `personal_sign`, exactly what the server verifies (the server's own signing code produces the same answers). If your signer produces them, the signing is right and any remaining problem is in the request. All three programs above produce them.
 
-**GET /kyc/state?country=KE&tier=basic**, timestamp `1758240001`, body `(empty)`
-
-```
-message   GET /kyc/state?country=KE&tier=basic 1758240001 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-signature 0x3660f0431d31e727a8ba5f33c788812c6a25e8507b9c2479324ed1259ad047fe6c44925337052d4037a86ade58ef860a890f3f7bfaeec5331deaf78e1fe50e681b
-```
-
-**POST /ramp/deposit**, timestamp `1758240002`, body `{"amount_kes":1000,"phone":"+254700000000"}`
+**GET /v1/events?status=abandoned&limit=20**, timestamp `1758240001`, body `(empty)`
 
 ```
-message   POST /ramp/deposit 1758240002 7a4c4c0f0333102cffe5a64621024fe6d094cbcc71d771c251a3600c43ac19a6
-signature 0x300fa9012768e1bcd22614d77d7724be7cdad84bbf65f482b536860ce0eb5a4e2329986faa234254388022acfb3f9c7640778bfc2021cc6eca0848f1556f6f171c
+message   GET /v1/events?status=abandoned&limit=20 1758240001 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+signature 0xa8fcb1f678f44bd33be541cdb5769a02e9dd0c79154698f77c48e82303db837b7c7a78dfe69f3f6d6a033f7c58d347b480fe86e4f6528bca6d32181213000d581b
+```
+
+**POST /v1/merchants**, timestamp `1758240002`, body `{"business_name":"Mama Njeri Groceries","contact_email":"njeri@example.com"}`
+
+```
+message   POST /v1/merchants 1758240002 d28010943fc9ecac1bf4da12110fb4dcae161baafa28b7b5333e68f5231e6c6b
+signature 0x9d2471e3da3f27ea1e6d39c2aa89b23ecd7cdc0af0c233321cf512efe57e1cc6230b729bb6a1dc6203d69b9d181d05b9dbbe98826339626b65c8653c9a7d8b4d1c
 ```
 
 ## When you get 401

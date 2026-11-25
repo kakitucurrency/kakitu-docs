@@ -2,14 +2,15 @@
 
 A client for the Kakitu developer API.
 
-**Status:** merchants apply at [kakitu.org/merchant](https://kakitu.org/merchant) and Kakitu approves them. `charges.create` is coming soon (rebuilt as a KSHS payment request) and the payout-sending calls are coming soon (being rebuilt on KCB); take payment today with a KSHS transfer and a `reference` ([status](https://developer.kakitu.org/docs/going-live#what-is-live)). The reads, transfers and webhooks work today.
+**Not published.** `kakitu` is not on PyPI: `pip install kakitu` does not work. Install it from this repository (below), or sign requests directly with the complete signers on [Authentication](https://developer.kakitu.org/docs/authentication).
+
+**Status:** merchants apply at [kakitu.org/merchant](https://kakitu.org/merchant) and Kakitu approves them; no API call makes a merchant. Take payment today with a KSHS transfer and a `reference`, and read it with `client.transfers.list`. `charges.create` is not open for integration (planned as a KSHS payment request), and the payout-sending calls and `payout_destinations.save` are not open for integration (planned to come back, paid through KCB). See [what is live](https://developer.kakitu.org/docs/going-live#what-is-live).
+
+**Server-side signing is coming soon.** This SDK signs with a hex private key. There is no safe way yet to get the key of a wallet made in the Kakitu app onto a server: the app and the extension do not export one. **Never type your 12 words into a script or tool to work one out.** See [the quickstart](https://developer.kakitu.org/docs/quickstart#server-side-signing).
 
 Kakitu authenticates by **signing every request with your wallet key**, not with a bearer token. This SDK does the signing for you, so you never build a signature, a timestamp or a body hash yourself.
 
-## 60-second quickstart
-
-> **SDKs are being published — until then, sign requests directly (see [Authentication](https://developer.kakitu.org/docs/authentication) for complete signers) or copy the reference signer from this sdk/ folder.**
-> `pip install kakitu` does not work today; install from this folder instead.
+## Quickstart
 
 ```bash
 # Python 3.10+. Straight from git:
@@ -20,38 +21,43 @@ export KAKITU_PRIVATE_KEY=0xYOUR_PRIVATE_KEY_HERE   # placeholder: use a secret 
 ```
 
 ```python
-from kakitu import Kakitu, MerchantNameFrozenError
+from kakitu import Kakitu
 
 client = Kakitu()  # reads KAKITU_PRIVATE_KEY; or Kakitu(private_key="0xYOUR_PRIVATE_KEY_HERE")
 
-merchant = client.merchants.register(
-    business_name="Mama Njeri Duka",
-    contact_email="owner@example.com",
-)
-print(merchant.state)          # "pending" until a Kakitu operator approves you
-print(client.merchants.me())   # read it back
+print(client.merchants.me().state)   # "pending" until Kakitu approves your kakitu.org/merchant application
+
+# Your payments, newest first, with each payer's reference (the payer's claim, not proof)
+for t in client.transfers.auto_paging_iter(limit=100):
+    if t.direction == "in":
+        print(t.tx_hash, t.amount_kes, t.reference)
+
+# Once approved: contact details and callback URL. This does not make a merchant.
+client.merchants.update(business_name="Mama Njeri Duka",   # exactly as you applied
+                        contact_email="owner@example.com",
+                        callback_url="https://example.com/kakitu/webhook")
 ```
 
-Your wallet **address** (derived from the key) is your API credential. Keep the private key out of source control, logs and chat.
+`merchants.register` is a deprecated alias of `merchants.update`; the route no longer registers anybody. Your wallet **address** (derived from the key) is your API credential. Keep the private key out of source control, logs and chat.
 
 ## What's covered
 
 | Resource | Methods |
 | --- | --- |
-| `client.merchants` | `register`, `me` |
-| `client.charges` | `create`, `get`, `list`, `auto_paging_iter` |
-| `client.transfers` | `create` |
+| `client.merchants` | `update` (`register` is a deprecated alias), `me` |
+| `client.charges` | `get`, `list`, `auto_paging_iter` (past charges); `create` is not open for integration |
+| `client.transfers` | `create`, `list`, `auto_paging_iter` (`GET /transfers`) |
 | `client.balances` | `retrieve` |
 | `client.orders` | `get` |
 | `client.limits` | `retrieve` |
-| `client.quotes` | `create` |
+| `client.quotes` | `create`: not open for integration |
 | `client.events` | `list`, `auto_paging_iter`, `replay` |
-| `client.payouts` | `quote`, `create`, `get`, `list`, `auto_paging_iter` |
+| `client.payouts` | `get`, `list`, `auto_paging_iter` (past payouts); `request`, `quote`, `create` are not open for integration |
+| `client.payout_destinations` | `list`, `remove`, `set_lock`; `save` answers `payouts_disabled` while payouts are off |
 
 ```python
-charge = client.charges.create(amount=500, phone="0712345678", reference="order-1042")
 balances = client.balances.retrieve()          # balances.usdc_amount is a STRING
-price = client.quotes.create(type="deposit", amount_kes=1000, phone="0712345678")
+page = client.transfers.list(limit=50)         # page.next_before is None on the last page
 ```
 
 ## You sign the money; the SDK signs the request
@@ -81,7 +87,9 @@ transfer = client.transfers.create(
 
 `value_wei` is a **string** and must stay one: through a float `"1000000000000000000000"` becomes `1e+21` and the signature will not verify.
 
-## Payouts
+## Payouts (not open for integration)
+
+**Payouts are not open for integration**: they are planned to come back, paid through KCB. While they are off for your merchant, `payouts.quote` and `payouts.request` raise `PayoutsDisabledError` and `payouts.create` raises `PayoutQuoteNotFoundError`. The shape below is the API as it stands and will change.
 
 ```python
 quote = client.payouts.quote(
@@ -101,7 +109,7 @@ if payout.status == "held":
     ...
 ```
 
-The quote id is **single use** and expires. States are in `kakitu.PAYOUT_STATES`: `quoted`, `held`, `dispatched`, `paid`, `failed`, `cancelled`, `expired`. The last four are terminal (`payout.is_terminal`) and a retry is a **new** payout. `client.limits.retrieve().payout` tells you `hold_above_kes`, `max_kes` and `daily_cap_kes` up front, so you never learn them by being refused.
+The quote id is **single use** and expires. The ten states are in `kakitu.PAYOUT_STATES`: `quoted`, `pending_approval`, `approved`, `rejected`, `held`, `dispatched`, `paid`, `failed`, `cancelled`, `expired`. Five are terminal (`paid`, `failed`, `cancelled`, `rejected`, `expired`; `payout.is_terminal`), and a retry is a **new** payout. `client.limits.retrieve().payout` tells you `hold_above_kes`, `max_kes` and `daily_cap_kes` up front, so you never learn them by being refused.
 
 ## Pagination
 
@@ -137,7 +145,7 @@ The payout codes are **not** the collection ones. `PayoutLimitExceededError` (`p
 ## What happens automatically
 
 - **Signing**: EIP-191 `personal_sign` over `"{METHOD} {path}{?query} {timestamp} {sha256(body)}"`, signed against the exact bytes sent.
-- **Idempotency**: a key is sent only where the server requires one — `charges.create`, `transfers.create`, `payouts.create` — and **never** on `quotes.create`, `payouts.quote` or `events.replay`, which mount no idempotency at all, nor on `merchants.register`, which is an upsert. The generated key lives only in memory and is reused across every automatic retry; pass `idempotency_key="..."` (stored, derived from your order id) so a retry after a crash is safe too. An explicit key is honoured on any method.
+- **Idempotency**: a key is sent only where the server requires one — `charges.create`, `transfers.create`, `payouts.create`, `payouts.request` — and **never** on `quotes.create`, `payouts.quote` or `events.replay`, which mount no idempotency at all, nor on `merchants.update`, which moves no money. The generated key lives only in memory and is reused across every automatic retry; pass `idempotency_key="..."` (stored, derived from your order id) so a retry after a crash is safe too. An explicit key is honoured on any method.
 - **Retries**: exponential backoff on 5xx, network errors and `rate_limited` (429). Never on 4xx. `daily_cap_exceeded` and `payer_velocity_exceeded` are 429s but are limits, not blips, so they raise immediately. Every retry is re-signed with a fresh timestamp, and the same idempotency key.
 - **Replay guard**: the server rejects two identical requests in the same second, so the SDK waits for the next second rather than send one.
 - **Clock**: the server accepts timestamps within 120 seconds. If you see `timestamp_out_of_range`, sync your clock.
@@ -151,7 +159,7 @@ verify_webhook(raw_body_bytes, request.headers["Kakitu-Signature"], "YOUR_WEBHOO
 
 Header `Kakitu-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>`. Pass the **raw** body bytes, not parsed-and-re-serialised JSON: re-marshalling reorders keys and you would verify a different string than the one signed.
 
-Delivery is **at-least-once**. `Kakitu-Event-Id` (and `id` in the payload) is stable across every attempt and across a replay — dedupe on it or you will double-count. Types are in `kakitu.EVENT_TYPES`.
+Delivery is **at-least-once**. `Kakitu-Event-Id` (and `id` in the payload) is stable across every attempt and across a replay — dedupe on it or you will double-count. The thirteen types are in `kakitu.EVENT_TYPES`; `transfer.received` is the one that matters today. The API also returns `payload_raw`, the exact signed body, on each event (`event.raw["payload_raw"]` here): check a kept `Kakitu-Signature` over that (or over the raw request body), never over `payload`.
 
 When an endpoint was down and events were abandoned, `client.events.list(status="abandoned")` shows them and `client.events.replay(id)` puts one back in the queue with a fresh budget. Replay answers HTTP 202: nothing has been delivered when it returns, and the event id does not change.
 

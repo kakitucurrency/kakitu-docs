@@ -1,14 +1,14 @@
 ---
 sidebar_position: 5
-title: Collections (coming soon)
+title: Collections (not open)
 ---
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# Collections (coming soon)
+# Collections (not open for integration)
 
-**`POST /v1/charges` is coming soon, rebuilt as a KSHS payment request.** Do not build on it today: new charges cannot be created. Take payment with a KSHS transfer and a `reference`, as below.
+**`POST /v1/charges` is not open for integration. It is planned to come back as a KSHS payment request.** Do not build on it or call it. The route still exists, and Kakitu controls it with a switch that this API does not publish: with the switch off, an approved merchant's well-formed request with a new `reference` is refused with `503 rail_unavailable` and nothing is created. With it on, the route still runs the older design, which prompts the payer's phone. Take payment with a KSHS transfer and a `reference`, as below.
 
 ## Today: a transfer with a reference {#today}
 
@@ -26,7 +26,7 @@ A charge will become **a payment request in KSHS**: you create it with an amount
 
 ## Past charges
 
-Charges created before this change can still be read. `GET /v1/charges` and `GET /v1/charges/{id}` answer as below, and the [`charge.*` events](./events) that belong to them can still be listed and replayed. Each past charge carries `fee_kes` (what the collection cost) and `credited_kes` (what reached your wallet, `amount` less `fee_kes`), in whole shillings, or `null` if it was never paid.
+Charges created before this change can still be read; nothing below describes a way to create one today. `GET /v1/charges` and `GET /v1/charges/{id}` answer as below, and the [`charge.*` events](./events) that belong to them can still be listed and replayed. Each past charge carries `fee_kes` (what the collection cost) and `credited_kes` (what reached your wallet, `amount` less `fee_kes`), in whole shillings, or `null` if it was never paid.
 
 ## Running these examples
 
@@ -273,6 +273,8 @@ while ($target !== null) {
 The list is scoped to your merchant in the query itself, not by a filter we remember to apply, so there is no shape of request that returns somebody else's charges.
 
 ## Status
+
+These statuses describe past charges, which were collections by M-Pesa prompt. They are kept so the history reads correctly; the KSHS payment request that replaces charges will publish its own.
 
 | `status` | Meaning |
 |---|---|

@@ -174,6 +174,20 @@ final class ResourcesTest extends TestCase
         }
     }
 
+    public function testTransfersWalkGetTransfersByNextBefore(): void
+    {
+        $t = new FakeTransport(
+            FakeTransport::json(200, ['transfers' => [['tx_hash' => '0xa'], ['tx_hash' => '0xb']], 'next_before' => '2026-11-07T08:21:09.1Z']),
+            FakeTransport::json(200, ['transfers' => [['tx_hash' => '0xc', 'reference' => 'ORD-1']]]),
+        );
+        $rows = iterator_to_array($this->client($t)->transfers->autoPagingIterator(['limit' => 2]), false);
+        $this->assertSame(['0xa', '0xb', '0xc'], array_column($rows, 'tx_hash'));
+        $this->assertCount(2, $t->requests);
+        $this->assertStringEndsWith('/transfers?limit=2', $t->requests[0]['url']);
+        $this->assertStringEndsWith('/transfers?limit=2&before=2026-11-07T08%3A21%3A09.1Z', $t->requests[1]['url']);
+        $this->assertArrayNotHasKey('Idempotency-Key', $t->requests[0]['headers']);
+    }
+
     public function testListReturnsTheRawPageSoACallerCanHoldTheCursorItself(): void
     {
         $t = new FakeTransport(FakeTransport::json(200, [

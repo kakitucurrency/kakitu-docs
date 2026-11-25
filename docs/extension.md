@@ -16,19 +16,60 @@ will still not have it, so always offer the [phone flow](#pay-with-kakitu-on-a-p
 **Lipa na Kakitu** button, and build for `getKakituWallet()` resolving `null`.
 :::
 
+## Which version your customers have {#which-version}
+
+**The Chrome Web Store has version 0.2.4 today. Version 0.2.8 is being submitted to the store.**
+Chrome updates an installed extension by itself, but not on the day a version is published, so
+for a while your customers will have either. Build for both: the [Lipa na Kakitu
+button](#lipa-na-kakitu-button) already does.
+
+| Behaviour | 0.2.4 (the store today) | 0.2.8 and later |
+|---|---|---|
+| `pay()` from a site that is not connected | Rejects with `NOT_CONNECTED`: call `connect()`, then `pay()` again | Shows the connect sheet, then the payment sheet |
+| `reference` on `pay()` | Shown to the customer and echoed back, but **not sent with the payment**: it never reaches `GET /transfers` or `transfer.received`. Not checked, so spaces are accepted | Sent with the payment. Anything outside `A-Z a-z 0-9 . _ : -` or longer than 64 is refused with `INVALID_PARAMS` |
+| A second request while one is waiting | Rejects with `INVALID_PARAMS` | Rejects with `ALREADY_PENDING` |
+| Too many payment requests from sites that are not connected | No such limit | Rejects with `RATE_LIMITED` |
+| The recipient line on the payment sheet | "Not a Kakitu merchant…" for every site | The [verified-merchant badge](#the-verified-merchant-badge) (from 0.2.7, which was never on the store) |
+
+The extension does not tell your page its own version number. (`kakitu.version` is the version of
+the page-facing API, `1.1.0` in both.) Branch on the rejection you get, not on a version.
+
 This page is the website side. Nothing here uses the signed `/v1` API: a business can accept
 extension payments before, or without, becoming a [verified merchant](./merchants). Becoming one
-puts the verified badge on your shoppers' payment sheet.
+puts the verified badge on the payment sheet of shoppers on 0.2.7 and later ([by
+version](#the-verified-merchant-badge)).
 
 | You want to | You call | Internal request |
 |---|---|---|
 | Know who this visitor is | `kakitu.connect()` | `CONNECT` |
 | Log them in, cryptographically | `kakitu.signIn()` | `SIGN_IN` |
-| Take their money | `kakitu.pay()`, no `connect()` needed first (extension 0.2.7) | `PAY` |
+| Take their money | `kakitu.pay()`; `connect()` first on 0.2.4, not needed from 0.2.8 ([versions](#which-version)) | `PAY` |
 | Decide what to render, without a prompt | `kakitu.getState()` | `GET_STATE` |
 
-The internal names appear in the extension's own logs and error reports; your page only ever
-calls the four methods.
+The internal names appear in the extension's own logs and error reports.
+
+Beside the four methods the provider has:
+
+- `kakitu.version`: the page-facing API version, `"1.1.0"`. Not the extension's version.
+- `kakitu.chainId`: `8453`.
+- `kakitu.on(event, listener)`, which returns a function that unsubscribes, and
+  `kakitu.off(event, listener)`. The events are `accountsChanged`, `locked`, `unlocked` and
+  `disconnected`.
+
+`getState()` resolves to:
+
+```ts
+{
+  status: 'no_wallet' | 'locked' | 'unlocked';
+  chainId: 8453;
+  connected: boolean;          // whether YOUR origin has been granted access
+  address: string | null;      // null unless your origin is connected AND the wallet is unlocked
+  balanceKes: null;            // always null for a page: you do not see a customer's balance
+  maxPerTxKes: string | null;  // the per-transfer ceiling from GET /config, null if not fetched yet
+  locksAt: number | null;      // epoch ms of the next auto-lock, null when locked or no wallet
+  connections: [];             // always empty for a page
+}
+```
 
 ## Detecting the extension
 
@@ -76,9 +117,10 @@ function getKakituWallet({ timeoutMs = 1500 } = {}) {
 }
 ```
 
-The wallet runs in **top-level `https://` documents only**. A cross-origin iframe cannot reach it,
-and an `http://` page is refused. A desktop browser without the extension resolves `null`: offer
-the [phone flow](#pay-with-kakitu-on-a-phone) instead.
+The wallet runs in **top-level `https://` documents only**. No iframe can reach it, not even a
+same-origin one, and an `http://` page is refused. (A copy of the extension loaded unpacked for
+development also accepts `http://localhost`; the store version never does.) A desktop browser
+without the extension resolves `null`: offer the [phone flow](#pay-with-kakitu-on-a-phone) instead.
 
 ## CONNECT: `connect()`
 
@@ -94,8 +136,9 @@ await kakitu.connect({ appName?: string })
 
 - The first call from your origin raises an approval screen. Later calls resolve without one, so
   it is safe to call on page load to restore a session.
-- It does not unlock the wallet. A locked wallet rejects with `LOCKED`; the customer has to open
-  the extension themselves.
+- On a locked wallet, a site that is **already connected** gets `LOCKED` at once: the customer has
+  to open the extension themselves. A site that is not connected yet gets the approval window,
+  which asks the customer to unlock first.
 - `appName` (at most 64 characters, one line) is shown **under** your verified origin, never
   instead of it. The customer is asked to trust `shop.example`, not the name you typed.
 
@@ -105,9 +148,9 @@ await kakitu.connect({ appName?: string })
 await kakitu.signIn({
   nonce: string;            // REQUIRED. 8 to 64 letters and digits, from YOUR server, single use
   statement?: string;       // one line, at most 200 characters, shown verbatim
-  expirationTime?: string;  // ISO-8601 UTC
-  notBefore?: string;       // ISO-8601 UTC
-  requestId?: string;       // your own correlation id
+  expirationTime?: string;  // RFC 3339 (any offset), at most 64 characters
+  notBefore?: string;       // RFC 3339 (any offset), at most 64 characters
+  requestId?: string;       // your own correlation id, at most 128 characters
   resources?: string[];     // at most 8 absolute https URIs
 })
 // resolves to
@@ -200,15 +243,18 @@ you: it is a standard signature and you check it like any other.
 
 ## PAY: `pay()` {#pay-pay}
 
-**From extension 0.2.7, `pay()` needs no `connect()` first.** If your site is not connected yet,
+**From extension 0.2.8, `pay()` needs no `connect()` first.** If your site is not connected yet,
 the extension shows its connect sheet and then, if the customer approves, the payment sheet for
 the same call, the way MetaMask does. Your site is connected from then on, and the result is the
 same object as below. If the customer declines the connect, `pay()` rejects with `USER_REJECTED`
 and nothing is signed. A site that is not connected may make at most 3 such payment requests a
-minute (`RATE_LIMITED`), and one request per site waits at a time (`ALREADY_PENDING`). Extensions
-before 0.2.7 reject `pay()` from a site that is not connected with `NOT_CONNECTED`: call
-`connect()`, then `pay()` again. The [Lipa na Kakitu button](#lipa-na-kakitu-button) does that
-for you.
+minute, and all sites that are not connected together at most 10 (`RATE_LIMITED`). One request
+per site, and one per browser tab, waits at a time (`ALREADY_PENDING`), and at most 8 wait in
+all.
+
+**On 0.2.4, the version on the store today**, `pay()` from a site that is not connected rejects
+with `NOT_CONNECTED`: call `connect()`, then `pay()` again. The [Lipa na Kakitu
+button](#lipa-na-kakitu-button) does that for you. See [which version](#which-version).
 
 ```ts
 await kakitu.pay({
@@ -238,12 +284,16 @@ await kakitu.pay({
 - Every promise settles only when the customer acts. An approval nobody answers rejects with
   `TIMEOUT` after three minutes. One approval per site at a time.
 
-**The `reference` travels with the payment.** It is sent to the relay beside the signed transfer
-(it is not itself signed), and it reaches you on the transfer row ([`GET /transfers`](./transfers#get-transfers))
+**From 0.2.8, the `reference` travels with the payment.** It is sent to the relay beside the signed
+transfer (it is not itself signed), and it reaches you on the transfer row ([`GET /transfers`](./transfers#get-transfers))
 and in the [`transfer.received`](./events#transferreceived) webhook. A reference with spaces or emoji (anything outside
 those characters, or longer than 64) is refused by `pay()` with `INVALID_PARAMS` before the customer sees
-anything, so a bad order number cannot cost them an approval. Before this change such a reference was
-shown and echoed but never sent; sanitise it on your page first.
+anything, so a bad order number cannot cost them an approval.
+
+**On 0.2.4, the version on the store today, the reference is shown and echoed back but never sent.**
+A payment from 0.2.4 reaches you with no reference at all, so match it by amount and time (a
+per-order amount makes that unambiguous) rather than waiting for a reference that will not come.
+Sanitise references on your page either way.
 
 **A reference is the payer's claim, not proof.** Anybody can pay your address with any reference.
 Use it to find the order, then check the amount and the recipient against that order.
@@ -316,7 +366,7 @@ pay**, and a click goes to the Chrome Web Store.
 - `data-amount` is shillings, as a string (`"1250"` or `"1250.50"`); `data-reference` is your
   order number, within the [`reference` rules](#pay-pay).
 - It makes no network call of its own and loads no third-party script. It calls `pay()` directly.
-  On an extension older than 0.2.7, which answers `NOT_CONNECTED`, it calls `connect()` once and
+  On 0.2.4, the version on the store today, which answers `NOT_CONNECTED`, it calls `connect()` once and
   tries again, so the button works on every published version.
 - On `UNCONFIRMED` the button **stays disabled**: the money may have moved, and re-enabling it
   invites a second payment. Every other outcome re-enables it.
@@ -344,14 +394,21 @@ Nothing else changes.
 
 ### The verified-merchant badge
 
-When the payment is to the address of a merchant Kakitu has approved, the extension's payment
-sheet shows **Verified Kakitu merchant** and the business name, with a line saying Kakitu has not
-checked that the site belongs to that business. Any other address gets a warning: "Not a verified
-Kakitu merchant — only pay if you trust this site." The badge is about the address being paid,
-never about the site. [Apply at kakitu.org/merchant](./merchants) so your shoppers see it. (The
-badge is rolling out with extension 0.2.7.)
+**Live.** When a shopper pays the address of a merchant Kakitu has approved, the payment sheet of
+Kakitu extension versions 0.2.7 and later (0.2.8 is the version being submitted to the store; the store's 0.2.4 does not look it up) shows **Verified Kakitu merchant** and the business name, with a line saying Kakitu has not
+checked that the site belongs to that business. [Apply at kakitu.org/merchant](https://kakitu.org/merchant)
+so your shoppers see it.
 
-The same answer is public:
+What the payment sheet shows about the recipient, by version:
+
+| Extension | Approved merchant's address | Any other address |
+|---|---|---|
+| 0.2.4 (the store today) | A grey line: "Not a Kakitu merchant. Most sites are not — it only means Kakitu has not checked this one, so trust it the way you would any other site." It never looks anything up. | The same grey line. |
+| 0.2.7 and later | **Verified Kakitu merchant** and the business name. | "Not a verified Kakitu merchant — only pay if you trust this site." If the lookup cannot be made: "Kakitu could not check this recipient right now — only pay if you trust this site." |
+
+The badge is about the address being paid, never about the site.
+
+The lookup is public:
 
 ```http
 GET /merchants/verified/{address}
@@ -379,11 +436,11 @@ Every rejection carries `code` (the EIP-1193 number) and `reason` (the Kakitu co
 | `USER_REJECTED` | 4001 | The customer said no. | Nothing. Not an error. |
 | `LOCKED` | 4100 | The wallet is locked. | Ask them to open the extension. |
 | `NO_WALLET` | 4100 | No wallet on this browser yet. | Point them at onboarding. |
-| `NOT_CONNECTED` | 4100 | Your origin has no access, or it was revoked. Sign-in only, and `pay()` on extensions before 0.2.7. | Call `connect()`. |
+| `NOT_CONNECTED` | 4100 | Your origin has no access, or it was revoked. Sign-in, and `pay()` on 0.2.4. | Call `connect()`. |
 | `FORBIDDEN` | 4100 | Refused, including for flooding the wallet. | Slow down. |
-| `INVALID_PARAMS` | -32602 | Your arguments. | `message` names the field. |
-| `ALREADY_PENDING` | -32002 | A request from your site is already waiting for the customer. | Wait for it. |
-| `RATE_LIMITED` | -32005 | More than 3 payment requests a minute from a site that is not connected. | Wait a minute. |
+| `INVALID_PARAMS` | -32602 | Your arguments. On 0.2.4, also a second request while one is waiting. | `message` names the field. |
+| `ALREADY_PENDING` | -32002 | A request from your site or tab is already waiting for the customer. From 0.2.8. | Wait for it. |
+| `RATE_LIMITED` | -32005 | More than 3 payment requests a minute from a site that is not connected, or 10 from all of them. From 0.2.8. | Wait a minute. |
 | `LIMIT_EXCEEDED` | -32005 | Over the per-transaction or daily cap. | `data.limitKes` is the cap. |
 | `INSUFFICIENT_FUNDS` | -32005 | Not enough KSHS. | Offer a top-up. |
 | `RELAY_UNAVAILABLE` | -32005 | The relayer cannot pay gas right now. | Nothing moved. Retry shortly. |
@@ -397,7 +454,8 @@ Every rejection carries `code` (the EIP-1193 number) and `reason` (the Kakitu co
 
 **Mobile browsers cannot run Chrome extensions**, so `window.kakitu` never exists on a phone. On
 mobile, show a `kakitu:` payment link (and the same text as a QR code on a desktop checkout). The
-link opens the Kakitu app on Android and iOS, which registers the `kakitu` URL scheme.
+link opens the Kakitu app, which registers the `kakitu` URL scheme. The app is on Google Play;
+it is **not on the App Store yet**, so an iPhone customer cannot install it today.
 
 The format the app parses:
 
@@ -449,5 +507,5 @@ kakitu:0x9858EfFD232B4033E47d90003D41EC34EcaEda94?amount=1250000000000000000000&
 As with `pay()`, **a reference is the payer's claim, not proof**: check the amount and the
 recipient against the order, and match each order to one transfer (a per-order amount, or a fresh
 receiving address per order, makes the match unambiguous). If the app is not installed, the link
-does nothing, so show a store link beside it (`store_url_android` and `store_url_ios` in
-`GET /config`).
+does nothing, so show a store link beside it (`store_url_android` in `GET /config`;
+`store_url_ios` is empty until the app is on the App Store).

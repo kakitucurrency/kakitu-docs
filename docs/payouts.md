@@ -8,19 +8,32 @@ import TabItem from '@theme/TabItem';
 
 # Payouts
 
-## Coming soon: being rebuilt on KCB {#coming-soon}
+## Not open for integration {#not-available}
 
-**Payouts to other people are being rebuilt so that Kakitu pays them itself, through KCB.** Until they return, `POST /v1/payouts/quote`, `POST /v1/payouts` and `POST /v1/payouts/requests` answer `403 payouts_disabled`. Do not build on them yet: the reference below describes the API as it stood, and it may change when payouts return. This page will say when they open.
+**Payouts to other people are not open for integration.** They are planned to come back, paid by Kakitu itself through KCB. Do not build on them yet: the reference below describes the API as it stands, and it will change. This page will say when they open.
 
-What works today:
+Two switches govern payouts, the platform's and your merchant's own, and both must be on. Both are Kakitu's, and which one is off is not revealed; [`GET /v1/limits`](./limits#payout-limits) tells you, as `payout.enabled`, whether both are on for you. **While either is off**, the routes answer an approved merchant like this:
 
-- **Your own money out.** [Cash out](./cash-out) to your own M-Pesa number in the Kakitu app or the extension (being switched on), or at a Kakitu agent.
-- **[Saved destinations and the lock](#saved-destinations-and-the-lock).** The lock already binds your own cash-out, so read that section if you use it.
+| Route | While payouts are off |
+|---|---|
+| `POST /v1/payouts/quote` | `403 payouts_disabled`, after the body, the beneficiary and the destination have been checked. So a malformed request still gets `invalid_request`, and a destination that cannot be paid still gets `payout_destination_locked` or `bank_unavailable`, first. No quote is made. |
+| `POST /v1/payouts/requests` | The same: those checks first, then `403 payouts_disabled`. |
+| `POST /v1/payouts` | `404 payout_quote_not_found`, because no quote can be made. A quote made just before a switch went off is refused with `403 payouts_disabled` instead, and is spent. |
+| `POST /v1/payout-destinations` (saving a place) | `403 payouts_disabled`. |
+| `GET /v1/payout-destinations`, `DELETE /v1/payout-destinations/{id}`, `POST /v1/payout-destinations/lock` | **Work.** |
+| `GET /v1/payouts`, `GET /v1/payouts/{id}` | **Work**: past payouts. |
+
+A merchant that is not approved gets `403 merchant_not_approved` (or `merchant_suspended`) before any of this.
+
+What you can use:
+
+- **Your own money out**, at a Kakitu agent. M-Pesa [cash-out](./cash-out) to your own number is hidden while `mpesa_rails_visible` is `false`.
+- **[Saved destinations and the lock](#saved-destinations-and-the-lock)**: listing, removing and locking. The lock already binds your own cash-out, so read that section if you use it.
 - **Past payouts.** `GET /v1/payouts` and `GET /v1/payouts/{id}` still read them.
 
 <!-- rebuilding -->
 
-## How payouts worked
+## How payouts work
 
 A payout sends shillings **out** — from your KSHS balance to an M-Pesa number, a till, a paybill or a bank account. You price it, you sign it with your own key, and Kakitu pays the beneficiary.
 
@@ -28,7 +41,7 @@ A charge is money arriving; a payout is money leaving, and the permissions, the 
 
 ## Payouts are off by default
 
-**Read this before you write any of it.** There are two switches and both must be on: the platform's, which Kakitu controls for everybody, and your merchant's own, which is off until Kakitu switches it on for you. While either is off, the two routes that price and send a payout — `POST /v1/payouts/quote` and `POST /v1/payouts` — answer an approved merchant with:
+**Read this before you write any of it.** There are two switches and both must be on: the platform's, which Kakitu controls for everybody, and your merchant's own, which is off until Kakitu switches it on for you. While either is off, `POST /v1/payouts/quote`, `POST /v1/payouts/requests` and saving a destination answer an approved merchant with this (the quote and the request only after the body, the beneficiary and the destination have been checked), and `POST /v1/payouts` answers `404 payout_quote_not_found` because no quote can be made:
 
 ```json
 HTTP 403
@@ -172,7 +185,7 @@ Content-Type: application/json
 | `amount_kes` | integer, required | A whole number of shillings, at least 1. It is what **lands on the beneficiary**, not what leaves you. |
 | `beneficiary.type` | string, optional | `phone` (the default), `till`, `paybill` or `bank`. See [where a payout can go](#where-a-payout-can-go). |
 | `beneficiary.phone` | string | **Phone.** A Kenyan mobile number, `254` then `7` or `1` then eight digits: `^254[17]\d{8}$`. No `+`, no leading `0`. |
-| `beneficiary.name` | string, required | The person or business being paid, 1 to 100 **bytes** after trimming (a non-ASCII letter takes two or more). See below. |
+| `beneficiary.name` | string, required | The person or business being paid, 1 to 100 **bytes** after trimming (a non-ASCII letter takes two or more), with no control characters. See below. |
 
 The other beneficiary fields are `till`, `paybill`, `account` and `bank_code`, in [the next section](#where-a-payout-can-go).
 
@@ -603,7 +616,7 @@ HTTP 202
 
 **A payout above your `hold_above_kes` is decided by a person before you sign anything.** You ask, wait for the answer, and only then quote and sign. `hold_above_kes` is yours to read at [`GET /v1/limits`](./limits#payout-limits); "above" is strict, so a payout exactly at it goes straight through, and a threshold of zero sends everything to a person.
 
-**With today's platform defaults this step does not come up.** On 9 November 2026 the platform's hold threshold was KES 20,000 and its largest single payout was also KES 20,000, so a payout above the threshold is refused as `payout_amount_above_maximum` before approval is considered. Approve-first applies once an operator gives your merchant a per-payout maximum above its hold threshold. Read both numbers at [`GET /v1/limits`](./limits#payout-limits); the amounts in the examples below are illustrative.
+**It comes up only when your per-payout maximum is above your hold threshold.** If `max_kes` is not above `hold_above_kes`, a payout above the threshold is refused as `payout_amount_above_maximum` before approval is considered. Read both numbers at [`GET /v1/limits`](./limits#payout-limits); the amounts in the examples below are illustrative.
 
 It is this way round because the other way cannot work. A signature you make today stops being relayable in about ten minutes, and the price behind it lives for about two; a person working a review queue works in minutes or hours. A request holds nothing that can go stale, so there is no clock on the person at all.
 
@@ -676,11 +689,13 @@ HTTP 201
 }
 ```
 
-`201` for a new place, `200` for one already saved. A phone is `{"phone": "2547…"}`, a paybill is `{"type": "paybill", "paybill": "…", "account": "…"}` and a bank is `{"type": "bank", "account": "…", "bank_code": "…"}`. A bank is looked up at the save and its `holder_name` is stored and returned. You can keep up to 50 places; past that, `409 payout_destinations_full`.
+**Saving answers `403 payouts_disabled` while payouts are switched off for your merchant**. Listing, removing and locking work.
+
+`201` for a new place, `200` for one already saved. A phone is `{"phone": "2547…"}` (a saved phone always comes back with `"type": "phone"`), a paybill is `{"type": "paybill", "paybill": "…", "account": "…"}` and a bank is `{"type": "bank", "account": "…", "bank_code": "…"}`. A bank is looked up at the save and its `holder_name` is stored and returned. You can keep up to 50 places; past that, `409 payout_destinations_full`.
 
 **A new place waits before it can be paid.** `status` is `cooling_off` until `active_at`, which is `payout_cooling_off_hours` after the save (24 by default, never less than 1). Everything that **widens** where money can go waits like this, and raises an event and an alarm to us the moment it happens: [`payout_destination.added`](./events#payout_destinationadded-and-payout_destinationremoved) tells you. Everything that **narrows** it is immediate, so the owner, seeing that event, can always move first.
 
-**Removing a place** is immediate. A payout already approved to a place that has since been removed can no longer be signed, and one already dispatched is out of reach.
+**Removing a place** is immediate, and answers `200 {"id": "…", "removed": true}`. A payout already dispatched is out of reach. A payout already approved to a place that has since been removed can no longer be signed **if you are locked** (`403 payout_destination_locked`) **or the place was a paybill or a bank** (`403 bank_unavailable`). **An unlocked merchant's approved payout to a phone or a till can still be signed**, because without the lock a phone or till does not need to be saved. Lock first if you want a removal to stop it.
 
 **The lock.** Whether it binds is `payout_locked`. `POST /v1/payout-destinations/lock` with `{"locked": true}` binds at once, and cancels an unlock in progress. `{"locked": false}` leaves the lock on until `payout_unlocks_at`, `payout_cooling_off_hours` later.
 
@@ -697,7 +712,7 @@ HTTP 200
 **The lock controls where your cash-outs can go.** It does **not** stop KSHS transfers to other wallets: [`POST /v1/transfers`](./transfers) and the app's send are not payouts and ignore it. It is a control on where shillings leave Kakitu, not protection against somebody who holds your key moving your KSHS on chain. Treat it as the first, not as the only.
 :::
 
-Locking, unlocking and changing the list all raise events ([`payout_lock.changed`](./events#payout_lockchanged), `payout_destination.added`, `payout_destination.removed`) so that a change you did not make is one you hear about. Reading the list and locking need only a registered merchant (a suspended owner can still lock, and must be able to cancel an unlock somebody asked for); saving a place and turning the lock off need an approved one.
+Locking, unlocking and changing the list all raise events ([`payout_lock.changed`](./events#payout_lockchanged), `payout_destination.added`, `payout_destination.removed`) so that a change you did not make is one you hear about. Reading the list and locking need only a registered merchant (a suspended owner can still lock, and must be able to cancel an unlock somebody asked for); removing needs only a signed request; saving a place and turning the lock off need an approved one, and saving also needs payouts switched on.
 
 <!-- rebuilding -->
 
@@ -713,16 +728,16 @@ Locking, unlocking and changing the list all raise events ([`payout_lock.changed
 | `dispatched` | no | Handed over. The money is leaving. `payout.paid` or `payout.failed` follows. |
 | `paid` | **yes** | The beneficiary has the money. |
 | `failed` | **yes** | It did not reach the beneficiary. A retry is a new payout. |
-| `cancelled` | **yes** | A person refused a held payout. Nothing was sent. **Do not re-submit.** Kept for payouts already written; a refusal now ends as `rejected`. |
+| `cancelled` | **yes** | A person refused a held payout. Nothing was sent. **Do not re-submit.** Raises [`payout.cancelled`](./events#payoutcancelled). Kept for payouts already written; a refusal now ends as `rejected`. |
 | `expired` | **yes** | Nothing was sent and nothing can be: an approval went unsigned past `approval_expires_at`, or a quote lapsed. **Ask again with a new payout.** |
 
 The moves that exist, and no others:
 
 ```
-pending_approval ──► approved ──► (you sign) ──► dispatched ──► paid
-        │                │                            └──────► failed
-        └──► rejected ◄──┤
-                         └──► expired
+quoted ──► pending_approval ──► approved ──► (you sign) ──► dispatched ──► paid
+                   │                │                         └──────► failed
+                   └──► rejected ◄──┤
+                                    └──► expired
 
 quoted ──► held ──► dispatched
    │         ├──► cancelled
@@ -988,10 +1003,10 @@ Read it. **That sentence is where a wait is explained to you**, and a payout tha
 | `code` | HTTP | When |
 |---|---|---|
 | `unauthorized` | 401 | The request was not signed. |
-| `merchant_not_registered` | 404 | This wallet has not registered. |
-| `merchant_not_approved` | 403 | Registered, not yet approved. |
+| `merchant_not_registered` | 404 | This wallet has no merchant record. |
+| `merchant_not_approved` | 403 | A merchant record, not yet approved. |
 | `merchant_suspended` | 403 | The merchant is suspended. |
-| `payouts_disabled` | 403 | Payouts are not switched on for this merchant. |
+| `payouts_disabled` | 403 | Payouts are not switched on for this merchant. Answered after the body and destination checks. |
 | `payout_daily_cap_exceeded` | 429 | The day's payout budget is spent. Resets at midnight EAT. |
 | `payout_amount_above_maximum` | 400 | Over the largest single payout allowed for this merchant. |
 | `invalid_request` | 400 | A malformed body, an unknown field, an `amount_kes` below 1, a name that is not valid, or a beneficiary that is not exactly one valid destination (a till with a phone, a number that is not a till, a phone that is not a Kenyan mobile). |
@@ -1033,8 +1048,10 @@ Read it. **That sentence is where a wait is explained to you**, and a payout tha
 | `payout_destinations_full` | 409 | You have as many saved as you may (50). Remove one. |
 | `unknown_bank`, `account_not_found`, `bank_unavailable` | 400, 422, 403 | A bank that is not on the list, does not hold the account, or is not available. |
 | `merchant_not_approved`, `merchant_suspended` | 403 | Saving needs an approved merchant. |
+| `payouts_disabled` | 403 | Payouts are not switched on for this merchant. |
+| `rail_unavailable` | 503 | The payout limiter is not running, so nothing can be saved. Retry later. |
 
-`DELETE /v1/payout-destinations/{id}` answers `404 payout_destination_not_found` for a place that does not exist, one that is not yours and an id that is not a UUID, in the same words. `GET` needs only a registered merchant.
+`DELETE /v1/payout-destinations/{id}` answers `200 {"id": "…", "removed": true}`, or `404 payout_destination_not_found` for a place that does not exist, one that is not yours and an id that is not a UUID, in the same words. Any signed wallet may call it. `GET` needs only a registered merchant.
 
 ### POST /v1/payouts
 
@@ -1043,13 +1060,16 @@ Everything above, plus:
 | `code` | HTTP | When |
 |---|---|---|
 | `idempotency_key_required` | 400 | No `Idempotency-Key`. Nothing was sent. |
-| `payout_quote_not_found` | 404 | The quote cannot be used. See [above](#the-quote-is-single-use-and-yours-alone). |
+| `payout_quote_not_found` | 404 | The quote cannot be used. See [above](#the-quote-is-single-use-and-yours-alone). While payouts are off no quote can be made, so this is the answer. |
+| `payout_not_found` | 404 | The `payout_id` of the approved request does not exist, or is not yours. |
 | `invalid_request` | 400 | The signed transfer does not match the quote, or the body is malformed. **Nothing was sent.** |
-| `payout_not_approved` | 409 | This payout cannot be signed now: not approved, rejected, lapsed, already sent, or its destination was removed after the approval. |
+| `payout_not_approved` | 409 | This payout cannot be signed now: not approved, rejected, lapsed or already sent. |
+| `payout_approval_required` | 409 | Above your `hold_above_kes` with no approval. |
+| `payout_destination_locked`, `bank_unavailable` | 403 | The destination can no longer be paid: for example it was removed after the approval and you are locked, or it was a paybill or bank. **Nothing was sent.** |
 | `account_blocked` | 403 | Kakitu has blocked your wallet, or money in it is on hold. **Nothing was sent.** |
 | `idempotency_key_acted` | 409 | The payout was submitted and we cannot tell what became of it. **Do not send it again.** |
 
-The general idempotency rules — replays, mismatched bodies, the 24-hour window — are on the [Collections](./authentication#idempotency) page and apply here unchanged.
+The general idempotency rules — replays, mismatched bodies, the 24-hour window — are on the [Authentication](./authentication#idempotency) page and apply here unchanged.
 
 ### GET /v1/payouts/\{id\}
 
