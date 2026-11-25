@@ -43,7 +43,7 @@ You cannot change `state` yourself. See [Going live](./going-live).
 
 Kakitu can create a merchant from an address you give it, so the paperwork can be done first. That row is created `pending`, with your details already filled in.
 
-**It cannot be approved until that address proves it holds its key**: sign in at kakitu.org/merchant with the extension and send the application. That updates the existing row rather than creating a second one.
+**It cannot be approved until that address proves it holds its key**: sign in at kakitu.org/merchant with the extension and send the application (or make one signed `POST /v1/merchants`). Either updates the existing row rather than creating a second one.
 
 That gate is not bureaucracy. The address is where your money is paid, **on chain**. Somebody typing it proves the characters were typed — not that you hold the key, and not that the address is right. If it is wrong by one character, or it is a wallet you cannot spend from, every payment you ever take is gone and there is nobody to ask for it back. A signed request is the only thing that proves the key is yours. It approves nothing by itself; it only clears the way for Kakitu's decision.
 
@@ -98,12 +98,14 @@ query string is inside the signed message, so quote it and change it nowhere els
 
 Updates the contact email, contact phone and callback URL of the signing wallet's merchant. Signed request; no `Idempotency-Key` is needed because it does not move money.
 
-**It does not make a merchant, and it is not a way to apply.** It works only for a wallet Kakitu has already approved through the application at [kakitu.org/merchant](https://kakitu.org/merchant). Any other wallet, including one whose application is still `pending`, gets `404 merchant_not_found` and nothing is saved. Send `business_name` exactly as you applied with it: it is frozen once you are reviewed, and this route cannot change it.
+**It does not make a merchant, and it is not a way to apply.** It updates a merchant record that already exists, made by the application at [kakitu.org/merchant](https://kakitu.org/merchant) (or by Kakitu). A wallet with no record gets `404 merchant_not_registered` and nothing is saved.
+
+Every field is optional, and an absent field leaves what is stored. `business_name` is accepted only so older clients keep working: it must equal the name on your record, and a different one is refused with `409 merchant_name_frozen`. A pending application's name is changed at kakitu.org/merchant; after review, by Kakitu.
 
 | Field | Type | Rules |
 |---|---|---|
-| `business_name` | string, required | 1 to 100 characters. No control, invisible or text-direction characters. The name Kakitu vetted and the name on the verified badge. Must be the name you applied with: it is frozen. |
-| `contact_email` | string, required | A plain address such as `a@b.co`. `Name <a@b.co>` is refused. At most 254 characters. |
+| `business_name` | string, optional | If sent, it must equal the name on your record. It cannot be changed here. |
+| `contact_email` | string, optional | A plain address such as `a@b.co`. `Name <a@b.co>` is refused. At most 254 characters. |
 | `contact_phone` | string, optional | At most 20 characters: digits, `+`, spaces and hyphens only. |
 | `callback_url` | string, optional | See [callback URLs](#callback-urls). |
 
@@ -149,9 +151,9 @@ const { status, body } = await call(wallet, "POST", "/v1/merchants", {
   // alone. Only "" clears one. That is what stops a misspelt key wiping a webhook URL.
 });
 
-console.log(status);          // 200; 404 merchant_not_found if this wallet is not an approved merchant
+console.log(status);          // 200; 404 merchant_not_registered if this wallet has no merchant record
 console.log(body.address);    // the wallet that SIGNED - never a field you send
-console.log(body.state);      // "approved": you cannot set this, and sending it is dropped
+console.log(body.state);      // "pending" or "approved": you cannot set this, and sending it is dropped
 ```
 
 </TabItem>
@@ -175,9 +177,9 @@ status, body = call(account, "POST", "/v1/merchants", {
     # alone. Only "" clears one. That is what stops a misspelt key wiping a webhook URL.
 })
 
-print(status)            # 200; 404 merchant_not_found if this wallet is not an approved merchant
+print(status)            # 200; 404 merchant_not_registered if this wallet has no merchant record
 print(body["address"])   # the wallet that SIGNED - never a field you send
-print(body["state"])     # "approved": you cannot set this, and sending it is dropped
+print(body["state"])     # "pending" or "approved": you cannot set this, and sending it is dropped
 ```
 
 </TabItem>
@@ -198,9 +200,9 @@ require __DIR__ . '/kakitu.php';
     // alone. Only '' clears one. That is what stops a misspelt key wiping a webhook URL.
 ]);
 
-echo $status, PHP_EOL;            // 200; 404 merchant_not_found if this wallet is not an approved merchant
+echo $status, PHP_EOL;            // 200; 404 merchant_not_registered if this wallet has no merchant record
 echo $body['address'], PHP_EOL;   // the wallet that SIGNED - never a field you send
-echo $body['state'], PHP_EOL;     // "approved": you cannot set this, and sending it is dropped
+echo $body['state'], PHP_EOL;     // "pending" or "approved": you cannot set this, and sending it is dropped
 ```
 
 </TabItem>
@@ -208,7 +210,7 @@ echo $body['state'], PHP_EOL;     // "approved": you cannot set this, and sendin
 
 **Unknown fields are refused** with `invalid_request`, and the message names the field. A misspelt key fails loudly instead of being ignored. The exception is a small set of fields you must never set: `state`, `webhook_secret`, `daily_cap_kes`, `per_charge_max_kes`, `address`, `reviewed_by`, `review_note`. If you send one it is accepted and **dropped**, and the answer shows the real stored values. A client that sends `"daily_cap_kes": 1000000` gets `200` with the cap Kakitu set.
 
-Response: `200`. The body is the merchant record:
+Response: `200`. The body is the merchant record, plus `webhook_secret` on the one answer described in [your webhook secret](#your-webhook-secret):
 
 ```json
 {
@@ -236,6 +238,15 @@ Response: `200`. The body is the merchant record:
 
 The webhook secret is never in this record, and neither are the application's own fields (type of business, location, when you applied): those are on kakitu.org/merchant.
 
+### Your webhook secret {#your-webhook-secret}
+
+Kakitu makes your webhook secret when it approves you. Two signed calls hand it to you, each answering with `Cache-Control: no-store`:
+
+- **The first `POST /v1/merchants` from an approved merchant that sets a non-empty `callback_url`** answers with `"webhook_secret": "…"` beside the record, once. It is the secret made at approval, not a new one. Every later answer leaves it out. A pending merchant may set its callback URL early, and sends it again after approval to collect the secret.
+- **`POST /v1/merchants/me/webhook-secret`** (no body) makes a new secret and answers `200 {"webhook_secret": "…"}`, once. The old secret stops verifying at once. Use it if you lost the secret or think it leaked. A wallet with no record gets `404 merchant_not_registered`; a merchant that is not `approved` gets `403 merchant_not_approved`.
+
+Store it in a secret manager the moment you receive it. No route ever shows it again. `GET /v1/merchants/me` never carries it.
+
 ### Clearing and leaving fields alone
 
 For `contact_phone` and `callback_url` there are three cases, and they differ:
@@ -251,17 +262,17 @@ Why: an omitted or misspelt field must never silently wipe a webhook URL and sto
 
 ### business_name is frozen
 
-`business_name` cannot be changed through the API. A request with a different name is refused with `409 merchant_name_frozen` and **nothing in that request is saved**. Why: it is the name Kakitu vetted and the name shoppers see on the verified badge, so it is fixed after vetting. A rename needs Kakitu: write to kakitu@kakitu.org.
+`business_name` cannot be changed through the API. A request with a different name is refused with `409 merchant_name_frozen` and **nothing in that request is saved**. While your application is pending, change the name at kakitu.org/merchant. Why: it is the name Kakitu vetted and the name shoppers see on the verified badge, so it is fixed after vetting. A rename needs Kakitu: write to kakitu@kakitu.org.
 
 Resubmitting the **same** name with new contact details is fine.
 
 ### A wallet with an open loan
 
-A wallet that has an open Kakitu loan (a feature of the Kakitu app) cannot become a merchant: the application is refused, and `409 open_loan` means **nothing in the request was saved**. Apply once the loan is closed, or apply with a wallet made for the business, as the [quickstart](./quickstart#why-a-separate-wallet) recommends anyway.
+A wallet that has an open Kakitu loan (a feature of the Kakitu app) cannot become a merchant: the application at kakitu.org/merchant is refused, and nothing is saved. Apply once the loan is closed, or apply with a wallet made for the business, as the [quickstart](./quickstart#why-a-separate-wallet) recommends anyway.
 
 ### Callback URLs
 
-`callback_url` is where webhooks will be delivered (see [Webhooks](./webhooks)). **This route is the only way to set it**: the application at kakitu.org/merchant has no callback field, so an approved merchant receives no webhooks until it has set one here. It is validated when you set it, so a bad one fails now rather than silently later. It must be:
+`callback_url` is where webhooks will be delivered (see [Webhooks](./webhooks)). **This route is the only way to set it**: the application at kakitu.org/merchant has no callback field, so a merchant receives no webhooks until it has set one here. It is validated when you set it, so a bad one fails now rather than silently later. It must be:
 
 - `https`, on port 443, at most 512 characters, no credentials in the URL, no whitespace.
 - **Public.** Loopback, private, link-local and other reserved addresses are refused, as are `localhost`, `.local`, `.internal`, `.lan` and similar names, and wildcard-DNS names such as `nip.io` that resolve to private addresses. The reason is that webhooks are fetched by our servers, and a private target would let a callback URL point us at internal systems.

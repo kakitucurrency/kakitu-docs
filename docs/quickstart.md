@@ -52,7 +52,7 @@ The [developer API](./intro#the-developer-api) has no API keys. **Every request 
 
 What the API needs, when signing opens, is documented on the reference pages ([Authentication](./authentication), [Merchants](./merchants), [Transfers](./transfers), [Webhooks](./webhooks)). Their examples read a key from `KAKITU_PRIVATE_KEY`; none of them reads, asks for or derives anything from a recovery phrase.
 
-**Webhooks wait for this too.** A [`transfer.received`](./events#transferreceived) webhook goes to your `callback_url`, and the only way to set a `callback_url` is a signed [`POST /v1/merchants`](./merchants#post-v1merchants). The application at kakitu.org/merchant has no callback field.
+**Webhooks wait for this too.** A [`transfer.received`](./events#transferreceived) webhook goes to your `callback_url`, and the only way to set a `callback_url`, and to receive your webhook secret, is a signed [`POST /v1/merchants`](./merchants#post-v1merchants). The application at kakitu.org/merchant has no callback field.
 
 ## What approval gets you today
 

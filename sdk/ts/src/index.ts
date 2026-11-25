@@ -55,9 +55,9 @@ export class Kakitu {
 
   readonly merchants: {
     /**
-     * `POST /v1/merchants`: update an APPROVED merchant's contact email, phone and callback URL.
+     * `POST /v1/merchants`: update an existing merchant's contact email, phone and callback URL.
      * It does not make a merchant: becoming one is the application at https://kakitu.org/merchant
-     * and Kakitu's approval. Any other wallet gets `merchant_not_found` (404).
+     * and Kakitu's approval. A wallet with no merchant record gets `merchant_not_registered` (404).
      */
     update(params: RegisterMerchantParams): Promise<Merchant>;
     /** @deprecated The route no longer registers anybody. Use {@link update}; this is the same call. */

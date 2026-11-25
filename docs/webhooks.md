@@ -18,9 +18,9 @@ Until a `callback_url` is set, your events wait with `last_error: "no_callback_u
 
 ### The webhook secret is shown once
 
-The secret is shown **once, at approval, to the Kakitu person who approves you**, and is **never retrievable afterwards**. No page shows it to you: it is not on kakitu.org/merchant, not in `GET /v1/merchants/me`, and no endpoint returns it or anything derived from it. A secret that can be read back over an API is not a secret.
+The secret reaches you **once**: on the first `POST /v1/merchants` from your approved merchant that sets a non-empty `callback_url`. After that it is **never retrievable**: it is not on kakitu.org/merchant, not in `GET /v1/merchants/me`, and no endpoint returns it again. A secret that can be read back over an API is not a secret.
 
-To receive it, write to kakitu@kakitu.org once you are approved. Store it in a secret manager the moment you receive it. If it was not kept, or you lose it, an operator issues a new one and the old one stops signing.
+Store it in a secret manager the moment you receive it. If you lose it, or think it leaked, `POST /v1/merchants/me/webhook-secret` makes a new one and answers with it once; the old one stops signing at once. See [your webhook secret](./merchants#your-webhook-secret).
 
 A merchant cannot be approved without a secret, and a delivery is never sent without one: an unsigned delivery is one you could not tell from a forgery, so there is no "just this once".
 

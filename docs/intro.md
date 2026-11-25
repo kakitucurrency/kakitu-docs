@@ -43,7 +43,7 @@ The developer API lets a business's server sign requests with its own wallet key
 | Endpoint | Status | Documented at |
 |---|---|---|
 | Sign requests with a wallet key | Final | [Authentication](./authentication) |
-| `POST /v1/merchants` | Approved merchants: updates your contact details and callback URL. It does not make a merchant | [Merchants](./merchants#post-v1merchants) |
+| `POST /v1/merchants` | A merchant updates its contact details and callback URL. It does not make a merchant | [Merchants](./merchants#post-v1merchants) |
 | `GET /v1/merchants/me` | Open | [Merchants](./merchants) |
 | `POST /v1/transfers` | Approved merchants | [Transfers](./transfers) |
 | `GET /transfers` | Open: your wallet's own history, with each payment's `reference` | [Transfers](./transfers#get-transfers) |
@@ -63,7 +63,7 @@ The developer API lets a business's server sign requests with its own wallet key
 | Webhook delivery | Thirteen event types; `transfer.received` is the one that matters today | [Webhooks](./webhooks) |
 | Approval of a merchant | A person at Kakitu, not an endpoint | [Going live](./going-live) |
 
-**Only the routes that move money check approval**: `POST /v1/transfers` refuses a merchant that is not `approved`, and so does `POST /v1/merchants`, which answers `404 merchant_not_found`. Every other route needs a signed request and nothing more. Routes scoped to a merchant (`GET /v1/merchants/me`, the charge reads and the event routes) answer `404 merchant_not_registered` until your address has a merchant record.
+**Only the routes that move money check approval**: `POST /v1/transfers` refuses a merchant that is not `approved`. Every other route needs a signed request and nothing more. Routes scoped to a merchant (`GET /v1/merchants/me`, the charge reads and the event routes) answer `404 merchant_not_registered` until your address has a merchant record.
 
 ## How it fits together
 

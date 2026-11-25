@@ -27,8 +27,7 @@ Every `/v1/` endpoint answers an error with one envelope:
 |---|---|---|
 | `invalid_request` | 400 | The body or a field is malformed, unknown or out of range. The message says which. |
 | `unauthorized` | 401 | The request reached a handler without a verified wallet. |
-| `merchant_not_registered` | 404 | This wallet has no merchant record. Becoming a merchant is the application at [kakitu.org/merchant](https://kakitu.org/merchant); no API route makes one. |
-| `merchant_not_found` | 404 | `POST /v1/merchants` only: this wallet is not an approved merchant, so there is nothing to update. It does not make a merchant: apply at [kakitu.org/merchant](https://kakitu.org/merchant). Nothing was saved. |
+| `merchant_not_registered` | 404 | This wallet has no merchant record. Becoming a merchant is the application at [kakitu.org/merchant](https://kakitu.org/merchant); no API route makes one, and `POST /v1/merchants` answers this rather than creating one. Nothing was saved. |
 | `merchant_not_approved` | 403 | The merchant is not `approved`. An operator must approve it first. |
 | `merchant_suspended` | 403 | The merchant is suspended. |
 | `merchant_name_frozen` | 409 | business_name cannot be changed after review. Needs an operator. |
@@ -71,7 +70,7 @@ Every `/v1/` endpoint answers an error with one envelope:
 | `identity_verification_required` | 403 | The amount needs the customer's identity verified first. |
 | `internal` | 500 | Something went wrong on our side. Quote the request_id. |
 
-Forty-five codes, and that is all of them.
+Forty-four codes, and that is all of them.
 
 Seven answer the same way for a thing that does not exist and a thing that belongs to somebody else: `merchant_not_registered`, `charge_not_found`, `order_not_found`, `event_not_found`, `payout_not_found`, `payout_quote_not_found` and `payout_destination_not_found`. Same status, same code, same sentence, deliberately. An error that told the two apart would turn the endpoint into a way of asking whether somebody else's id is real.
 
@@ -81,7 +80,7 @@ Seven answer the same way for a thing that does not exist and a thing that belon
 
 **Paying money out is a different permission from collecting it in**, on different settings and a different counter. A payout cap refusal must never arrive as `daily_cap_exceeded`: an integrator who saw that would go and ask an operator to raise their *collection* cap, the operator would raise the wrong number, nothing would change, and the real limit would stay a mystery. Branch on the payout codes when you are paying out. See [Payouts](./payouts#payout-caps-are-not-your-collection-caps).
 
-Codes are never reused and never renamed: a code you branch on today means the same thing tomorrow. New codes can be added (`open_loan`, `account_blocked` and `merchant_not_found` were added in November 2026), so treat a code you do not recognise by its HTTP status, and log it.
+Codes are never reused and never renamed: a code you branch on today means the same thing tomorrow. New codes can be added (`open_loan` and `account_blocked` were added in November 2026), so treat a code you do not recognise by its HTTP status, and log it.
 
 ## Codes that are not in `/v1`
 
@@ -99,7 +98,7 @@ On those routes `insufficient_balance` is the same fact as the `/v1` code above,
 
 ### Codes from the wallet cash-out (`/ramp/kes`) {#wallet-cash-out-codes}
 
-The [cash-out to the wallet's own M-Pesa number](./cash-out) answers in the same older shape. These codes are not part of the forty-five `/v1` codes; some carry extra fields beside `error`.
+The [cash-out to the wallet's own M-Pesa number](./cash-out) answers in the same older shape. These codes are not part of the forty-four `/v1` codes; some carry extra fields beside `error`.
 
 | `error` | HTTP | Meaning |
 |---|---|---|

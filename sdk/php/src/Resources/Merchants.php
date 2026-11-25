@@ -14,10 +14,10 @@ final class Merchants
     }
 
     /**
-     * POST /v1/merchants: update an APPROVED merchant's contact email, phone and callback URL.
+     * POST /v1/merchants: update an existing merchant's contact email, phone and callback URL.
      *
      * It does not make a merchant: becoming one is the application at https://kakitu.org/merchant
-     * and Kakitu's approval. Any other wallet gets merchant_not_found (404). business_name must be
+     * and Kakitu's approval. A wallet with no merchant record gets merchant_not_registered (404). business_name must be
      * the name you applied with: it is frozen.
      *
      * Accepted fields: business_name (required, max 100), contact_email (required),

@@ -52,15 +52,12 @@ const ERROR_CODES = [
   "payout_destination_not_found", "payout_destinations_full", "profile_required", "bank_unavailable",
   "unknown_bank", "account_not_found", "insufficient_balance", "identity_verification_required",
   "internal",
-  // POST /v1/merchants no longer makes a merchant (founder decision 2026-11-25); it answers this
-  // for a wallet that is not an approved merchant. See PENDING_SERVER_CODES.
-  "merchant_not_found",
 ];
 
 // Codes the docs already describe for a server change that is being built in parallel and is not
 // on the server branch this script is pointed at yet. The server comparison tolerates their
 // absence (and says so), and fails once the server has them so they are moved out of this list.
-const PENDING_SERVER_CODES = ["merchant_not_found"]; // feat/close-v1-register
+const PENDING_SERVER_CODES = [];
 
 // Answered by the wallet's own routes (/ramp/*), not /v1, and documented beside the /v1 codes.
 // mpesa_hidden: M-Pesa is hidden (mpesa_rails_visible false); a new cash-out or top-up answers it
@@ -140,8 +137,9 @@ const FIELDS = {
     "ALREADY_PENDING", "RATE_LIMITED", "NOT_CONNECTED", "kakitu:payfailed", "kakitu:paid",
     "GET /merchants/verified/{address}",
   ],
-  "docs/errors.md": ["deposits_paused", "mpesa_hidden", "merchant_not_found"],
-  "docs/merchants.md": ["POST /v1/merchants", "merchant_not_found", "payout_locked", "payout_unlocks_at"],
+  "docs/errors.md": ["deposits_paused", "mpesa_hidden"],
+  "docs/merchants.md": ["POST /v1/merchants", "merchant_not_registered", "payout_locked", "payout_unlocks_at",
+    "POST /v1/merchants/me/webhook-secret", "webhook_secret"],
   "docs/intro.md": ["mpesa_rails_visible"],
   "docs/going-live.md": ["mpesa_rails_visible", "mpesa_hidden"],
 };
@@ -161,7 +159,7 @@ const PHRASES = {
     // no safe key export exists: server-side signing is coming soon, and the words go nowhere
     "{#server-side-signing}", "Server-side signing for merchant wallets is coming soon",
     "Your 12 words go into the Kakitu app and the Kakitu extension, and nowhere else."],
-  // POST /v1/merchants updates an approved merchant; it never makes one (founder, 2026-11-25)
+  // POST /v1/merchants updates an existing merchant; it never makes one (founder, 2026-11-25)
   "docs/merchants.md": ["kakitu.org/merchant", "It does not make a merchant, and it is not a way to apply.",
     "This route is the only way to set it"],
   "docs/going-live.md": ["kakitu.org/merchant", "This is the only way to become a merchant"],

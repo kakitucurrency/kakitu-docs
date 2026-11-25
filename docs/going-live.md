@@ -33,7 +33,7 @@ There is one environment: `https://walletapi.kakitu.org`. There is no separate s
 3. **Apply at [kakitu.org/merchant](https://kakitu.org/merchant).** This is the only way to become a merchant; no API route makes one. Sign in with the extension (signing in cannot move money), then give your business name, the kind of business, where it is, and a contact phone. Use your real trading name: it is what Kakitu vets, it is what shoppers will see on the badge, and it is frozen after review.
 4. **Approval.** A person at Kakitu reviews the application and sets your state to `approved`. The page shows your state whenever you sign in; a rejection comes with the reason, and you can fix the application and send it again.
 5. **Use it.** The dashboard at kakitu.org/merchant opens: payments in, totals for today, the last 7 and the last 30 days, and a CSV export.
-6. **For the API**, wait for server-side signing ([coming soon](./quickstart#server-side-signing)). Never type your 12 words into a script or tool to get a key. When it opens, you confirm with `GET /v1/merchants/me` that `state` is `approved` and set your `callback_url` with [`POST /v1/merchants`](./merchants#post-v1merchants). Your **webhook secret** is made at approval and shown once, to the Kakitu person who approves you; no page or route shows it to you. Write to kakitu@kakitu.org to receive it, and store it in a secret manager at once. If it was not kept, or you lose it, Kakitu issues a new one.
+6. **For the API**, wait for server-side signing ([coming soon](./quickstart#server-side-signing)). Never type your 12 words into a script or tool to get a key. When it opens, you confirm with `GET /v1/merchants/me` that `state` is `approved` and set your `callback_url` with [`POST /v1/merchants`](./merchants#post-v1merchants). Your **webhook secret** is made at approval. The first `POST /v1/merchants` that sets your `callback_url` after approval answers with it, once; `POST /v1/merchants/me/webhook-secret` makes a new one ([your webhook secret](./merchants#your-webhook-secret)). Store it in a secret manager at once.
 
 ## Checklist before you take real payments
 
@@ -76,7 +76,6 @@ The steps are the same minus the hurry.
 
 - Renaming the business.
 - Raising limits.
-- Getting a new webhook secret.
 - Reinstating a suspended merchant. (A rejected one fixes its application at kakitu.org/merchant and sends it again.)
 
 Write to kakitu@kakitu.org and quote your address.

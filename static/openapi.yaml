@@ -25,7 +25,7 @@ info:
     - **Server-side signing is coming soon.** Every route is signed with the merchant wallet's
       own key, and there is no safe way yet to put the key of a wallet made in the Kakitu app
       on a server. Never type a recovery phrase into a script or tool to get one.
-    - `POST /v1/merchants` does not make a merchant: it updates an approved merchant's contact
+    - `POST /v1/merchants` does not make a merchant: it updates an existing merchant's contact
       details and callback URL.
     - `POST /v1/charges` is **not available**. It is coming back as a KSHS payment request.
     - The payout-sending routes (`POST /v1/payouts/requests`, `POST /v1/payouts/quote`,
@@ -123,7 +123,7 @@ info:
 
     ## Idempotency
 
-    Four of the ten `POST` routes require an `Idempotency-Key` header; six do not.
+    Four of the eleven `POST` routes require an `Idempotency-Key` header; seven do not.
 
     | Route | `Idempotency-Key` |
     | --- | --- |
@@ -132,6 +132,7 @@ info:
     | `POST /v1/payouts` | **required** |
     | `POST /v1/payouts/requests` | **required** |
     | `POST /v1/merchants` | **not required** (it updates contact details and moves no money) |
+    | `POST /v1/merchants/me/webhook-secret` | **not required** (and never replayed: a stored replay would keep a copy of the secret) |
     | `POST /v1/quotes` | **not required** (a quote creates no order, charge or transfer) |
     | `POST /v1/payouts/quote` | **not required** (a payout quote creates no payout and moves no money) |
     | `POST /v1/events/{id}/replay` | **not required** (idempotent by construction) |
@@ -208,7 +209,7 @@ security:
   - walletSignature: []
 tags:
   - name: Merchants
-    description: Read the signing wallet's merchant record and update an approved merchant's contact details. Becoming a merchant is the application at kakitu.org/merchant.
+    description: Read the signing wallet's merchant record, update its contact details and receive its webhook secret. Becoming a merchant is the application at kakitu.org/merchant.
   - name: Public
     description: Unauthenticated platform configuration.
   - name: Charges
@@ -250,17 +251,22 @@ paths:
     post:
       operationId: updateMerchant
       tags: [Merchants]
-      summary: Update an approved merchant's contact details and callback URL
+      summary: Update a merchant's contact details and callback URL
       description: |
         Updates the contact email, contact phone and callback URL of the signing wallet's
         merchant. The address comes from the signature, never from the body.
 
         **This route does not make a merchant.** Becoming a merchant is the application at
         https://kakitu.org/merchant, signed in with the Kakitu extension, and a person at Kakitu
-        approving it. A wallet that is not an approved merchant, including one whose application
-        is still `pending`, gets `404 merchant_not_found` and nothing is saved.
+        approving it. This route updates a merchant record that already exists; a wallet with no
+        record gets `404 merchant_not_registered` and nothing is saved.
 
         This is the only way to set `callback_url`: the application has no callback field.
+
+        **The webhook secret.** The first call from an `approved` merchant that sets a non-empty
+        `callback_url` answers with `webhook_secret` (the secret made at approval) beside the
+        record, once, with `Cache-Control: no-store`. Later answers leave it out. A lost secret is
+        replaced with `POST /v1/merchants/me/webhook-secret`.
 
         `contact_phone` and `callback_url` are optional. **Absent or `null` leaves the stored
         value unchanged**; an explicit `""` clears it. Sending the wrong field name would
@@ -271,9 +277,9 @@ paths:
         round-trips a merchant object does not break. Any other unknown field is refused with
         `400 invalid_request` naming the key.
 
-        `business_name` must be the name the merchant applied with: it is the name a person at
-        Kakitu vetted, and it is frozen. Submitting a different name answers
-        `409 merchant_name_frozen` and nothing is saved.
+        Every field is optional. `business_name` is accepted so older clients keep working; it
+        must equal the stored name (`409 merchant_name_frozen` otherwise, and nothing is saved).
+        A pending application's name is changed at kakitu.org/merchant.
 
         Body limit 16 KiB. **No `Idempotency-Key` required.**
       requestBody:
@@ -300,15 +306,15 @@ paths:
         '401': { $ref: '#/components/responses/AuthFailure' }
         '404':
           description: |
-            `merchant_not_found` — this wallet is not an approved merchant, so there is nothing to
+            `merchant_not_registered` — this wallet has no merchant record, so there is nothing to
             update. Apply at https://kakitu.org/merchant. Nothing was saved.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '409':
           description: |
-            `merchant_name_frozen` — a different `business_name`, or `open_loan` — this wallet has
-            an open Kakitu loan. Nothing was saved.
+            `merchant_name_frozen` — a `business_name` that is not the stored one. Nothing was
+            saved.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -341,6 +347,39 @@ paths:
         '401': { $ref: '#/components/responses/AuthFailure' }
         '404':
           description: '`merchant_not_registered` — this wallet has no merchant record. Apply at https://kakitu.org/merchant.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/Internal' }
+  /v1/merchants/me/webhook-secret:
+    post:
+      operationId: rotateWebhookSecret
+      tags: [Merchants]
+      summary: Replace your webhook secret and receive the new one, once
+      description: |
+        Makes a new webhook secret for the signing wallet's `approved` merchant and answers with
+        it once, with `Cache-Control: no-store`. The old secret stops verifying at once. No body.
+        **No `Idempotency-Key`**, and none is stored: a replayed answer would keep a copy of the
+        secret.
+      responses:
+        '200':
+          description: The new secret. Store it now; no route shows it again.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [webhook_secret]
+                properties:
+                  webhook_secret: { type: string }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '403':
+          description: '`merchant_not_approved` — only an approved merchant has a webhook secret.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404':
+          description: '`merchant_not_registered` — this wallet has no merchant record.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -2164,7 +2203,6 @@ components:
     MerchantRequest:
       type: object
       additionalProperties: false
-      required: [business_name, contact_email]
       properties:
         business_name:
           type: string
@@ -2240,6 +2278,11 @@ components:
           type: string
           format: date-time
           description: When the lock comes off. Present only while an unlock is pending.
+        webhook_secret:
+          type: string
+          description: |
+            Present on exactly one answer: the first `POST /v1/merchants` from an approved
+            merchant that sets a non-empty `callback_url`. Never in `GET /v1/merchants/me`.
     ChargeStatus:
       type: string
       description: |
@@ -3251,7 +3294,6 @@ components:
         - invalid_request
         - unauthorized
         - merchant_not_registered
-        - merchant_not_found
         - merchant_not_approved
         - merchant_suspended
         - merchant_name_frozen
@@ -3297,7 +3339,6 @@ components:
         invalid_request: 400
         unauthorized: 401
         merchant_not_registered: 404
-        merchant_not_found: 404
         merchant_not_approved: 403
         merchant_suspended: 403
         merchant_name_frozen: 409

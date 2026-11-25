@@ -536,7 +536,7 @@ function kakitu_verify_webhook(string $secret, string $header, string $raw): boo
 </TabItem>
 </Tabs>
 
-Your webhook secret is made when an operator approves you, shown once to that operator, and never retrievable afterwards. See [Webhooks](./webhooks#the-webhook-secret-is-shown-once).
+Your webhook secret is made when Kakitu approves you and handed to you once. See [your webhook secret](./merchants#your-webhook-secret).
 
 **The bytes on the wire are not the bytes in our examples.** A delivered body has its keys in our storage order (shorter keys first, so `charge` can come before `created_at`) and a space after each `:` and `,`. That changes nothing for a correct receiver: the signature is over the exact bytes we sent, and you verify the exact bytes you received.
 

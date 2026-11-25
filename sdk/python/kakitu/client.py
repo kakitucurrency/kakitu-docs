@@ -153,11 +153,11 @@ class Merchants:
 
     def update(self, *, business_name: str, contact_email: str, contact_phone: str | None = None,
                callback_url: str | None = None, idempotency_key: str | None = None) -> Merchant:
-        """Update an APPROVED merchant's contact details and callback URL (``POST /v1/merchants``).
+        """Update an existing merchant's contact details and callback URL (``POST /v1/merchants``).
 
         It does not make a merchant: becoming one is the application at
-        https://kakitu.org/merchant and Kakitu's approval. Any other wallet gets
-        ``merchant_not_found`` (404). ``business_name`` must be the name you applied with: it is
+        https://kakitu.org/merchant and Kakitu's approval. A wallet with no merchant record gets
+        ``merchant_not_registered`` (404). ``business_name`` must be the name you applied with: it is
         frozen (``MerchantNameFrozenError``). Omitted optional fields keep their stored value;
         pass ``""`` to clear one."""
         return self.register(business_name=business_name, contact_email=contact_email,
