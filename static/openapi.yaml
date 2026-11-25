@@ -17,9 +17,10 @@ info:
     A business is paid by a plain KSHS transfer to its address — the Kakitu extension's
     `pay()`, a `kakitu:` link or a QR code — with no registration at all. A merchant applies at
     https://kakitu.org/merchant, signed in with the Kakitu extension, and a person at Kakitu
-    approves it. An approved merchant is told of each payment by a signed `transfer.received`
-    webhook, which carries the payer's `reference`; **a reference is the payer's claim, not
-    proof**, so the merchant still checks the amount and the recipient.
+    approves it. An approved merchant with a `callback_url` is told of payments by a signed
+    `transfer.received` webhook, which carries the payer's `reference` when there is one; **a
+    reference is the payer's claim, not proof**, so the merchant still checks the amount and the
+    recipient.
 
     - **Server-side signing is coming soon.** Every route is signed with the merchant wallet's
       own key, and there is no safe way yet to put the key of a wallet made in the Kakitu app
@@ -207,13 +208,13 @@ security:
   - walletSignature: []
 tags:
   - name: Merchants
-    description: Register the signing wallet as a business and read its record.
+    description: Read the signing wallet's merchant record and update an approved merchant's contact details. Becoming a merchant is the application at kakitu.org/merchant.
   - name: Public
     description: Unauthenticated platform configuration.
   - name: Charges
     description: Not available; coming back as a KSHS payment request. Past charges stay readable.
   - name: Transfers
-    description: Gasless KSHS transfers signed by the caller.
+    description: Gasless KSHS transfers signed by the caller, and the wallet's own transfer history.
   - name: Payouts
     description: Not available; coming back, paid through KCB. Past payouts stay readable. Saved destinations can be listed, removed and locked.
   - name: Payout destinations
@@ -583,9 +584,15 @@ paths:
         '202':
           description: |
             Submitted but not yet confirmed within the wait (`status` is `pending`). The `id` is
-            the transaction hash; do not resubmit.
+            the transaction hash; do not resubmit. Stored like any success: a retry with the same
+            key replays this `pending` answer and never turns into `confirmed`. Learn the outcome
+            from the chain or `GET /transfers`.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Idempotent-Replayed: { $ref: '#/components/headers/IdempotentReplayed' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Transfer' }
@@ -601,7 +608,7 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '401': { $ref: '#/components/responses/AuthFailure' }
         '403':
-          description: '`merchant_not_approved`, `merchant_suspended` (also used when the wallet itself is frozen), or `account_blocked` (a wallet on the transfer is blocked, or the money is on hold). Nothing was sent.'
+          description: '`merchant_not_approved`, `merchant_suspended` (also used when the sending or the receiving wallet is frozen on the token; the message names the sender either way), or `account_blocked` (a wallet on the transfer is blocked, or the money is on hold). Nothing was sent.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -657,6 +664,69 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /transfers:
+    get:
+      operationId: listWalletTransfers
+      tags: [Transfers]
+      summary: Read the signing wallet's own KSHS history, with each payment's reference
+      description: |
+        The signing wallet's KSHS transfers, sent and received, newest first. Not a `/v1` route:
+        it needs a signed request and nothing more (no merchant record), and it answers errors in
+        the older shape `{"error": "<code>"}`.
+
+        **Page until `next_before` is absent.** `limit` is capped at 100; a larger value returns
+        100 rows and still carries `next_before` when there may be more. Pass `next_before` back
+        unchanged as `before`: transfers that share a timestamp are not lost between pages.
+        (A server without the late-November 2026 paging fix dropped the cursor above 100 and
+        could skip rows sharing the boundary timestamp; against such a server send at most 100.)
+
+        `reference` exists only on a payment made through Kakitu's relay (the Kakitu app, the
+        extension from 0.2.8, `POST /v1/transfers`). It is the payer's claim, not proof.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: before
+          in: query
+          required: false
+          description: The previous page's `next_before`, unchanged. An opaque cursor.
+          schema: { type: string }
+      responses:
+        '200':
+          description: A page of transfers.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WalletTransferList' }
+        '401': { $ref: '#/components/responses/AuthFailure' }
+        '429': { $ref: '#/components/responses/PerIPRateLimited' }
+        '500':
+          description: '`{"error": "transfers_unavailable"}` — the history could not be read. Retry.'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: { type: string, const: transfers_unavailable }
+  /reserves:
+    get:
+      operationId: getReserves
+      tags: [Public]
+      summary: Read the public reserves snapshot
+      description: |
+        Unauthenticated. KSHS in existence and the reserves Kakitu can see, cached for 60
+        seconds. Not part of `/v1`; only the per-IP limiter applies.
+      security: []
+      responses:
+        '200':
+          description: The snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Reserves' }
+        '429': { $ref: '#/components/responses/PerIPRateLimited' }
+        '500':
+          description: '`{"error": "reserves_unavailable"}` — the snapshot could not be made.'
   /v1/payouts/quote:
     post:
       operationId: createPayoutQuote
@@ -1775,9 +1845,12 @@ webhooks:
       tags: [Events]
       summary: transfer.received — KSHS arrived at your address
       description: |
-        POSTed to your merchant's `callback_url`. A transfer to your address, from anybody, by
-        any route. `transfer.reference` is the payer's claim and not proof: check the amount and
-        the recipient before you release goods.
+        POSTed to your merchant's `callback_url`. A confirmed transfer to your address, from
+        anybody, by any route. `transfer.reference` is the payer's claim and not proof: check the
+        amount and the recipient before you release goods. Not announced, ever: payments made
+        before the merchant was approved, payments more than about 24 hours (432,000 blocks)
+        behind the chain head when the notifier reaches them, and transfers to yourself.
+        Reconcile against `GET /transfers` or the chain as well.
       parameters:
         - $ref: '#/components/parameters/KakituSignature'
         - $ref: '#/components/parameters/KakituEventId'
@@ -2268,6 +2341,49 @@ components:
           type: string
           enum: [pending, confirmed]
           description: '`confirmed` with HTTP 200; `pending` with HTTP 202.'
+    WalletTransfer:
+      type: object
+      required: [tx_hash, direction, kind, amount_kes, value_wei, status, submitted_at]
+      properties:
+        tx_hash: { type: string, description: The transaction on Base. }
+        direction: { type: string, enum: [in, out], description: From the caller's point of view. }
+        kind: { type: string, enum: [transfer, mint, burn] }
+        counterpart: { type: string, description: The other address. Absent on a mint or a burn. }
+        amount_kes: { type: integer, format: int64, description: Whole shillings. Use `value_wei` when the exact amount matters. }
+        value_wei: { type: string, description: The exact amount as a decimal string (18 decimals). }
+        status:
+          type: string
+          enum: [confirmed, unconfirmed]
+          description: '`unconfirmed` is not a failure: submitted, no receipt yet, and the money may have moved.'
+        submitted_at: { type: string, format: date-time }
+        reference: { type: string, description: The payer's reference. Absent when there is none. }
+    WalletTransferList:
+      type: object
+      required: [transfers]
+      properties:
+        transfers:
+          type: array
+          items: { $ref: '#/components/schemas/WalletTransfer' }
+        next_before:
+          type: string
+          description: The cursor for the next page. Absent on the last page, and only there.
+    Reserves:
+      type: object
+      required: [kshs_supply_kes, usdc_hot, usdc_cold, external_usd, total_usd, at]
+      properties:
+        kshs_supply_kes: { type: integer, format: int64, description: 'KSHS in existence, read from the token''s total supply.' }
+        usdc_hot: { type: string, description: 'USDC in the hot treasury, as a decimal string.' }
+        usdc_cold: { type: string, description: 'USDC in cold storage, as a decimal string.' }
+        external_usd:
+          type: object
+          additionalProperties: { type: string }
+          description: Other balances Kakitu can read, by source, in USD as decimal strings.
+        total_usd: { type: string, description: 'The sum, as a decimal string.' }
+        at: { type: string, format: date-time }
+        unavailable_sources:
+          type: array
+          items: { type: string }
+          description: Sources that could not be read and were counted as zero, so `total_usd` is an understatement. Absent when every source was read.
     PayoutBeneficiary:
       type: object
       additionalProperties: false
@@ -2917,7 +3033,7 @@ components:
             amount_kes: { type: string, description: 'The exact amount as a decimal STRING, such as `"99.5"`, not whole shillings.' }
             value_wei: { type: string, description: 'The same amount in the token''s smallest unit, as a string.' }
             block_number: { type: integer, format: int64 }
-            observed_at: { type: string, format: date-time }
+            observed_at: { type: string, format: date-time, description: 'The time of the transfer: its block timestamp, or the relay''s submit time for a payment made through Kakitu''s relay. Not when Kakitu noticed it.' }
             reference:
               type: string
               pattern: '^[A-Za-z0-9._:-]{1,64}$'
@@ -3091,9 +3207,11 @@ components:
         payload:
           allOf: [{ $ref: '#/components/schemas/EventPayload' }]
           description: |
-            The signed webhook body verbatim — the exact bytes that were or will be POSTed to
-            your callback URL — rendered as a JSON value rather than a quoted string, so it
-            needs no second parse.
+            The webhook body, rendered as a JSON value rather than a quoted string, so it needs
+            no second parse. **The same JSON value as the delivery, not the same bytes**: key
+            order and spacing can differ, so a `Kakitu-Signature` cannot be checked against it.
+            It needs no signature: it is Kakitu's own record, returned over HTTPS to a request you
+            signed. Verify signatures on deliveries, over the raw request body.
 
             Its shape is decided by `type`: a `charge.*` event carries a `charge` object, a
             `payout.*` event a `payout`, `transfer.received` a `transfer`, and so on; the other

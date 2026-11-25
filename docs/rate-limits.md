@@ -17,7 +17,7 @@ The hourly limit on [`POST /v1/transfers`](./transfers) is not a courtesy. Our r
 
 | Limit | Code | HTTP |
 |---|---|---|
-| Transfers per merchant per hour | `rate_limited` | 429 |
+| Transfers per merchant per fixed UTC clock hour (60 by default; refused attempts count too) | `rate_limited` | 429 |
 | Transfers per wallet per UTC day | `daily_cap_exceeded` | 429 |
 | Largest single transfer | `amount_above_maximum` | 400 |
 | Smallest transfer | `amount_below_minimum` | 400 |
