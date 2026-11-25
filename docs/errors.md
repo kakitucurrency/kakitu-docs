@@ -27,11 +27,12 @@ Every `/v1/` endpoint answers an error with one envelope:
 |---|---|---|
 | `invalid_request` | 400 | The body or a field is malformed, unknown or out of range. The message says which. |
 | `unauthorized` | 401 | The request reached a handler without a verified wallet. |
-| `merchant_not_registered` | 404 | This wallet has not registered. POST /v1/merchants. |
+| `merchant_not_registered` | 404 | This wallet has no merchant record. Becoming a merchant is the application at [kakitu.org/merchant](https://kakitu.org/merchant); no API route makes one. |
+| `merchant_not_found` | 404 | `POST /v1/merchants` only: this wallet is not an approved merchant, so there is nothing to update. It does not make a merchant: apply at [kakitu.org/merchant](https://kakitu.org/merchant). Nothing was saved. |
 | `merchant_not_approved` | 403 | The merchant is not `approved`. An operator must approve it first. |
 | `merchant_suspended` | 403 | The merchant is suspended. |
 | `merchant_name_frozen` | 409 | business_name cannot be changed after review. Needs an operator. |
-| `open_loan` | 409 | `POST /v1/merchants` only: this wallet has an open Kakitu loan, so it cannot register as a merchant until the loan is closed. Nothing was saved. |
+| `open_loan` | 409 | This wallet has an open Kakitu loan, so it cannot become a merchant until the loan is closed. Nothing was saved. |
 | `account_blocked` | 403 | Kakitu has blocked a wallet this request touches (yours, or on a transfer the recipient), or the money is on hold. **Nothing was charged or sent.** Contact support; retrying will not help. |
 | `idempotency_key_required` | 400 | A money-moving POST has no Idempotency-Key. |
 | `idempotency_key_invalid` | 400 | The Idempotency-Key is longer than 255 characters. |
@@ -50,13 +51,13 @@ Every `/v1/` endpoint answers an error with one envelope:
 | `rail_unavailable` | 503 | The feature is unavailable or paused, capacity is short right now, or our own check of whether a wallet is blocked could not run. Retry shortly. On a route that moves money it means **nothing was sent**. |
 | `order_not_found` | 404 | No such order. See [Orders](./orders). |
 | `event_not_found` | 404 | No such webhook event. See [Events](./events). |
-| `payouts_disabled` | 403 | Payouts are not switched on for this merchant. Payouts are [coming soon](./payouts#coming-soon). |
+| `payouts_disabled` | 403 | Payouts are not switched on for this merchant. Payouts are [not available today](./payouts#not-available). Also the answer to saving a payout destination while they are off. |
 | `payout_daily_cap_exceeded` | 429 | The merchant's daily **payout** budget is spent. Not the collection cap. Resets at midnight EAT. |
 | `payout_amount_above_maximum` | 400 | Over the largest single payout allowed for this merchant. |
 | `payout_not_found` | 404 | No such payout for this merchant. See [Payouts](./payouts). |
 | `payout_quote_not_found` | 404 | The payout quote does not exist, has expired, or has already been spent. |
 | `payout_approval_required` | 409 | The payout is above your `hold_above_kes` and no person has approved it, so there is nothing to sign. Ask at `POST /v1/payouts/requests`. See [Approve first](./payouts#approve-first). |
-| `payout_not_approved` | 409 | The `payout_id` cannot be quoted or signed now: undecided, rejected, lapsed, already used, or its destination was removed. Read the payout. |
+| `payout_not_approved` | 409 | The `payout_id` cannot be quoted or signed now: undecided, rejected, lapsed or already used. Read the payout. (A removed destination is `payout_destination_locked` or `bank_unavailable`.) |
 | `payout_approval_mismatch` | 409 | The amount or beneficiary is not what a person approved. It is a different payout, so it is a new request. |
 | `payout_open_requests_exceeded` | 429 | You already have as many payout requests waiting as you may. A decision or a lapsed approval frees a place. |
 | `payout_destination_locked` | 403 | You hold your payouts to your saved destinations, and this is not one that can be paid now. The answer does not say whether it is unsaved, cooling off or removed. See [the lock](./payouts#saved-destinations-and-the-lock). |
@@ -70,7 +71,7 @@ Every `/v1/` endpoint answers an error with one envelope:
 | `identity_verification_required` | 403 | The amount needs the customer's identity verified first. |
 | `internal` | 500 | Something went wrong on our side. Quote the request_id. |
 
-Forty-four codes, and that is all of them.
+Forty-five codes, and that is all of them.
 
 Seven answer the same way for a thing that does not exist and a thing that belongs to somebody else: `merchant_not_registered`, `charge_not_found`, `order_not_found`, `event_not_found`, `payout_not_found`, `payout_quote_not_found` and `payout_destination_not_found`. Same status, same code, same sentence, deliberately. An error that told the two apart would turn the endpoint into a way of asking whether somebody else's id is real.
 
@@ -80,7 +81,7 @@ Seven answer the same way for a thing that does not exist and a thing that belon
 
 **Paying money out is a different permission from collecting it in**, on different settings and a different counter. A payout cap refusal must never arrive as `daily_cap_exceeded`: an integrator who saw that would go and ask an operator to raise their *collection* cap, the operator would raise the wrong number, nothing would change, and the real limit would stay a mystery. Branch on the payout codes when you are paying out. See [Payouts](./payouts#payout-caps-are-not-your-collection-caps).
 
-Codes are never reused and never renamed: a code you branch on today means the same thing tomorrow. New codes can be added (`open_loan` and `account_blocked` were added in November 2026), so treat a code you do not recognise by its HTTP status, and log it.
+Codes are never reused and never renamed: a code you branch on today means the same thing tomorrow. New codes can be added (`open_loan`, `account_blocked` and `merchant_not_found` were added in November 2026), so treat a code you do not recognise by its HTTP status, and log it.
 
 ## Codes that are not in `/v1`
 
@@ -89,6 +90,7 @@ The wallet's own routes (`/ramp/*`, which the Kakitu app and extension call) ans
 | `error` | HTTP | Meaning |
 |---|---|---|
 | `deposits_paused` | 409 | M-Pesa top-ups are paused. **Nothing was charged** and no prompt was sent. Not a failure to retry in a loop. |
+| `mpesa_hidden` | 409 | M-Pesa is hidden (`mpesa_rails_visible` is `false` in [`GET /config`](./config)). Answered by a new M-Pesa cash-out or top-up quote or confirm (`/ramp/kes`, `/ramp/kes-deposit`), **even when that route is switched on**. Nothing was taken or charged. The message reads "M-Pesa isn't available right now. Use an agent." |
 | `treasury_short` | 409 | The hot treasury cannot pay this cash-out right now. Refused at the quote or the confirm, before anything was signed or taken. Try a smaller amount or later. |
 | `account_blocked` | 403 | Kakitu has blocked this wallet, or the other wallet on a transfer. Nothing moved. |
 | `cashout_on_hold` | 403 | Money paid in from an M-Pesa number new to this wallet can be held for a while before it may leave. Nothing moved. |
@@ -97,11 +99,12 @@ On those routes `insufficient_balance` is the same fact as the `/v1` code above,
 
 ### Codes from the wallet cash-out (`/ramp/kes`) {#wallet-cash-out-codes}
 
-The [cash-out to the wallet's own M-Pesa number](./cash-out) answers in the same older shape. These codes are not part of the forty-four `/v1` codes; some carry extra fields beside `error`.
+The [cash-out to the wallet's own M-Pesa number](./cash-out) answers in the same older shape. These codes are not part of the forty-five `/v1` codes; some carry extra fields beside `error`.
 
 | `error` | HTTP | Meaning |
 |---|---|---|
-| `kes_offramp_disabled` | 404 | Cash-out to M-Pesa is not switched on yet (`kes_offramp_enabled` is `false` in `GET /config`). |
+| `kes_offramp_disabled` | 404 | Cash-out to M-Pesa is not switched on. |
+| `mpesa_hidden` | 409 | Cash-out is switched on but M-Pesa is hidden (`mpesa_rails_visible` is `false`). Nothing was taken. Checked before every other refusal below. |
 | `kes_offramp_paused` | 409 | Kakitu has paused cash-outs for now. Nothing was taken from the wallet. |
 | `phone_not_verified` | 403 | This wallet has no proved M-Pesa number. Prove it in the Kakitu app. |
 | `phone_too_new` | 403 | The number was proved less than 24 hours ago. `retry_after` says when it can be paid. |

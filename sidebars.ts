@@ -19,6 +19,7 @@ const sidebars: SidebarsConfig = {
     'events',
     'errors',
     'rate-limits',
+    'config',
     'extension',
     'going-live',
   ],

@@ -22,6 +22,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => readFileSync(join(root, p), "utf8");
 const failures = [];
 const fail = (msg) => failures.push(msg);
+const notes = [];
 
 // ---------------------------------------------------------------- the server's lists
 
@@ -45,7 +46,15 @@ const ERROR_CODES = [
   "payout_destination_not_found", "payout_destinations_full", "profile_required", "bank_unavailable",
   "unknown_bank", "account_not_found", "insufficient_balance", "identity_verification_required",
   "internal",
+  // POST /v1/merchants no longer makes a merchant (founder decision 2026-11-25); it answers this
+  // for a wallet that is not an approved merchant. See PENDING_SERVER_CODES.
+  "merchant_not_found",
 ];
+
+// Codes the docs already describe for a server change that is being built in parallel and is not
+// on the server branch this script is pointed at yet. The server comparison tolerates their
+// absence (and says so), and fails once the server has them so they are moved out of this list.
+const PENDING_SERVER_CODES = ["merchant_not_found"]; // feat/close-v1-register
 
 // Answered by the wallet's own routes (/ramp/*), not /v1, and documented beside the /v1 codes.
 const WALLET_CODES = ["deposits_paused"];
@@ -217,7 +226,7 @@ for (const c of KES_OUT_CODES) {
     fail(`docs/errors.md: wallet cash-out code ${c} has no table row`);
   }
 }
-const countWord = { 44: "forty-four" };
+const countWord = { 44: "forty-four", 45: "forty-five" };
 if (!text["docs/errors.md"].toLowerCase().includes(countWord[ERROR_CODES.length])) {
   fail(`docs/errors.md: the code count must say ${countWord[ERROR_CODES.length]} (${ERROR_CODES.length} codes)`);
 }
@@ -249,7 +258,7 @@ for (const w of ["reference", "credited_kes", "payout_locked", "approval_expires
 // Operations a merchant cannot use today. Each says so in the first words of its description,
 // so the API reference and the pages cannot disagree.
 const NOT_TODAY = {
-  createCharge: "Coming soon.", createPayoutQuote: "Coming soon.", createPayout: "Coming soon.",
+  createCharge: "Not available.", createPayoutQuote: "Coming soon.", createPayout: "Coming soon.",
   requestPayout: "Coming soon.", createQuote: "Not available today.",
 };
 for (const [op, prefix] of Object.entries(NOT_TODAY)) {
@@ -302,7 +311,15 @@ if (serverDir) {
   const camel = [...table.matchAll(/\{Code(\w+),/g)].map((m) => m[1]);
   const consts = Object.fromEntries(
     [...src("apiv1/errors.go").matchAll(/Code(\w+)\s+Code\s*=\s*"([a-z_]+)"/g)].map((m) => [m[1], m[2]]));
-  sameSet("error codes", ERROR_CODES, camel.map((c) => consts[c]).filter(Boolean));
+  const serverCodes = camel.map((c) => consts[c]).filter(Boolean);
+  for (const c of PENDING_SERVER_CODES) {
+    if (serverCodes.includes(c)) {
+      fail(`error codes: the server now has ${c}; remove it from PENDING_SERVER_CODES in check-docs.mjs`);
+    } else {
+      notes.push(`error code ${c} is documented ahead of the server change that adds it (PENDING_SERVER_CODES)`);
+    }
+  }
+  sameSet("error codes", ERROR_CODES.filter((c) => !PENDING_SERVER_CODES.includes(c) || serverCodes.includes(c)), serverCodes);
   const states = [...src("models/dbmodels/payout.go").matchAll(/Payout\w+\s+PayoutState\s*=\s*"([a-z_]+)"/g)].map((m) => m[1]);
   sameSet("payout states", PAYOUT_STATES, states);
   // the cash-out numbers the docs quote are /config's, so the knobs must still be published
@@ -329,3 +346,4 @@ const ran = serverDir
   : "server comparison: SKIPPED (KAKITU_SERVER_DIR is not set), so the lists in this file were not checked against the server";
 console.log(`check-docs: ok (${EVENTS.length} events, ${ERROR_CODES.length + WALLET_CODES.length} error codes, ${PAYOUT_STATES.length} payout states)`);
 console.log(`check-docs: ${ran}`);
+for (const n of notes) console.log(`check-docs: note: ${n}`);
