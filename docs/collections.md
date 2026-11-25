@@ -1,14 +1,14 @@
 ---
 sidebar_position: 5
-title: Collections (not available)
+title: Collections (not open)
 ---
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# Collections (not available)
+# Collections (not open for integration)
 
-**`POST /v1/charges` is not available. It is coming back as a KSHS payment request.** Do not build on it or call it today: while it is closed, an approved merchant's request is refused with `503 rail_unavailable` and nothing is created. Take payment with a KSHS transfer and a `reference`, as below.
+**`POST /v1/charges` is not open for integration. It is planned to come back as a KSHS payment request.** Do not build on it or call it. The route still exists, and Kakitu controls it with a switch that this API does not publish: with the switch off, an approved merchant's well-formed request with a new `reference` is refused with `503 rail_unavailable` and nothing is created. With it on, the route still runs the older design, which prompts the payer's phone. Take payment with a KSHS transfer and a `reference`, as below.
 
 ## Today: a transfer with a reference {#today}
 

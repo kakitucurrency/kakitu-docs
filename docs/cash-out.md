@@ -14,7 +14,7 @@ title: Cash out
 
   `kes_offramp_enabled` in `GET /config` is `true` only when both are on (and cash-outs are not paused). Read it, not either switch on its own.
 
-Paying **other people** from a server is the [payouts API](./payouts), which is not available today.
+Paying **other people** from a server is the [payouts API](./payouts), which is not open for integration.
 
 ## Cash out in the app or the extension
 

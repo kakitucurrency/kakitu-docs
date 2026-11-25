@@ -1,12 +1,12 @@
 ---
 sidebar_position: 8
-title: Quotes (not available today)
+title: Quotes (not open for integration)
 ---
 
-# Quotes (not available today)
+# Quotes (not open for integration)
 
-:::warning Not available today
-`POST /v1/quotes` priced deposits and withdrawals on an M-Pesa route Kakitu no longer uses. **Do not build on it or call it.** Its reference has been withdrawn from these docs because it described a route that is gone.
+:::warning Not open for integration
+`POST /v1/quotes` priced deposits and withdrawals on an M-Pesa route Kakitu no longer uses. **Do not build on it or call it.** The route still exists and may answer, but a price from it is not one you can act on. Its reference has been withdrawn from these docs.
 :::
 
 What to read instead:

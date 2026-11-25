@@ -24,9 +24,9 @@ Once approved:
 - **Shoppers see you are verified**: a shopper paying your address from Kakitu extension versions 0.2.7 and later sees **Verified Kakitu merchant** and your business name, and anyone may check at [`GET /merchants/verified/{address}`](./extension#the-verified-merchant-badge). The store's 0.2.4 does not show it.
 - **The API** is open to your wallet's signature, but server-side signing for wallets made in the Kakitu app is coming soon: see [the quickstart](./quickstart#server-side-signing).
 
-The dashboard's routes (`/merchant/*` on `walletapi.kakitu.org`) serve kakitu.org only: sign-in is accepted from kakitu.org and nowhere else. Build your own integration on the `/v1` API and [`GET /transfers`](./transfers#get-transfers), not on them.
+The dashboard's routes (`/merchant/*` on `walletapi.kakitu.org`) serve kakitu.org only: sign-in is accepted from kakitu.org and nowhere else. Build your own integration on the `/v1` API and [`GET /transfers`](./transfers#get-transfers), not on them. (The dashboard's own list, `GET /merchant/payments`, pages by the same rules as `GET /transfers`.)
 
-The two `/v1` endpoints below read your merchant record and update its contact details and callback URL. **Neither makes a merchant**: the application at kakitu.org/merchant and Kakitu's approval are the only way to become one.
+The `/v1` endpoints below read your merchant record, update its contact details and callback URL, and replace its webhook secret. **None of them makes a merchant**: the application at kakitu.org/merchant and Kakitu's approval are the only way to become one.
 
 ## States
 
@@ -105,7 +105,7 @@ Every field is optional, and an absent field leaves what is stored. `business_na
 | Field | Type | Rules |
 |---|---|---|
 | `business_name` | string, optional | If sent, it must equal the name on your record. It cannot be changed here. |
-| `contact_email` | string, optional | A plain address such as `a@b.co`. `Name <a@b.co>` is refused. At most 254 characters. |
+| `contact_email` | string, optional | A plain address such as `a@b.co`. `Name <a@b.co>` is refused. At most 254 characters. **It cannot be cleared**: `""` is `400 invalid_request`. |
 | `contact_phone` | string, optional | At most 20 characters: digits, `+`, spaces and hyphens only. |
 | `callback_url` | string, optional | See [callback URLs](#callback-urls). |
 
@@ -128,7 +128,7 @@ send it, and a body that could name another wallet would let anybody change some
 callback URL.
 
 ```bash
-# Absent and null both LEAVE A FIELD ALONE. Only "" clears it.
+# Absent and null both LEAVE A FIELD ALONE. Only "" clears callback_url (or contact_phone).
 kakitu POST /v1/merchants '{"business_name":"Mama Njeri Groceries","contact_email":"njeri@example.com","callback_url":""}'
 ```
 
@@ -153,7 +153,7 @@ const { status, body } = await call(wallet, "POST", "/v1/merchants", {
 
 console.log(status);          // 200; 404 merchant_not_registered if this wallet has no merchant record
 console.log(body.address);    // the wallet that SIGNED - never a field you send
-console.log(body.state);      // "pending" or "approved": you cannot set this, and sending it is dropped
+console.log(body.state);      // pending | approved | rejected | suspended: you cannot set this, and sending it is dropped
 ```
 
 </TabItem>
@@ -179,7 +179,7 @@ status, body = call(account, "POST", "/v1/merchants", {
 
 print(status)            # 200; 404 merchant_not_registered if this wallet has no merchant record
 print(body["address"])   # the wallet that SIGNED - never a field you send
-print(body["state"])     # "pending" or "approved": you cannot set this, and sending it is dropped
+print(body["state"])     # pending | approved | rejected | suspended: you cannot set this, and sending it is dropped
 ```
 
 </TabItem>
@@ -202,7 +202,7 @@ require __DIR__ . '/kakitu.php';
 
 echo $status, PHP_EOL;            // 200; 404 merchant_not_registered if this wallet has no merchant record
 echo $body['address'], PHP_EOL;   // the wallet that SIGNED - never a field you send
-echo $body['state'], PHP_EOL;     // "pending" or "approved": you cannot set this, and sending it is dropped
+echo $body['state'], PHP_EOL;     // pending | approved | rejected | suspended: you cannot set this, and sending it is dropped
 ```
 
 </TabItem>
@@ -236,13 +236,13 @@ Response: `200`. The body is the merchant record, plus `webhook_secret` on the o
 | `payout_locked` | Whether your [payout lock](./payouts#saved-destinations-and-the-lock) binds now. Always present. |
 | `payout_unlocks_at` | RFC 3339 UTC. **Present only while an unlock is pending**: when the lock comes off. |
 
-The webhook secret is never in this record, and neither are the application's own fields (type of business, location, when you applied): those are on kakitu.org/merchant.
+Apart from that one answer the webhook secret is never in this record, and neither are the application's own fields (type of business, location, when you applied): those are on kakitu.org/merchant.
 
 ### Your webhook secret {#your-webhook-secret}
 
-Kakitu makes your webhook secret when it approves you. Two signed calls hand it to you, each answering with `Cache-Control: no-store`:
+Kakitu makes your webhook secret when it approves you, and the person who approves you sees it once. Two signed calls hand it to you, each answering with `Cache-Control: no-store`:
 
-- **The first `POST /v1/merchants` from an approved merchant that sets a non-empty `callback_url`** answers with `"webhook_secret": "…"` beside the record, once. It is the secret made at approval, not a new one. Every later answer leaves it out. A pending merchant may set its callback URL early, and sends it again after approval to collect the secret.
+- **The first `POST /v1/merchants` from an approved merchant that sets a non-empty `callback_url`** answers with `"webhook_secret": "…"` beside the record, once. It is the secret made at approval, not a new one. Every later answer leaves it out, and so does every answer after you have rotated the secret. A pending merchant may set its callback URL early, and sends it again after approval to collect the secret.
 - **`POST /v1/merchants/me/webhook-secret`** (no body) makes a new secret and answers `200 {"webhook_secret": "…"}`, once. The old secret stops verifying at once. Use it if you lost the secret or think it leaked. A wallet with no record gets `404 merchant_not_registered`; a merchant that is not `approved` gets `403 merchant_not_approved`.
 
 Store it in a secret manager the moment you receive it. No route ever shows it again. `GET /v1/merchants/me` never carries it.
@@ -257,6 +257,8 @@ For `contact_phone` and `callback_url` there are three cases, and they differ:
 | `null` | Stored value is **unchanged** |
 | `""` (empty string) | Stored value is **cleared** |
 | a value | Stored value is replaced |
+
+`contact_email` follows the same rules except that `""` is refused with `400 invalid_request`.
 
 Why: an omitted or misspelt field must never silently wipe a webhook URL and stop deliveries with nobody told. To clear, say so explicitly with `""`.
 

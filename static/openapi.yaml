@@ -27,11 +27,11 @@ info:
       on a server. Never type a recovery phrase into a script or tool to get one.
     - `POST /v1/merchants` does not make a merchant: it updates an existing merchant's contact
       details and callback URL.
-    - `POST /v1/charges` is **not available**. It is coming back as a KSHS payment request.
+    - `POST /v1/charges` is **not open for integration**. It is planned as a KSHS payment request.
     - The payout-sending routes (`POST /v1/payouts/requests`, `POST /v1/payouts/quote`,
-      `POST /v1/payouts`) and saving a payout destination are **not available**. They are
-      coming back, paid through KCB.
-    - `POST /v1/quotes` is **not available today**.
+      `POST /v1/payouts`) and saving a payout destination are **not open for integration**. They
+      are planned to come back, paid through KCB.
+    - `POST /v1/quotes` is **not open for integration**.
     - M-Pesa is hidden (`mpesa_rails_visible` is `false` in `GET /config`).
     - The read routes for past charges, payouts and orders keep working.
 
@@ -43,12 +43,12 @@ info:
     `POST /v1/transfers` refuses a merchant that is not `approved`, and so do the payout routes
     and saving a payout destination. Every other route needs a signed request and nothing more.
 
-    **Payouts are not available.** They are governed by two switches that are ANDed: a global
+    **Payouts are not open for integration.** They are governed by two switches that are ANDed: a global
     one for the whole platform, and a per-merchant one on your own record. Neither can be
     turned on through this API. Until both are on, `POST /v1/payouts/quote`,
     `POST /v1/payouts/requests` and `POST /v1/payout-destinations` answer an approved merchant
     with `403 payouts_disabled`, and `POST /v1/payouts` answers `404 payout_quote_not_found`
-    because no quote can exist. Which switch is off is deliberately not revealed. A merchant
+    because no quote can be made. Which switch is off is deliberately not revealed. A merchant
     that is not approved gets `403 merchant_not_approved` first. The two read routes, `GET /v1/payouts` and
     `GET /v1/payouts/{id}`, never answer `payouts_disabled`.
 
@@ -213,11 +213,11 @@ tags:
   - name: Public
     description: Unauthenticated platform configuration.
   - name: Charges
-    description: Not available; coming back as a KSHS payment request. Past charges stay readable.
+    description: Not open for integration; planned as a KSHS payment request. Past charges stay readable.
   - name: Transfers
     description: Gasless KSHS transfers signed by the caller, and the wallet's own transfer history.
   - name: Payouts
-    description: Not available; coming back, paid through KCB. Past payouts stay readable. Saved destinations can be listed, removed and locked.
+    description: Not open for integration; planned to come back, paid through KCB. Past payouts stay readable. Saved destinations can be listed, removed and locked.
   - name: Payout destinations
     description: The places you may pay, and the lock that holds you to them. The lock controls where cash-outs go; it does not stop KSHS transfers to other wallets.
   - name: Reads
@@ -299,7 +299,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Merchant' }
         '400':
-          description: '`invalid_request` — malformed body, unknown field, or a field that failed validation.'
+          description: '`invalid_request` — malformed body, unknown field, or a field that failed validation, including an empty `contact_email`.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -389,15 +389,17 @@ paths:
     post:
       operationId: createCharge
       tags: [Charges]
-      summary: Create a charge (not available; coming back as a KSHS payment request)
-      x-kakitu-status: not-available
+      summary: Create a charge (not open for integration)
+      x-kakitu-status: not-open
       description: |
-        Not available. A charge is coming back as a **KSHS payment request**: the merchant
+        Not open for integration. A charge is planned as a **KSHS payment request**: the merchant
         creates it with an amount and a reference, the payer approves it in the Kakitu app or
         the Kakitu extension, and the merchant is told when the transfer lands. Do not build on
-        this route or call it today: while it is closed an approved merchant's request is refused
-        with `503 rail_unavailable` and nothing is created. The request and response shapes
-        below describe the earlier version and will change.
+        this route or call it. Kakitu controls it with a switch this API does not publish: with the
+        switch off, an approved merchant's well-formed request with a new `reference` is refused
+        with `503 rail_unavailable` and nothing is created; with it on, the route runs the older
+        design, which prompts the payer's phone. The shapes below describe that version and will
+        change.
 
         **Today, take payment with a plain KSHS transfer and a `reference`**: the extension's
         `pay()`, a `kakitu:` link or QR code, or `POST /v1/transfers`. The approved merchant is
@@ -713,11 +715,9 @@ paths:
         it needs a signed request and nothing more (no merchant record), and it answers errors in
         the older shape `{"error": "<code>"}`.
 
-        **Page until `next_before` is absent.** `limit` is capped at 100; a larger value returns
-        100 rows and still carries `next_before` when there may be more. Pass `next_before` back
+        **Page until `next_before` is absent.** A `limit` over 100 is served as 100, and one that is
+        not a whole number above zero as 50. `next_before` is present only when more rows exist. Pass `next_before` back
         unchanged as `before`: transfers that share a timestamp are not lost between pages.
-        (A server without the late-November 2026 paging fix dropped the cursor above 100 and
-        could skip rows sharing the boundary timestamp; against such a server send at most 100.)
 
         `reference` exists only on a payment made through Kakitu's relay (the Kakitu app, the
         extension from 0.2.8, `POST /v1/transfers`). It is the payer's claim, not proof.
@@ -737,6 +737,15 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WalletTransferList' }
+        '400':
+          description: '`{"error": "invalid_before"}` — `before` is not a cursor this route issued.'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: { type: string, const: invalid_before }
         '401': { $ref: '#/components/responses/AuthFailure' }
         '429': { $ref: '#/components/responses/PerIPRateLimited' }
         '500':
@@ -770,19 +779,19 @@ paths:
     post:
       operationId: createPayoutQuote
       tags: [Payouts]
-      summary: Price a payout and get back exactly what to sign (not available)
-      x-kakitu-status: not-available
+      summary: Price a payout and get back exactly what to sign (not open for integration)
+      x-kakitu-status: not-open
       description: |
-        Not available. Payouts are coming back, paid by Kakitu itself through KCB. Until then
-        payouts are switched off: after the body and the beneficiary are checked, this route
-        answers `403 payouts_disabled`, and no quote can be made. The shapes below describe the
+        Not open for integration. Payouts are planned to come back, paid by Kakitu itself through
+        KCB. While payouts are off for the merchant, after the body and the beneficiary are checked
+        this route answers `403 payouts_disabled`, and no quote is made. The shapes below describe the
         API as it stood and will change when payouts return.
         See https://developer.kakitu.org/docs/payouts.
 
         Prices a payout to a beneficiary's M-Pesa number, till, paybill or bank account (see `PayoutBeneficiary`) and mints the **single-use quote that is the
         only thing `POST /v1/payouts` will accept**. Nothing is created and no money moves.
 
-        **Payouts are off.** Two switches must both be on: the platform's and the merchant's
+        **Payouts need two switches.** Both must be on: the platform's and the merchant's
         own. Both are an operator's decision; until both are on this route answers
         `403 payouts_disabled` (after the body, the beneficiary and the destination checks), and
         which of the two is off is not revealed. The merchant must also be **approved**, and that
@@ -918,12 +927,12 @@ paths:
     post:
       operationId: createPayout
       tags: [Payouts]
-      summary: Confirm a signed payout (not available)
-      x-kakitu-status: not-available
+      summary: Confirm a signed payout (not open for integration)
+      x-kakitu-status: not-open
       description: |
-        Not available. Payouts are coming back, paid by Kakitu itself through KCB. Until then
-        no payout quote can be made, so every `quote_id` this route is given answers
-        `404 payout_quote_not_found`. The shapes below describe the API as it stood and will
+        Not open for integration. Payouts are planned to come back, paid by Kakitu itself through
+        KCB. While payouts are off no quote can be made, so this route answers
+        `404 payout_quote_not_found` (a quote made just before: `403 payouts_disabled`). The shapes below describe the API as it stood and will
         change when payouts return.
         See https://developer.kakitu.org/docs/payouts.
 
@@ -1018,7 +1027,7 @@ paths:
           description: |
             `payout_quote_not_found` — the quote does not exist, has expired, has already been
             confirmed, or is not a payout quote. Ask for a new one at
-            `POST /v1/payouts/quote`. While payouts are off, every `quote_id` gets this. Also
+            `POST /v1/payouts/quote`. While payouts are off no quote can be made. Also
             `payout_not_found` (the `payout_id` of an approved request does not exist) and
             `merchant_not_registered`.
           content:
@@ -1179,12 +1188,12 @@ paths:
     post:
       operationId: requestPayout
       tags: [Payouts]
-      summary: Ask a person to approve a payout before anything is signed (not available)
-      x-kakitu-status: not-available
+      summary: Ask a person to approve a payout before anything is signed (not open for integration)
+      x-kakitu-status: not-open
       description: |
-        Not available. Payouts are coming back, paid by Kakitu itself through KCB. Until then
-        payouts are switched off: after the body and the beneficiary are checked, this route
-        answers `403 payouts_disabled`. The shapes below describe the API as it stood and will
+        Not open for integration. Payouts are planned to come back, paid by Kakitu itself through
+        KCB. While payouts are off for the merchant, after the body and the beneficiary are checked
+        this route answers `403 payouts_disabled`. The shapes below describe the API as it stood and will
         change when payouts return.
         See https://developer.kakitu.org/docs/payouts.
 
@@ -1330,7 +1339,7 @@ paths:
         '403':
           description: |
             `merchant_not_approved`, `merchant_suspended`, `payouts_disabled` (payouts are off for
-            this merchant: saving a place answers this today) or `bank_unavailable`.
+            this merchant) or `bank_unavailable`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -1547,10 +1556,10 @@ paths:
     post:
       operationId: createQuote
       tags: [Reads]
-      summary: Price a deposit or a withdrawal (not available today)
-      x-kakitu-status: not-available
+      summary: Price a deposit or a withdrawal (not open for integration)
+      x-kakitu-status: not-open
       description: |
-        Not available today. This route priced deposits and withdrawals on an M-Pesa route
+        Not open for integration. This route prices deposits and withdrawals on an M-Pesa route
         Kakitu no longer uses; do not build on it or call it. For the
         price of a cash-out to the wallet's own M-Pesa number read `kes_offramp_fee_bps` and
         `kes_offramp_fee_min_kes` in `GET /config`. The rest of this description is the route as
@@ -1633,7 +1642,8 @@ paths:
         `POST /v1/events/{id}/replay` is the whole recovery story: see what we tried to send, fix
         your side, ask for it again — no support ticket needed.
 
-        `payload` is the signed body verbatim, as a JSON value rather than a quoted string.
+        `payload` is the body as JSON, for reading. `payload_raw` is the exact signed body, as a
+        string: check a `Kakitu-Signature` over that.
         `last_error` is from a closed vocabulary (`http_503`, `timeout`, `no_callback_url`, …),
         never a raw Go error string.
 
@@ -2205,17 +2215,20 @@ components:
       additionalProperties: false
       properties:
         business_name:
-          type: string
+          type: [string, 'null']
           minLength: 1
           maxLength: 100
           description: |
             1 to 100 characters. No control, invisible or text-direction characters. It is the
-            name Kakitu vetted and the name on the verified-merchant badge. Must equal the name
-            the merchant applied with: it is frozen.
+            name Kakitu vetted and the name on the verified-merchant badge. If sent, must
+            equal the name on the record; it cannot be changed here.
         contact_email:
-          type: string
+          type: [string, 'null']
+          minLength: 1
           maxLength: 254
-          description: A plain email address. `Bob <a@b.co>` is refused.
+          description: |
+            A plain email address. `Bob <a@b.co>` is refused, and so is `""` (`400`): it cannot be
+            cleared. Absent or `null` leaves the stored value unchanged.
         contact_phone:
           type: [string, 'null']
           maxLength: 20
@@ -2409,7 +2422,7 @@ components:
           items: { $ref: '#/components/schemas/WalletTransfer' }
         next_before:
           type: string
-          description: The cursor for the next page. Absent on the last page, and only there.
+          description: Opaque cursor for the next page. Present only when more rows exist.
     Reserves:
       type: object
       required: [kshs_supply_kes, usdc_hot, usdc_cold, external_usd, total_usd, at]
@@ -3211,7 +3224,7 @@ components:
           payout_lock.changed: '#/components/schemas/PayoutLockChangedPayload'
     Event:
       type: object
-      required: [id, type, charge_id, payout_id, created_at, status, attempts, next_attempt_at, last_attempt_at, delivered_at, payload]
+      required: [id, type, charge_id, payout_id, created_at, status, attempts, next_attempt_at, last_attempt_at, delivered_at, payload, payload_raw]
       description: |
         At most one of `charge_id` and `payout_id` is non-null. `transfer.received` and the three
         payout-control events (`payout_destination.*`, `payout_lock.changed`) have **both**
@@ -3250,15 +3263,18 @@ components:
         payload:
           allOf: [{ $ref: '#/components/schemas/EventPayload' }]
           description: |
-            The webhook body, rendered as a JSON value rather than a quoted string, so it needs
-            no second parse. **The same JSON value as the delivery, not the same bytes**: key
-            order and spacing can differ, so a `Kakitu-Signature` cannot be checked against it.
-            It needs no signature: it is Kakitu's own record, returned over HTTPS to a request you
-            signed. Verify signatures on deliveries, over the raw request body.
+            The webhook body as JSON, so it needs no second parse. For reading; check a
+            `Kakitu-Signature` over `payload_raw` (or the raw request body), never over this.
 
             Its shape is decided by `type`: a `charge.*` event carries a `charge` object, a
             `payout.*` event a `payout`, `transfer.received` a `transfer`, and so on; the other
             keys are absent rather than null. See `EventPayload`.
+        payload_raw:
+          type: string
+          description: |
+            The exact body that is signed and POSTed, byte for byte. Verify the
+            `Kakitu-Signature` you kept from a delivery over this string. Events created before
+            this field was added carry the body as it is stored, which is also what was sent.
     EventList:
       type: object
       required: [data, next_cursor]

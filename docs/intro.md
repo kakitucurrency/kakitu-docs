@@ -52,14 +52,14 @@ The developer API lets a business's server sign requests with its own wallet key
 | `GET /v1/events` | Open | [Events](./events) |
 | `POST /v1/events/{id}/replay` | Open | [Events](./events) |
 | `GET /v1/payout-destinations`, `DELETE /v1/payout-destinations/{id}`, `POST /v1/payout-destinations/lock` | A merchant reads, removes and locks | [Payouts](./payouts#saved-destinations-and-the-lock) |
-| `POST /v1/payout-destinations` | **Not available** while payouts are off (`403 payouts_disabled`) | [Payouts](./payouts#saved-destinations-and-the-lock) |
+| `POST /v1/payout-destinations` | **Not open for integration.** Answers `403 payouts_disabled` unless payouts are switched on for you | [Payouts](./payouts#saved-destinations-and-the-lock) |
 | `GET /v1/limits` | Open | [Limits](./limits) |
 | `GET /v1/orders/{id}` | Open: history of past orders | [Orders](./orders) |
 | `GET /v1/charges`, `GET /v1/charges/{id}` | Open: history of past charges | [Collections](./collections) |
 | `GET /v1/payouts`, `GET /v1/payouts/{id}` | Open: history of past payouts | [Payouts](./payouts) |
-| `POST /v1/charges` | **Not available**: coming back as a KSHS payment request | [Collections](./collections) |
-| `POST /v1/payouts/quote`, `POST /v1/payouts`, `POST /v1/payouts/requests` | **Not available**: coming back, paid through KCB | [Payouts](./payouts) |
-| `POST /v1/quotes` | Not available today | [Quotes](./quotes) |
+| `POST /v1/charges` | **Not open for integration.** Planned as a KSHS payment request | [Collections](./collections) |
+| `POST /v1/payouts/quote`, `POST /v1/payouts`, `POST /v1/payouts/requests` | **Not open for integration.** Planned to come back, paid through KCB | [Payouts](./payouts) |
+| `POST /v1/quotes` | **Not open for integration.** | [Quotes](./quotes) |
 | Webhook delivery | Thirteen event types; `transfer.received` is the one that matters today | [Webhooks](./webhooks) |
 | Approval of a merchant | A person at Kakitu, not an endpoint | [Going live](./going-live) |
 

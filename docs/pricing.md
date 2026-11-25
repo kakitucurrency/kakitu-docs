@@ -22,8 +22,8 @@ are not published in `/config`.
 | Being paid in KSHS (`pay()`, the Lipa na Kakitu button, `kakitu:` link, QR, any wallet-to-wallet transfer through Kakitu) | Nobody | **Free.** We pay the Base gas. | — |
 | [Cash-out](./cash-out) to your own M-Pesa number (**not available today**: M-Pesa is hidden) | You | **1%**, at least **KES 10**, added on top of the payout | `kes_offramp_fee_bps` **100** and `kes_offramp_fee_min_kes` **10** in `/config` |
 | Cash in or out at a Kakitu agent | The customer | The agent fee, of which Kakitu's platform fee is a part | `agent_fee_bps` **100** (1%), capped at `agent_fee_cap_kshs` **150**; `platform_fee_bps` **20** (0.20%), capped at `platform_fee_cap_kshs` **30** |
-| [Collections](./collections) (`POST /v1/charges`) | — | **Not available.** Coming back as a KSHS payment request. | — |
-| [Payouts](./payouts) to other people | — | **Not available.** Coming back, paid through KCB. | — |
+| [Collections](./collections) (`POST /v1/charges`) | — | **Not open for integration.** Planned as a KSHS payment request. | — |
+| [Payouts](./payouts) to other people | — | **Not open for integration.** Planned to come back, paid through KCB. | — |
 
 **The platform fee is not a fee on merchant payments.** `platform_fee_bps` is Kakitu's share of an agent's counter fee, paid inside the agent fee, never on top of it. A payment from a customer's wallet to yours carries no fee at all.
 

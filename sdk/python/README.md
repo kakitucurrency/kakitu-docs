@@ -4,7 +4,7 @@ A client for the Kakitu developer API.
 
 **Not published.** `kakitu` is not on PyPI: `pip install kakitu` does not work. Install it from this repository (below), or sign requests directly with the complete signers on [Authentication](https://developer.kakitu.org/docs/authentication).
 
-**Status:** merchants apply at [kakitu.org/merchant](https://kakitu.org/merchant) and Kakitu approves them; no API call makes a merchant. Take payment today with a KSHS transfer and a `reference`, and read it with `client.transfers.list`. `charges.create` is not available (coming back as a KSHS payment request), and the payout-sending calls and `payout_destinations.save` are not available (coming back, paid through KCB). See [what is live](https://developer.kakitu.org/docs/going-live#what-is-live).
+**Status:** merchants apply at [kakitu.org/merchant](https://kakitu.org/merchant) and Kakitu approves them; no API call makes a merchant. Take payment today with a KSHS transfer and a `reference`, and read it with `client.transfers.list`. `charges.create` is not open for integration (planned as a KSHS payment request), and the payout-sending calls and `payout_destinations.save` are not open for integration (planned to come back, paid through KCB). See [what is live](https://developer.kakitu.org/docs/going-live#what-is-live).
 
 **Server-side signing is coming soon.** This SDK signs with a hex private key. There is no safe way yet to get the key of a wallet made in the Kakitu app onto a server: the app and the extension do not export one. **Never type your 12 words into a script or tool to work one out.** See [the quickstart](https://developer.kakitu.org/docs/quickstart#server-side-signing).
 
@@ -45,14 +45,14 @@ client.merchants.update(business_name="Mama Njeri Duka",   # exactly as you appl
 | Resource | Methods |
 | --- | --- |
 | `client.merchants` | `update` (`register` is a deprecated alias), `me` |
-| `client.charges` | `get`, `list`, `auto_paging_iter` (past charges); `create` is not available |
+| `client.charges` | `get`, `list`, `auto_paging_iter` (past charges); `create` is not open for integration |
 | `client.transfers` | `create`, `list`, `auto_paging_iter` (`GET /transfers`) |
 | `client.balances` | `retrieve` |
 | `client.orders` | `get` |
 | `client.limits` | `retrieve` |
-| `client.quotes` | `create`: not available today |
+| `client.quotes` | `create`: not open for integration |
 | `client.events` | `list`, `auto_paging_iter`, `replay` |
-| `client.payouts` | `get`, `list`, `auto_paging_iter` (past payouts); `request`, `quote`, `create` are not available |
+| `client.payouts` | `get`, `list`, `auto_paging_iter` (past payouts); `request`, `quote`, `create` are not open for integration |
 | `client.payout_destinations` | `list`, `remove`, `set_lock`; `save` answers `payouts_disabled` while payouts are off |
 
 ```python
@@ -87,9 +87,9 @@ transfer = client.transfers.create(
 
 `value_wei` is a **string** and must stay one: through a float `"1000000000000000000000"` becomes `1e+21` and the signature will not verify.
 
-## Payouts (not available)
+## Payouts (not open for integration)
 
-**Payouts are not available today**: they are coming back, paid through KCB. While they are off, `payouts.quote` and `payouts.request` raise `PayoutsDisabledError` and `payouts.create` raises `PayoutQuoteNotFoundError`. The shape below is the API as it stood and will change.
+**Payouts are not open for integration**: they are planned to come back, paid through KCB. While they are off for your merchant, `payouts.quote` and `payouts.request` raise `PayoutsDisabledError` and `payouts.create` raises `PayoutQuoteNotFoundError`. The shape below is the API as it stands and will change.
 
 ```python
 quote = client.payouts.quote(
@@ -159,7 +159,7 @@ verify_webhook(raw_body_bytes, request.headers["Kakitu-Signature"], "YOUR_WEBHOO
 
 Header `Kakitu-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>`. Pass the **raw** body bytes, not parsed-and-re-serialised JSON: re-marshalling reorders keys and you would verify a different string than the one signed.
 
-Delivery is **at-least-once**. `Kakitu-Event-Id` (and `id` in the payload) is stable across every attempt and across a replay — dedupe on it or you will double-count. The thirteen types are in `kakitu.EVENT_TYPES`; `transfer.received` is the one that matters today. A `payload` read back from `client.events.list` is the same JSON value as the delivery but not the same bytes, so verify signatures on deliveries only.
+Delivery is **at-least-once**. `Kakitu-Event-Id` (and `id` in the payload) is stable across every attempt and across a replay — dedupe on it or you will double-count. The thirteen types are in `kakitu.EVENT_TYPES`; `transfer.received` is the one that matters today. The API also returns `payload_raw`, the exact signed body, on each event (`event.raw["payload_raw"]` here): check a kept `Kakitu-Signature` over that (or over the raw request body), never over `payload`.
 
 When an endpoint was down and events were abandoned, `client.events.list(status="abandoned")` shows them and `client.events.replay(id)` puts one back in the queue with a fresh budget. Replay answers HTTP 202: nothing has been delivered when it returns, and the event id does not change.
 

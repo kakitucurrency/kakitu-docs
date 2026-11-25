@@ -4,7 +4,7 @@ A PHP 8.1+ client for the Kakitu developer API, usable from Laravel, Symfony or 
 
 **Not published.** `kakitu/kakitu-php` is not on Packagist: `composer require kakitu/kakitu-php` fails. Install it from this repository (below), or sign requests directly with the complete signers on [Authentication](https://developer.kakitu.org/docs/authentication).
 
-**Status:** merchants apply at [kakitu.org/merchant](https://kakitu.org/merchant) and Kakitu approves them; no API call makes a merchant. Take payment today with a KSHS transfer and a `reference`, and read it with `transfers->list()`. `charges->create()` is not available (coming back as a KSHS payment request), and the payout-sending calls and `payoutDestinations->save()` are not available (coming back, paid through KCB). See [what is live](https://developer.kakitu.org/docs/going-live#what-is-live).
+**Status:** merchants apply at [kakitu.org/merchant](https://kakitu.org/merchant) and Kakitu approves them; no API call makes a merchant. Take payment today with a KSHS transfer and a `reference`, and read it with `transfers->list()`. `charges->create()` is not open for integration (planned as a KSHS payment request), and the payout-sending calls and `payoutDestinations->save()` are not open for integration (planned to come back, paid through KCB). See [what is live](https://developer.kakitu.org/docs/going-live#what-is-live).
 
 **Server-side signing is coming soon.** This SDK signs with a hex private key. There is no safe way yet to get the key of a wallet made in the Kakitu app onto a server: the app and the extension do not export one. **Never type your 12 words into a script or tool to work one out.** See [the quickstart](https://developer.kakitu.org/docs/quickstart#server-side-signing).
 
@@ -59,14 +59,14 @@ $kakitu->merchants->update([
 | Resource | Methods |
 | --- | --- |
 | `$kakitu->merchants` | `update` (`register` is a deprecated alias), `me` |
-| `$kakitu->charges` | `get`, `list`, `autoPagingIterator` (past charges); `create` is not available |
+| `$kakitu->charges` | `get`, `list`, `autoPagingIterator` (past charges); `create` is not open for integration |
 | `$kakitu->transfers` | `create`, `list`, `autoPagingIterator` (`GET /transfers`) |
 | `$kakitu->balances` | `retrieve` |
 | `$kakitu->orders` | `get` |
 | `$kakitu->limits` | `retrieve` |
-| `$kakitu->quotes` | `create`: not available today |
+| `$kakitu->quotes` | `create`: not open for integration |
 | `$kakitu->events` | `list`, `autoPagingIterator`, `replay` |
-| `$kakitu->payouts` | `get`, `list`, `autoPagingIterator` (past payouts); `request`, `quote`, `create` are not available |
+| `$kakitu->payouts` | `get`, `list`, `autoPagingIterator` (past payouts); `request`, `quote`, `create` are not open for integration |
 | `$kakitu->payoutDestinations` | `list`, `remove`, `setLock`; `save` answers `payouts_disabled` while payouts are off |
 
 Every method returns the decoded JSON array. Closed sets live in `Kakitu\ErrorCode`,
@@ -104,9 +104,9 @@ $result = $kakitu->transfers->create($transfer);   // ['id' => '0x…', 'status'
 the signature will not verify. The SDK refuses a non-string rather than let that reach the wire, and
 refuses a half-signed transfer (a missing `is`, say) before it costs a round trip.
 
-## Payouts (not available)
+## Payouts (not open for integration)
 
-**Payouts are not available today**: they are coming back, paid through KCB. While they are off, `payouts->quote()` and `payouts->request()` answer `payouts_disabled` and `payouts->create()` answers `payout_quote_not_found`. The shape below is the API as it stood and will change.
+**Payouts are not open for integration**: they are planned to come back, paid through KCB. While they are off for your merchant, `payouts->quote()` and `payouts->request()` answer `payouts_disabled` and `payouts->create()` answers `payout_quote_not_found`. The shape below is the API as it stands and will change.
 
 ```php
 $quote = $kakitu->payouts->quote([
@@ -210,8 +210,7 @@ $event = Webhook::constructEvent(
 Delivery is **at-least-once**: `Kakitu-Event-Id` (and `id` in the payload) is stable across every attempt
 and across a replay — dedupe on it or you will double-count. `Webhook::verify()` returns a bool instead of
 throwing. The thirteen types are in `Kakitu\EventType`; `transfer.received` is the one that matters
-today. A `payload` read back from `events->list()` is the same JSON value as the delivery but not the
-same bytes, so verify signatures on deliveries only.
+today. Each event from `events->list()` also carries `payload_raw`, the exact signed body: check a kept `Kakitu-Signature` over that (or over the raw request body), never over `payload`.
 
 When an endpoint was down and events were abandoned, `$kakitu->events->list(['status' => 'abandoned'])`
 shows them and `$kakitu->events->replay($id)` puts one back in the queue with a fresh budget. Replay

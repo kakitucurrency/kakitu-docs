@@ -30,7 +30,7 @@ Every `/v1/` endpoint answers an error with one envelope:
 | `merchant_not_registered` | 404 | This wallet has no merchant record. Becoming a merchant is the application at [kakitu.org/merchant](https://kakitu.org/merchant); no API route makes one, and `POST /v1/merchants` answers this rather than creating one. Nothing was saved. |
 | `merchant_not_approved` | 403 | The merchant is not `approved`. An operator must approve it first. |
 | `merchant_suspended` | 403 | The merchant is suspended. |
-| `merchant_name_frozen` | 409 | business_name cannot be changed after review. Needs an operator. |
+| `merchant_name_frozen` | 409 | `business_name` is not the name on your record. `POST /v1/merchants` cannot change it: pending applications change it at kakitu.org/merchant, reviewed ones need Kakitu. Nothing was saved. |
 | `open_loan` | 409 | This wallet has an open Kakitu loan, so it cannot become a merchant until the loan is closed. Nothing was saved. |
 | `account_blocked` | 403 | Kakitu has blocked a wallet this request touches (yours, or on a transfer the recipient), or the money is on hold. **Nothing was charged or sent.** Contact support; retrying will not help. |
 | `idempotency_key_required` | 400 | A money-moving POST has no Idempotency-Key. |
@@ -50,7 +50,7 @@ Every `/v1/` endpoint answers an error with one envelope:
 | `rail_unavailable` | 503 | The feature is unavailable or paused, capacity is short right now, or our own check of whether a wallet is blocked could not run. Retry shortly. On a route that moves money it means **nothing was sent**. |
 | `order_not_found` | 404 | No such order. See [Orders](./orders). |
 | `event_not_found` | 404 | No such webhook event. See [Events](./events). |
-| `payouts_disabled` | 403 | Payouts are not switched on for this merchant. Payouts are [not available today](./payouts#not-available). Also the answer to saving a payout destination while they are off. |
+| `payouts_disabled` | 403 | Payouts are not switched on for this merchant. Payouts are [not open for integration](./payouts#not-available). Also the answer to saving a payout destination while they are off. |
 | `payout_daily_cap_exceeded` | 429 | The merchant's daily **payout** budget is spent. Not the collection cap. Resets at midnight EAT. |
 | `payout_amount_above_maximum` | 400 | Over the largest single payout allowed for this merchant. |
 | `payout_not_found` | 404 | No such payout for this merchant. See [Payouts](./payouts). |

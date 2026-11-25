@@ -18,9 +18,9 @@ There is one environment: `https://walletapi.kakitu.org`. There is no separate s
 | [Cash-out](./cash-out) to your own M-Pesa number, in the Kakitu app or the extension | **Not available.** `mpesa_rails_visible` is `false` in [`GET /config`](./config): M-Pesa is hidden, and its routes answer `409 mpesa_hidden` even when cash-out is switched on. `kes_offramp_enabled` is `true` only once both are on. |
 | The verified-merchant badge in the extension's payment sheet | **Live** on Kakitu extension versions 0.2.7 and later; the store's 0.2.4 does not show it ([by version](./extension#the-verified-merchant-badge)). The public lookup `GET /merchants/verified/{address}` is live. |
 | M-Pesa top-ups | **Not available.** Hidden with the rest of M-Pesa (`409 mpesa_hidden`); `kes_onramp_enabled` in [`GET /config`](./config) is `true` once they are on. |
-| [`POST /v1/charges`](./collections) | **Not available.** Coming back as a KSHS payment request. Take a transfer with a `reference` today. |
-| [`POST /v1/payouts`](./payouts), the other payout-sending routes and saving a payout destination | **Not available.** Coming back, paid through KCB. |
-| [`POST /v1/quotes`](./quotes) | Not available today. |
+| [`POST /v1/charges`](./collections) | **Not open for integration.** Planned as a KSHS payment request. Take a transfer with a `reference` today. |
+| [`POST /v1/payouts`](./payouts), the other payout-sending routes and saving a payout destination | **Not open for integration.** Planned to come back, paid through KCB. |
+| [`POST /v1/quotes`](./quotes) | **Not open for integration.** |
 
 ## Why a person approves you
 

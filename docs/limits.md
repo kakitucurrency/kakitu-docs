@@ -60,7 +60,7 @@ query string is inside the signed message, so quote it and change it nowhere els
 Two things: a withdrawal band, and, if you are a registered merchant, **your own payout limits**. Signed request, no body, no `Idempotency-Key`.
 
 :::caution The withdrawal band is not the cash-out band
-`withdrawal` describes the older M-Pesa withdrawal route, which Kakitu no longer uses. It is kept so that existing clients keep working; do not use it to price anything. The numbers for a [cash-out to your own M-Pesa number](./cash-out#limits-and-fees) are `kes_offramp_min_kes` and `kes_offramp_max_kes` in [`GET /config`](https://walletapi.kakitu.org/config). The payout block below describes [payouts](./payouts), which are not available today.
+`withdrawal` describes the older M-Pesa withdrawal route, which Kakitu no longer uses. It is kept so that existing clients keep working; do not use it to price anything. The numbers for a [cash-out to your own M-Pesa number](./cash-out#limits-and-fees) are `kes_offramp_min_kes` and `kes_offramp_max_kes` in [`GET /config`](https://walletapi.kakitu.org/config). The payout block below describes [payouts](./payouts), which are not open for integration.
 :::
 
 <Tabs groupId="lang">

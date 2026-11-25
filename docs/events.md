@@ -42,7 +42,7 @@ A merchant's integration branches on `type` and on nothing else, so each of thes
 
 The last three are the alarm for your own payout controls: if you did not make the change, somebody else holds your key.
 
-**Which of these you will see today.** `transfer.received` is the event that matters now: it is how you learn of payments to your address. New charges cannot be created while [collections are not available](./collections), so the `charge.*` events belong to charges made before; the payout-sending routes are [not available](./payouts), so `payout.approved`, `payout.rejected`, `payout.expired`, `payout.cancelled`, `payout.paid` and `payout.failed` belong to past payouts. The three controls events are raised today: removing a destination and the lock work today (saving a destination answers `403 payouts_disabled` while payouts are off).
+**Which of these you will see today.** `transfer.received` is the event that matters now: it is how you learn of payments to your address. [Charges](./collections) and [payouts](./payouts) are not open for integration, so do not build for `charge.*` and the payout types; you may meet them for past charges and payouts. The three controls events are raised whenever a destination is saved or removed or the lock moves (saving answers `403 payouts_disabled` for a merchant without payouts).
 
 ### The approve-first events
 
@@ -538,7 +538,7 @@ function kakitu_verify_webhook(string $secret, string $header, string $raw): boo
 
 Your webhook secret is made when Kakitu approves you and handed to you once. See [your webhook secret](./merchants#your-webhook-secret).
 
-**The bytes on the wire are not the bytes in our examples.** A delivered body has its keys in our storage order (shorter keys first, so `charge` can come before `created_at`) and a space after each `:` and `,`. That changes nothing for a correct receiver: the signature is over the exact bytes we sent, and you verify the exact bytes you received.
+**The example bodies on this page are spaced for reading.** Always verify over the raw request body you received, never over parsed and re-serialised JSON.
 
 ### What counts as delivered
 
@@ -631,11 +631,11 @@ let target = "/v1/events?status=abandoned&limit=50";
 for (;;) {
   const { body } = await call(wallet, "GET", target);   // the query is part of the signature
   for (const e of body.data) {
-    // charge_id is NULLABLE now: exactly one of charge_id and payout_id is set. Reading
+    // charge_id is NULLABLE: at most one of charge_id and payout_id is set. Reading
     // charge_id and assuming a string breaks on the first payout event you receive.
     const subject = e.charge_id ?? e.payout_id;
     console.log(e.id, e.type, subject, e.status, e.attempts, e.last_error ?? "");
-    // payload is the body we sent as a JSON value (not the same bytes), already parsed - no second JSON.parse.
+    // payload is for reading; payload_raw is the exact signed body. payload is already parsed - no second JSON.parse.
     console.log(e.payload.type);
   }
   if (!body.next_cursor) break;
@@ -659,11 +659,11 @@ target = "/v1/events?status=abandoned&limit=50"
 while target:
     _, body = call(account, "GET", target)   # the query is part of the signature
     for e in body["data"]:
-        # charge_id is NULLABLE now: exactly one of charge_id and payout_id is set. Reading
+        # charge_id is NULLABLE: at most one of charge_id and payout_id is set. Reading
         # charge_id and assuming a str breaks on the first payout event you receive.
         subject = e["charge_id"] or e["payout_id"]
         print(e["id"], e["type"], subject, e["status"], e["attempts"], e.get("last_error", ""))
-        # payload is the body we sent as a JSON value (not the same bytes), already parsed - no second json.loads.
+        # payload is for reading; payload_raw is the exact signed body. payload is already parsed - no second json.loads.
         print(e["payload"]["type"])
     cursor = body["next_cursor"]
     target = f"/v1/events?status=abandoned&limit=50&cursor={quote(cursor)}" if cursor else None
@@ -683,12 +683,12 @@ $target = '/v1/events?status=abandoned&limit=50';
 while ($target !== null) {
     [, $body] = kakitu_call($key, 'GET', $target);   // the query is part of the signature
     foreach ($body['data'] as $e) {
-        // charge_id is NULLABLE now: exactly one of charge_id and payout_id is set. Reading
+        // charge_id is NULLABLE: at most one of charge_id and payout_id is set. Reading
         // charge_id and assuming a string breaks on the first payout event you receive.
         $subject = $e['charge_id'] ?? $e['payout_id'];
         echo $e['id'], ' ', $e['type'], ' ', $subject, ' ', $e['status'], ' ',
              $e['attempts'], ' ', ($e['last_error'] ?? ''), PHP_EOL;
-        // payload is the body we sent as a JSON value (not the same bytes), already decoded - no second json_decode.
+        // payload is for reading; payload_raw is the exact signed body. payload is already decoded - no second json_decode.
         echo $e['payload']['type'], PHP_EOL;
     }
     $cursor = $body['next_cursor'];
@@ -727,7 +727,8 @@ HTTP 200
       "last_attempt_at": "2026-10-27T05:44:31Z",
       "delivered_at": null,
       "last_error": "http_502",
-      "payload": { "id": "4e7c2b18-0f2a-4a1b-9a44-1b2c3d4e5f60", "type": "charge.settled", "created_at": "2026-10-26T09:14:02Z", "charge": { "id": "a1f0c9d2-55b1-4f3e-8a0d-77c1e2b3a4d5", "reference": "order-1042", "amount": 500, "currency": "KES", "status": "settled", "paid_at": "2026-10-26T09:13:44Z", "settled_at": "2026-10-26T09:14:02Z", "fee_kes": 15, "credited_kes": 485 } }
+      "payload": { "id": "4e7c2b18-0f2a-4a1b-9a44-1b2c3d4e5f60", "type": "charge.settled", "created_at": "2026-10-26T09:14:02Z", "charge": { "id": "a1f0c9d2-55b1-4f3e-8a0d-77c1e2b3a4d5", "reference": "order-1042", "amount": 500, "currency": "KES", "status": "settled", "paid_at": "2026-10-26T09:13:44Z", "settled_at": "2026-10-26T09:14:02Z", "fee_kes": 15, "credited_kes": 485 } },
+      "payload_raw": "{\"id\":\"4e7c2b18-0f2a-4a1b-9a44-1b2c3d4e5f60\",\"type\":\"charge.settled\",\"created_at\":\"2026-10-26T09:14:02Z\",\"charge\":{…}}"
     }
   ],
   "next_cursor": "MjAyNi0xMC0yNlQwOToxNDowMloucy4u"
@@ -744,7 +745,8 @@ HTTP 200
 | `last_attempt_at` | When we last tried. `null` if we never have. |
 | `delivered_at` | When your endpoint accepted it. |
 | `last_error` | Why the last attempt failed. Absent if none has. See the table below. |
-| `payload` | The body we sent, as JSON rather than as a quoted string, so you can read it without a second parse. Its shape is [the payload](#the-payload), decided by `type`. **It is the same JSON value, not the same bytes**: keys and spacing can differ from the delivery, so a webhook signature cannot be checked against it. See [re-checking an event](#re-checking-an-event-you-read-here). |
+| `payload` | The event body as JSON, so you can read it without a second parse. Its shape is [the payload](#the-payload), decided by `type`. For reading, not for checking a signature. |
+| `payload_raw` | **The exact body that is signed and POSTed**, as a string. Check a signature over this. See [re-checking an event](#re-checking-an-event-you-read-here). |
 
 :::warning charge_id is nullable now
 `charge_id` used to be present on every event, because a charge was the only thing an event
@@ -759,9 +761,11 @@ a charge. Check which one is set before you use it, and read the subject from `p
 
 ### Re-checking an event you read here
 
-**You do not need a webhook signature to trust what `GET /v1/events` returns.** The answer comes from `walletapi.kakitu.org` over HTTPS, to a request you signed yourself, so its `payload` is Kakitu's own record. The webhook signature exists for the other direction, where a stranger could POST to your `callback_url` pretending to be us.
+**`payload_raw` is the exact string of bytes that Kakitu signs and POSTs.** To re-check a delivery, take its `Kakitu-Signature` header, which you kept when it arrived, and verify it over `payload_raw` (UTF-8, exactly as decoded from the JSON string) just as you would over the raw request body. `GET /v1/events` does not return the signature itself: each attempt is signed with its own timestamp and with the secret you had at that moment, so a rotated secret does not verify an older delivery.
 
-So: verify the `Kakitu-Signature` on every **delivery**, over the raw request body, as above. Do not try to recompute it from a `payload` read here; the bytes differ. If you stored a delivery and want to check it again later, keep the raw body and the `Kakitu-Signature` header together when you receive it, and verify that pair.
+Do not check a signature over `payload`, or over anything you parsed and serialised again. Events created before this field was added carry the body as it is stored, which is also what was sent for them.
+
+When you only want to read events, no signature check is needed: the answer comes over HTTPS to a request you signed yourself.
 
 ### `last_error`
 
@@ -794,7 +798,8 @@ HTTP 202
   "next_attempt_at": "2026-10-27T09:00:00Z",
   "last_attempt_at": "2026-10-27T05:44:31Z",
   "delivered_at": null,
-  "payload": { "…": "…" }
+  "payload": { "…": "…" },
+  "payload_raw": "{…}"
 }
 ```
 

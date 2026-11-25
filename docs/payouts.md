@@ -8,32 +8,32 @@ import TabItem from '@theme/TabItem';
 
 # Payouts
 
-## Not available today: coming back on KCB {#not-available}
+## Not open for integration {#not-available}
 
-**Payouts to other people are not available.** They are coming back, paid by Kakitu itself through KCB. Do not build on them yet: the reference below describes the API as it stood, and it will change when payouts return. This page will say when they open.
+**Payouts to other people are not open for integration.** They are planned to come back, paid by Kakitu itself through KCB. Do not build on them yet: the reference below describes the API as it stands, and it will change. This page will say when they open.
 
-Until then payouts are switched off, and the routes answer like this:
+Two switches govern payouts, the platform's and your merchant's own, and both must be on. Both are Kakitu's, and which one is off is not revealed; [`GET /v1/limits`](./limits#payout-limits) tells you, as `payout.enabled`, whether both are on for you. **While either is off**, the routes answer an approved merchant like this:
 
-| Route | Today |
+| Route | While payouts are off |
 |---|---|
-| `POST /v1/payouts/quote` | `403 payouts_disabled`, after the body, the beneficiary and the destination have been checked. So a malformed request still gets `invalid_request`, and a destination that cannot be paid still gets `payout_destination_locked` or `bank_unavailable`, first. No quote is ever made. |
+| `POST /v1/payouts/quote` | `403 payouts_disabled`, after the body, the beneficiary and the destination have been checked. So a malformed request still gets `invalid_request`, and a destination that cannot be paid still gets `payout_destination_locked` or `bank_unavailable`, first. No quote is made. |
 | `POST /v1/payouts/requests` | The same: those checks first, then `403 payouts_disabled`. |
-| `POST /v1/payouts` | `404 payout_quote_not_found`, for every `quote_id`, because no quote can exist. |
+| `POST /v1/payouts` | `404 payout_quote_not_found`, because no quote can be made. A quote made just before a switch went off is refused with `403 payouts_disabled` instead, and is spent. |
 | `POST /v1/payout-destinations` (saving a place) | `403 payouts_disabled`. |
 | `GET /v1/payout-destinations`, `DELETE /v1/payout-destinations/{id}`, `POST /v1/payout-destinations/lock` | **Work.** |
 | `GET /v1/payouts`, `GET /v1/payouts/{id}` | **Work**: past payouts. |
 
-A merchant that is not approved gets `403 merchant_not_approved` before any of this.
+A merchant that is not approved gets `403 merchant_not_approved` (or `merchant_suspended`) before any of this.
 
-What works today:
+What you can use:
 
-- **Your own money out**, at a Kakitu agent. M-Pesa [cash-out](./cash-out) to your own number is not available today.
+- **Your own money out**, at a Kakitu agent. M-Pesa [cash-out](./cash-out) to your own number is hidden while `mpesa_rails_visible` is `false`.
 - **[Saved destinations and the lock](#saved-destinations-and-the-lock)**: listing, removing and locking. The lock already binds your own cash-out, so read that section if you use it.
 - **Past payouts.** `GET /v1/payouts` and `GET /v1/payouts/{id}` still read them.
 
 <!-- rebuilding -->
 
-## How payouts worked
+## How payouts work
 
 A payout sends shillings **out** — from your KSHS balance to an M-Pesa number, a till, a paybill or a bank account. You price it, you sign it with your own key, and Kakitu pays the beneficiary.
 
@@ -41,7 +41,7 @@ A charge is money arriving; a payout is money leaving, and the permissions, the 
 
 ## Payouts are off by default
 
-**Read this before you write any of it.** There are two switches and both must be on: the platform's, which Kakitu controls for everybody, and your merchant's own, which is off until Kakitu switches it on for you. While either is off, `POST /v1/payouts/quote`, `POST /v1/payouts/requests` and saving a destination answer an approved merchant with this (the quote and the request only after the body, the beneficiary and the destination have been checked), and `POST /v1/payouts` answers `404 payout_quote_not_found` because no quote can exist:
+**Read this before you write any of it.** There are two switches and both must be on: the platform's, which Kakitu controls for everybody, and your merchant's own, which is off until Kakitu switches it on for you. While either is off, `POST /v1/payouts/quote`, `POST /v1/payouts/requests` and saving a destination answer an approved merchant with this (the quote and the request only after the body, the beneficiary and the destination have been checked), and `POST /v1/payouts` answers `404 payout_quote_not_found` because no quote can be made:
 
 ```json
 HTTP 403
@@ -689,7 +689,7 @@ HTTP 201
 }
 ```
 
-**Saving answers `403 payouts_disabled` while payouts are switched off for your merchant**, which they are today. Listing, removing and locking work.
+**Saving answers `403 payouts_disabled` while payouts are switched off for your merchant**. Listing, removing and locking work.
 
 `201` for a new place, `200` for one already saved. A phone is `{"phone": "2547…"}` (a saved phone always comes back with `"type": "phone"`), a paybill is `{"type": "paybill", "paybill": "…", "account": "…"}` and a bank is `{"type": "bank", "account": "…", "bank_code": "…"}`. A bank is looked up at the save and its `holder_name` is stored and returned. You can keep up to 50 places; past that, `409 payout_destinations_full`.
 
@@ -1006,7 +1006,7 @@ Read it. **That sentence is where a wait is explained to you**, and a payout tha
 | `merchant_not_registered` | 404 | This wallet has no merchant record. |
 | `merchant_not_approved` | 403 | A merchant record, not yet approved. |
 | `merchant_suspended` | 403 | The merchant is suspended. |
-| `payouts_disabled` | 403 | Payouts are not switched on for this merchant. Today's answer, after the body and destination checks. |
+| `payouts_disabled` | 403 | Payouts are not switched on for this merchant. Answered after the body and destination checks. |
 | `payout_daily_cap_exceeded` | 429 | The day's payout budget is spent. Resets at midnight EAT. |
 | `payout_amount_above_maximum` | 400 | Over the largest single payout allowed for this merchant. |
 | `invalid_request` | 400 | A malformed body, an unknown field, an `amount_kes` below 1, a name that is not valid, or a beneficiary that is not exactly one valid destination (a till with a phone, a number that is not a till, a phone that is not a Kenyan mobile). |
@@ -1048,7 +1048,7 @@ Read it. **That sentence is where a wait is explained to you**, and a payout tha
 | `payout_destinations_full` | 409 | You have as many saved as you may (50). Remove one. |
 | `unknown_bank`, `account_not_found`, `bank_unavailable` | 400, 422, 403 | A bank that is not on the list, does not hold the account, or is not available. |
 | `merchant_not_approved`, `merchant_suspended` | 403 | Saving needs an approved merchant. |
-| `payouts_disabled` | 403 | Payouts are not switched on for this merchant. **Today's answer.** |
+| `payouts_disabled` | 403 | Payouts are not switched on for this merchant. |
 | `rail_unavailable` | 503 | The payout limiter is not running, so nothing can be saved. Retry later. |
 
 `DELETE /v1/payout-destinations/{id}` answers `200 {"id": "…", "removed": true}`, or `404 payout_destination_not_found` for a place that does not exist, one that is not yours and an id that is not a UUID, in the same words. Any signed wallet may call it. `GET` needs only a registered merchant.
@@ -1060,7 +1060,7 @@ Everything above, plus:
 | `code` | HTTP | When |
 |---|---|---|
 | `idempotency_key_required` | 400 | No `Idempotency-Key`. Nothing was sent. |
-| `payout_quote_not_found` | 404 | The quote cannot be used. See [above](#the-quote-is-single-use-and-yours-alone). **Every `quote_id` gets this today**, because payouts are off and no quote can be made. |
+| `payout_quote_not_found` | 404 | The quote cannot be used. See [above](#the-quote-is-single-use-and-yours-alone). While payouts are off no quote can be made, so this is the answer. |
 | `payout_not_found` | 404 | The `payout_id` of the approved request does not exist, or is not yours. |
 | `invalid_request` | 400 | The signed transfer does not match the quote, or the body is malformed. **Nothing was sent.** |
 | `payout_not_approved` | 409 | This payout cannot be signed now: not approved, rejected, lapsed or already sent. |

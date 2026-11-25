@@ -18,7 +18,7 @@ Until a `callback_url` is set, your events wait with `last_error: "no_callback_u
 
 ### The webhook secret is shown once
 
-The secret reaches you **once**: on the first `POST /v1/merchants` from your approved merchant that sets a non-empty `callback_url`. After that it is **never retrievable**: it is not on kakitu.org/merchant, not in `GET /v1/merchants/me`, and no endpoint returns it again. A secret that can be read back over an API is not a secret.
+The secret reaches you **once**: in the answer to the first `POST /v1/merchants` from your approved merchant that sets a non-empty `callback_url`. After that it is **never retrievable**: it is not on kakitu.org/merchant and not in `GET /v1/merchants/me`; the only other way to hold one is to make a new one. A secret that can be read back over an API is not a secret.
 
 Store it in a secret manager the moment you receive it. If you lose it, or think it leaked, `POST /v1/merchants/me/webhook-secret` makes a new one and answers with it once; the old one stops signing at once. See [your webhook secret](./merchants#your-webhook-secret).
 
@@ -44,7 +44,7 @@ Your callback URL and your secret are read **fresh on every attempt**, so fixing
 
 The timestamp is **inside** the signed string, not merely alongside it, which is what makes checking it worth anything: move `t` and the signature breaks. The `.` is a separator rather than decoration — without it `"1" + "23.x"` and `"12" + "3.x"` would sign identically and a replayer could shift the clock by trimming the body.
 
-Verify against the **exact bytes** of the request body. Parsing and re-serialising before you verify reorders keys and changes whitespace, and you will then be checking a different string from the one we signed. For the same reason, a `payload` read back from [`GET /v1/events`](./events#re-checking-an-event-you-read-here) is the same JSON value but not the same bytes, and cannot be checked against a signature. There is a worked implementation on the Events page: [verifying the signature](./events#verifying-the-signature).
+Verify against the **exact bytes** of the request body. Parsing and re-serialising before you verify reorders keys and changes whitespace, and you will then be checking a different string from the one we signed. To re-check a delivery later, use `payload_raw` from [`GET /v1/events`](./events#re-checking-an-event-you-read-here): it is the exact signed body. The parsed `payload` beside it is not for checking signatures. There is a worked implementation on the Events page: [verifying the signature](./events#verifying-the-signature).
 
 ## The body
 
@@ -70,7 +70,7 @@ Each body is a three-field envelope (`id`, `type`, `created_at`) wrapped around 
 
 **Every field of every type, what is always present, what may be null, and an example body of each: [the payload](./events#the-payload).**
 
-**Today, `transfer.received` is the one to build for.** New charges cannot be created while [collections are not available](./collections) and the payout-sending routes are [not available](./payouts), so the `charge.*` and payout events belong to past charges and payouts. The controls events (`payout_destination.*`, `payout_lock.changed`) are raised today.
+**Today, `transfer.received` is the one to build for.** [Charges](./collections) and [payouts](./payouts) are not open for integration, so do not build for `charge.*` and payout events; you may meet them for past charges and payouts. The controls events (`payout_destination.*`, `payout_lock.changed`) are raised today.
 
 :::danger Four payout types mean "not sent", and they are not the same instruction
 `payout.expired`, `payout.cancelled` and `payout.rejected` all mean **nothing left your wallet and

@@ -141,13 +141,13 @@ A transfer to your address, from any wallet, by any route (a `pay()` button, a `
 Your wallet's own KSHS history, sent and received, newest first. It is the wallet's read, not a `/v1` route: it needs only a signed request (the same three headers as every call), not a registered merchant, and it answers with the older error shape (`500 {"error": "transfers_unavailable"}` when the history cannot be read; retry).
 
 ```http
-GET /transfers?limit=50&before=2026-11-07T08:21:09.123456789Z
+GET /transfers?limit=50&before=2026-11-07T08:21:09.123456789Z_5b0c8a51-6a0e-4f0e-9d5f-3f1d2c7b9e10
 ```
 
 | Query | Rules |
 |---|---|
-| `limit` | A whole number from 1 to 100. Default 50. A larger value is capped at 100, and the page still carries `next_before` when there may be more. |
-| `before` | The `next_before` of the previous page, **unchanged**. Treat it as an opaque cursor: do not build or edit one. |
+| `limit` | A whole number from 1 to 100. Default 50. A larger value is served as 100, with `next_before` when more rows exist. Anything that is not a whole number above zero is treated as 50. |
+| `before` | The `next_before` of the previous page, **unchanged**. An opaque cursor: do not parse, build or edit one. One that cannot be read is `400 {"error": "invalid_before"}`. |
 
 ```json
 HTTP 200
@@ -165,7 +165,7 @@ HTTP 200
       "reference": "ORD-1042"
     }
   ],
-  "next_before": "2026-11-07T08:21:09.123456789Z"
+  "next_before": "2026-11-07T08:21:09.123456789Z_5b0c8a51-6a0e-4f0e-9d5f-3f1d2c7b9e10"
 }
 ```
 
@@ -180,13 +180,9 @@ HTTP 200
 | `status` | `confirmed` or `unconfirmed`. **`unconfirmed` is not a failure**: it was submitted with no receipt yet, and the money may have moved. Never show it as failed, and never retry it. |
 | `submitted_at` | RFC 3339 UTC. |
 | `reference` | The payer's reference. **Absent** when none was sent. |
-| `next_before` | The cursor for the next page. **Absent** on the last page, and only there. |
+| `next_before` | The cursor for the next page. **Present only when more rows exist**; a full last page has none. |
 
 **Page until `next_before` is absent.** Transfers that share a timestamp (Base makes several blocks a second, and an indexed transfer carries its block's time) are not lost between pages: the cursor carries enough to continue after the last row you received.
-
-:::caution Servers before the paging fix
-A server fix rolling out in late November 2026 closes two ways this route could lose history. Before it, a `limit` above 100 returned 100 rows and **no** `next_before`, so a client stopped early; and transfers sharing the boundary timestamp could be skipped on the next page. Against a server without the fix, send `limit` of at most 100 and, at a page boundary, re-read with `before` set one second later and de-duplicate on `tx_hash`.
-:::
 
 ## Signing a transfer
 

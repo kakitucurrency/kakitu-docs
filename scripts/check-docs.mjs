@@ -107,6 +107,7 @@ const FIELDS = {
     // the controls events
     "destination.id", "destination.type", "destination.ending", "destination.active_at",
     "payout_lock.locked", "payout_lock.unlocks_at",
+    "payload_raw",
     // charges
     "charge.fee_kes", "charge.credited_kes",
   ],
@@ -161,18 +162,18 @@ const PHRASES = {
     "Your 12 words go into the Kakitu app and the Kakitu extension, and nowhere else."],
   // POST /v1/merchants updates an existing merchant; it never makes one (founder, 2026-11-25)
   "docs/merchants.md": ["kakitu.org/merchant", "It does not make a merchant, and it is not a way to apply.",
-    "This route is the only way to set it"],
+    "This route is the only way to set it", "**It cannot be cleared**"],
   "docs/going-live.md": ["kakitu.org/merchant", "This is the only way to become a merchant"],
   // the store version and what needs the newer one
   "docs/extension.md": ["{#which-version}", "The Chrome Web Store has version 0.2.4 today.",
     "GET /merchants/verified/{address}", "0.2.7 and later"],
   // payouts are off: the real answers, not a blanket 403
-  "docs/payouts.md": ["`404 payout_quote_not_found`, for every `quote_id`",
+  "docs/payouts.md": ["`404 payout_quote_not_found`, because no quote can be made.",
     "| `POST /v1/payout-destinations` (saving a place) | `403 payouts_disabled`. |",
     "**An unlocked merchant's approved payout to a phone or a till can still be signed**"],
-  "docs/events.md": ["{#what-is-not-announced}", "It is the same JSON value, not the same bytes"],
+  "docs/events.md": ["{#what-is-not-announced}", "`payload_raw` is the exact string of bytes that Kakitu signs and POSTs"],
   "docs/webhooks.md": ["**That is the only way to set one**"],
-  "docs/transfers.md": ["Page until `next_before` is absent."],
+  "docs/transfers.md": ["Page until `next_before` is absent.", "invalid_before"],
 };
 
 // Every SDK README must say it is not published, must cover GET /transfers, and must not show a
@@ -221,9 +222,11 @@ const FORBIDDEN = [
   // POST /v1/merchants never registers (2026-11-25)
   [/POST \/v1\/merchants (to|and) register|POST \/v1\/merchants first|registration is an upsert|Register or update the signing wallet|cannot register as a merchant/i,
     "POST /v1/merchants does not register a merchant; applying is at kakitu.org/merchant"],
-  // GET /v1/events payload is the same JSON value, not the same bytes
-  [/the exact bytes that were|exact body we sent|signed webhook body verbatim/i,
-    "GET /v1/events payload is not the delivered bytes; a signature cannot be checked against it"],
+  // GET /v1/events: payload_raw is the signed bytes; payload is for reading only
+  [/not the same\s+bytes|same JSON value as the delivery|signed webhook body verbatim|keys in our storage order/i,
+    "payload_raw is the exact signed body on GET /v1/events; check signatures over it"],
+  [/Servers before the paging fix|late-November 2026 paging fix/, "the paging fix ships with these docs"],
+  [/(charges|payouts|collections)[^.|\n]{0,40} (are|is) (switched )?off today|which they are today|Today's answer/i, "states a production switch the docs cannot verify"],
   // stale numbers and versions
   [/"relay_max_per_tx_kes":\s*500000/, "the live per-transfer cap is 50000; read relay_max_per_tx_kes from /config"],
   [/(rolling out|from|with|Rolling out) (with )?(Kakitu )?extension 0\.2\.7|extension 0\.2\.7\)/i,
@@ -352,8 +355,8 @@ for (const w of ["reference", "credited_kes", "payout_locked", "approval_expires
 // Operations a merchant cannot use today. Each says so in the first words of its description,
 // so the API reference and the pages cannot disagree.
 const NOT_TODAY = {
-  createCharge: "Not available.", createPayoutQuote: "Not available.", createPayout: "Not available.",
-  requestPayout: "Not available.", createQuote: "Not available today.",
+  createCharge: "Not open for integration.", createPayoutQuote: "Not open for integration.", createPayout: "Not open for integration.",
+  requestPayout: "Not open for integration.", createQuote: "Not open for integration.",
 };
 for (const [op, prefix] of Object.entries(NOT_TODAY)) {
   const spec = text["static/openapi.yaml"];
