@@ -13,6 +13,12 @@
 //   FIELDS   controller/v1_payout_c.go, v1_payout_destinations_c.go, transfers_c.go,
 //            repository/transfer_notify.go, repository/payout_destination_repo.go,
 //            charge/projector.go
+//   CONFIG   controller/config_c.go                (every json key of PublicConfig = GET /config)
+//
+// Beyond drift, it also guards the mistakes the 2026-11-25 audit found, so none can come back:
+// a page or SDK README that asks for (or reads) a recovery phrase; POST /v1/merchants described
+// as a way to register; mpesa_hidden missing; an undocumented /config key; the spec's "exact
+// bytes" claim about GET /v1/events; stale numbers; and internal links whose #anchor is gone.
 
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -57,14 +63,34 @@ const ERROR_CODES = [
 const PENDING_SERVER_CODES = ["merchant_not_found"]; // feat/close-v1-register
 
 // Answered by the wallet's own routes (/ramp/*), not /v1, and documented beside the /v1 codes.
-const WALLET_CODES = ["deposits_paused"];
+// mpesa_hidden: M-Pesa is hidden (mpesa_rails_visible false); a new cash-out or top-up answers it
+// even when that rail is switched on (controller/mpesa_visibility.go).
+const WALLET_CODES = ["deposits_paused", "mpesa_hidden"];
 // The wallet's own M-Pesa cash-out (/ramp/kes, controller/kesout_c.go). Not /v1 codes, so they
 // are not counted in the forty-four; each needs a table row on the Errors page.
 const KES_OUT_CODES = [
   "kes_offramp_disabled", "kes_offramp_paused", "phone_not_verified", "phone_too_new",
   "amount_below_minimum", "amount_over_limit", "daily_limit_reached", "insufficient_balance",
   "payout_unavailable", "quote_expired", "invalid_relay", "relay_failed", "use_agent_cashout",
-  "destination_locked",
+  "destination_locked", "mpesa_hidden",
+];
+
+// Every key GET /config returns (controller/config_c.go, PublicConfig). Each must be a table row
+// on docs/config.md and a property of the spec's PublicConfig. With KAKITU_SERVER_DIR set, this
+// list is compared with the server's struct both ways.
+const CONFIG_KEYS = [
+  "chain_id", "kshs_contract", "forwarder", "usdc_contract", "treasury_address", "public_rpc_url",
+  "relay_max_per_tx_kes", "deposit_max_per_order_usd", "deposit_min_per_order_usd",
+  "withdraw_max_per_order_kes", "withdraw_min_per_order_kes", "directory_bucket_hex",
+  "directory_max_buckets", "min_supported_build", "latest_build", "store_url_android",
+  "store_url_ios", "app", "support_phone", "agent_app_url_android", "agent_app_url_ios",
+  "mint_rate_kes_per_usdc", "mint_spread_bps", "agent_fee_bps", "agent_fee_cap_kshs",
+  "agency_mode", "platform_fee_bps", "platform_fee_cap_kshs", "agent_min_float_usdc",
+  "order_expiry_minutes", "cashout_capacity_kes", "agent_float_networks", "customer_usdt_networks",
+  "kes_offramp_enabled", "kes_offramp_min_kes", "kes_offramp_max_kes", "kes_offramp_fee_bps",
+  "kes_offramp_fee_min_kes", "mpesa_rails_visible", "kes_onramp_enabled", "kes_onramp_min_kes",
+  "kes_onramp_max_kes", "kes_onramp_fee_bps", "kes_onramp_fee_min_kes",
+  "kes_onramp_unproved_max_kes", "kes_onramp_max_now_kes",
 ];
 
 const PAYOUT_STATES = [
@@ -89,7 +115,7 @@ const FIELDS = {
   ],
   "docs/transfers.md": [
     "reference", "GET /transfers", "tx_hash", "direction", "kind", "counterpart", "amount_kes",
-    "value_wei", "status", "submitted_at", "next_before",
+    "value_wei", "status", "submitted_at", "next_before", "transfers_unavailable",
   ],
   "docs/payouts.md": [
     "payouts_disabled",
@@ -106,7 +132,7 @@ const FIELDS = {
   "docs/cash-out.md": [
     "kes_offramp_enabled", "kes_offramp_min_kes", "kes_offramp_max_kes", "kes_offramp_fee_bps",
     "kes_offramp_fee_min_kes", "burn_kshs", "phone_not_verified", "destination_locked",
-    "POST /ramp/kes/quote",
+    "POST /ramp/kes/quote", "mpesa_rails_visible", "mpesa_hidden",
   ],
   "docs/extension.md": [
     "ebcjlgfjbbgoldipdhbcmciebdiadifg", "reference",
@@ -114,8 +140,10 @@ const FIELDS = {
     "ALREADY_PENDING", "RATE_LIMITED", "NOT_CONNECTED", "kakitu:payfailed", "kakitu:paid",
     "GET /merchants/verified/{address}",
   ],
-  "docs/errors.md": ["deposits_paused"],
-  "docs/merchants.md": ["POST /v1/merchants"],
+  "docs/errors.md": ["deposits_paused", "mpesa_hidden", "merchant_not_found"],
+  "docs/merchants.md": ["POST /v1/merchants", "merchant_not_found", "payout_locked", "payout_unlocks_at"],
+  "docs/intro.md": ["mpesa_rails_visible"],
+  "docs/going-live.md": ["mpesa_rails_visible", "mpesa_hidden"],
 };
 
 // Prose that must be on the page, as plain text (these are sentences, not fields).
@@ -129,10 +157,39 @@ const PHRASES = {
   ],
   // Merchants onboard at kakitu.org/merchant with a wallet made in the Kakitu app; the docs
   // never make a wallet (founder decision, 2026-11-22).
-  "docs/quickstart.md": ["kakitu.org/merchant", "Kakitu app"],
-  "docs/merchants.md": ["kakitu.org/merchant"],
-  "docs/going-live.md": ["kakitu.org/merchant"],
+  "docs/quickstart.md": ["kakitu.org/merchant", "Kakitu app",
+    // no safe key export exists: server-side signing is coming soon, and the words go nowhere
+    "{#server-side-signing}", "Server-side signing for merchant wallets is coming soon",
+    "Your 12 words go into the Kakitu app and the Kakitu extension, and nowhere else."],
+  // POST /v1/merchants updates an approved merchant; it never makes one (founder, 2026-11-25)
+  "docs/merchants.md": ["kakitu.org/merchant", "It does not make a merchant, and it is not a way to apply.",
+    "This route is the only way to set it"],
+  "docs/going-live.md": ["kakitu.org/merchant", "This is the only way to become a merchant"],
+  // the store version and what needs the newer one
+  "docs/extension.md": ["{#which-version}", "The Chrome Web Store has version 0.2.4 today.",
+    "**Not shown yet.**"],
+  // payouts are off: the real answers, not a blanket 403
+  "docs/payouts.md": ["`404 payout_quote_not_found`, for every `quote_id`",
+    "| `POST /v1/payout-destinations` (saving a place) | `403 payouts_disabled`. |",
+    "**An unlocked merchant's approved payout to a phone or a till can still be signed**"],
+  "docs/events.md": ["{#what-is-not-announced}", "It is the same JSON value, not the same bytes"],
+  "docs/webhooks.md": ["**That is the only way to set one**"],
+  "docs/transfers.md": ["Page until `next_before` is absent."],
 };
+
+// Every SDK README must say it is not published, must cover GET /transfers, and must not show a
+// registration or a charge as working code.
+const SDK_READMES = ["sdk/ts/README.md", "sdk/python/README.md", "sdk/php/README.md"];
+const SDK_README_PHRASES = ["**Not published.**", "GET /transfers", "Server-side signing is coming soon"];
+const SDK_README_FORBIDDEN = [
+  [/merchants(\.|->)register\(/, "registration examples: POST /v1/merchants no longer registers (use update)"],
+  [/charges(\.|->)create\(/, "charges are not available; do not show charges.create as working code"],
+  [/quotes(\.|->)create\(/, "POST /v1/quotes is not available; do not show it as working code"],
+  [/Events are `charge\.paid`/, "there are thirteen event types"],
+];
+
+// Files that must not exist: dead Docusaurus samples and stale reports that contradicted the pages.
+const MUST_NOT_EXIST = ["blog", "DOCS-REPORT.md", "sdk/ts/REPORT.md", "sdk/python/REPORT.md", "sdk/php/REPORT.md"];
 
 // Words that must not appear anywhere in the docs or the spec.
 const FORBIDDEN = [
@@ -153,6 +210,33 @@ const FORBIDDEN = [
   [/\]\(\/signup\)|href=["']\/signup|to: ["']\/signup|developer\.kakitu\.org\/signup/,
     "merchant sign-up is at kakitu.org/merchant, not /signup"],
   [/there is no `payout\.paid`|no `payout\.paid` or `payout\.failed`/i, "payout.paid and payout.failed are raised"],
+  // Recovery phrases (2026-11-25). Nothing a merchant reads may ask for the 12 words, take them
+  // as input, or derive a key from them. The 12 words go into the Kakitu app and extension only.
+  [/fromPhrase|fromMnemonic|from_mnemonic|mnemonicToSeed|mnemonic_to_seed|HDNodeWallet|Bip39|bip39\.|generateMnemonic/,
+    "code that reads, derives from or makes a recovery phrase; the docs never touch one"],
+  [/\bmnemonic\b/i, "names a mnemonic; the docs never ask for, show or derive from a recovery phrase"],
+  [/abandon abandon/, "a mnemonic, even the public test one: give test keys in hex"],
+  [/(question|prompt|input|readline)\s*\([^)\n]*(words|phrase|seed)/i, "a script that asks for the recovery phrase"],
+  [/\b(enter|type|paste|input)\s+(your|the)\s+(12|twelve)[- ]words?\b(?!\s+into (a|any) )(?! into nothing)/i,
+    "tells the reader to type their 12 words somewhere; only the Kakitu app and extension take them"],
+  [/derive (it|the key|your key|a key) from (the|your) (12|twelve)/i, "deriving a key from the 12 words"],
+  // POST /v1/merchants never registers (2026-11-25)
+  [/POST \/v1\/merchants (to|and) register|POST \/v1\/merchants first|registration is an upsert|Register or update the signing wallet|cannot register as a merchant/i,
+    "POST /v1/merchants does not register a merchant; applying is at kakitu.org/merchant"],
+  // GET /v1/events payload is the same JSON value, not the same bytes
+  [/the exact bytes that were|exact body we sent|signed webhook body verbatim/i,
+    "GET /v1/events payload is not the delivered bytes; a signature cannot be checked against it"],
+  // stale numbers and versions
+  [/"relay_max_per_tx_kes":\s*500000/, "the live per-transfer cap is 50000; read relay_max_per_tx_kes from /config"],
+  [/(rolling out|from|with|Rolling out) (with )?(Kakitu )?extension 0\.2\.7|extension 0\.2\.7\)/i,
+    "0.2.7 was never published; the store has 0.2.4 and the newer behaviour needs 0.2.8"],
+  [/platform's \(on today\)|platform switch is on today/i, "payouts are not available; no switch is 'on today'"],
+  [/On 9 November 2026 the platform's hold threshold/, "a dated live setting the docs cannot back"],
+  [/Until then this route answers `403 payouts_disabled`\. The shapes/,
+    "POST /v1/payouts answers 404 payout_quote_not_found while payouts are off, and the others check first"],
+  [/\[Collections\]\(\.\/authentication/, "a link labelled Collections that goes to Authentication"],
+  [/\[[^\]]*kakitu\.org\/merchant[^\]]*\]\(\.\//, "a link labelled kakitu.org/merchant that goes to a docs page"],
+  [/Exactly one of `charge_id` and `payout_id`/, "at most one is set; both are null on four types"],
 ];
 
 // ---------------------------------------------------------------- the docs, as text
@@ -161,7 +245,8 @@ const docsDir = join(root, "docs");
 const pages = readdirSync(docsDir).filter((f) => f.endsWith(".md")).map((f) => `docs/${f}`);
 const text = Object.fromEntries([...pages, "static/openapi.yaml"].map((p) => [p, read(p)]));
 // Pages outside docs/ that a visitor reads: checked for forbidden words only.
-const sitePages = ["src/pages/signup.tsx", "src/pages/index.tsx", "docusaurus.config.ts", "README.md"]
+const sitePages = ["src/pages/signup.tsx", "src/pages/index.tsx", "docusaurus.config.ts", "README.md",
+  "sdk/ts/README.md", "sdk/python/README.md", "sdk/php/README.md", "sdk/PUBLISHING.md"]
   .filter((p) => existsSync(join(root, p)));
 // Text between <!-- rebuilding --> and <!-- /rebuilding --> describes an API that is being
 // rebuilt (payouts on KCB). It may describe tills and paybills; nothing outside it may.
@@ -211,10 +296,23 @@ for (const e of EVENTS) {
 }
 
 // errors: one table row each on the Errors page, and an entry in the spec's ErrorCode enum
-for (const c of [...ERROR_CODES, ...WALLET_CODES]) {
-  if (!new RegExp("\\|\\s*`" + c + "`\\s*\\|").test(text["docs/errors.md"])) {
-    fail(`docs/errors.md: error code ${c} has no table row`);
-  }
+// Each list is checked in its own section, so a row in one table does not stand in for the other.
+const errSection = (from, to) => {
+  const body = text["docs/errors.md"];
+  const i = body.indexOf(from);
+  if (i < 0) { fail(`docs/errors.md: the section "${from}" is missing`); return ""; }
+  const j = to ? body.indexOf(to, i + from.length) : -1;
+  return body.slice(i, j < 0 ? undefined : j);
+};
+const v1Table = errSection("## Every code", "## Codes that are not in `/v1`");
+const walletTable = errSection("## Codes that are not in `/v1`", "{#wallet-cash-out-codes}");
+const kesOutTable = errSection("{#wallet-cash-out-codes}", "## Authentication failures");
+const rowIn = (body, c) => new RegExp("\\|\\s*`" + c + "`\\s*\\|").test(body);
+for (const c of ERROR_CODES) {
+  if (!rowIn(v1Table, c)) fail(`docs/errors.md: error code ${c} has no table row under "Every code"`);
+}
+for (const c of WALLET_CODES) {
+  if (!rowIn(walletTable, c)) fail(`docs/errors.md: wallet code ${c} has no table row under "Codes that are not in /v1"`);
 }
 for (const c of ERROR_CODES) {
   if (!new RegExp("-\\s+" + c + "\\b").test(text["static/openapi.yaml"])) {
@@ -222,9 +320,7 @@ for (const c of ERROR_CODES) {
   }
 }
 for (const c of KES_OUT_CODES) {
-  if (!new RegExp("\\|\\s*`" + c + "`\\s*\\|").test(text["docs/errors.md"])) {
-    fail(`docs/errors.md: wallet cash-out code ${c} has no table row`);
-  }
+  if (!rowIn(kesOutTable, c)) fail(`docs/errors.md: wallet cash-out code ${c} has no table row under the /ramp/kes codes`);
 }
 const countWord = { 44: "forty-four", 45: "forty-five" };
 if (!text["docs/errors.md"].toLowerCase().includes(countWord[ERROR_CODES.length])) {
@@ -291,6 +387,73 @@ for (const [page, raw] of Object.entries(forbiddenScope)) {
   }
 }
 
+// /config: every key is a table row on docs/config.md and a property of the spec's PublicConfig
+{
+  const page = text["docs/config.md"] ?? "";
+  if (!page) fail("docs/config.md is missing: every GET /config key needs a row there");
+  const firstCells = [...page.matchAll(/^\|([^|\n]*)\|/gm)].map((m) => m[1]);
+  const rowKeys = new Set(firstCells.flatMap((c) => [...c.matchAll(/`([a-z0-9_]+)`/g)].map((m) => m[1])));
+  const pc = text["static/openapi.yaml"].split("\n    PublicConfig:")[1]?.split(/\n    [A-Za-z]+:\n/)[0] ?? "";
+  for (const k of CONFIG_KEYS) {
+    if (!rowKeys.has(k)) fail(`docs/config.md: /config key ${k} has no table row`);
+    if (!new RegExp("^        " + esc(k) + ":", "m").test(pc)) fail(`static/openapi.yaml: /config key ${k} is not in PublicConfig`);
+  }
+}
+
+// the spec documents the two public reads beside /config, and the merchant record's lock fields
+for (const p of ["/transfers", "/reserves"]) {
+  if (!new RegExp("^  " + esc(p) + ":", "m").test(text["static/openapi.yaml"])) fail(`static/openapi.yaml: path ${p} is missing`);
+}
+{
+  const m = text["static/openapi.yaml"].split("\n    Merchant:\n")[1]?.split(/\n    [A-Za-z]+:\n/)[0] ?? "";
+  for (const f of ["payout_locked", "payout_unlocks_at"]) {
+    if (!m.includes(f + ":")) fail(`static/openapi.yaml: the Merchant schema lacks ${f}`);
+  }
+}
+
+// SDK READMEs
+for (const p of SDK_READMES) {
+  const body = read(p);
+  for (const ph of SDK_README_PHRASES) if (!body.includes(ph)) fail(`${p}: the README must say "${ph}"`);
+  // code only: the prose may name a call to say it is deprecated or not available
+  const code = body.replace(/```[^\n]*\n([\s\S]*?)```|[^]/g, (all, c) => (c !== undefined ? c : all === "\n" ? "\n" : " "));
+  for (const [re, why] of SDK_README_FORBIDDEN) {
+    const m = code.match(re);
+    if (m) fail(`${p}:${code.slice(0, m.index).split("\n").length}: "${m[0]}" ${why}`);
+  }
+}
+
+for (const p of MUST_NOT_EXIST) if (existsSync(join(root, p))) fail(`${p} must not exist (stale; removed 2026-11-25)`);
+
+// internal links: ./page and ./page#anchor must resolve to a page and a heading on it
+{
+  const slug = (h) => h.toLowerCase().replace(/<[^>]+>/g, "").replace(/[`*~\\]/g, "")
+    .replace(/[^\p{L}\p{N}\s_-]/gu, "").trim().replace(/\s/g, "-");
+  const anchors = {};
+  for (const page of pages) {
+    const ids = new Set();
+    const seen = {};
+    const body = text[page].replace(/```[\s\S]*?```/g, "");
+    for (const m of body.matchAll(/^#{1,6}\s+(.*?)\s*$/gm)) {
+      const explicit = m[1].match(/\{#([^}]+)\}\s*$/);
+      if (explicit) { ids.add(explicit[1]); continue; }
+      let id = slug(m[1]);
+      if (seen[id] !== undefined) { seen[id] += 1; id = `${id}-${seen[id]}`; } else seen[id] = 0;
+      ids.add(id);
+    }
+    anchors[page.slice("docs/".length, -3)] = ids;
+  }
+  for (const page of pages) {
+    const body = text[page].replace(/```[\s\S]*?```/g, "");
+    for (const m of body.matchAll(/\]\(\.\/([a-z0-9-]*)(?:#([^)\s]+))?\)/g)) {
+      const target = m[1] || page.slice("docs/".length, -3);
+      const line = body.slice(0, m.index).split("\n").length;
+      if (!anchors[target]) { fail(`${page}:${line}: link to ./${m[1]} — no such page`); continue; }
+      if (m[2] && !anchors[target].has(m[2])) fail(`${page}:${line}: link to ./${m[1]}#${m[2]} — no such heading`);
+    }
+  }
+}
+
 // ---------------------------------------------------------------- against the server
 
 const serverDir = process.env.KAKITU_SERVER_DIR;
@@ -326,8 +489,11 @@ if (serverDir) {
   for (const k of ["kes_offramp_enabled", "kes_offramp_min_kes", "kes_offramp_max_kes", "kes_offramp_fee_bps", "kes_offramp_fee_min_kes"]) {
     if (!src("controller/config_c.go").includes('json:"' + k + '"')) fail(`${k} is no longer in /config; cash-out.md names it`);
   }
+  // every /config key the server publishes is documented, and nothing documented is gone
+  const cfgStruct = src("controller/config_c.go").split("type PublicConfig struct")[1]?.split("\n}")[0] ?? "";
+  sameSet("/config keys", CONFIG_KEYS, [...cfgStruct.matchAll(/json:"([a-z0-9_]+)/g)].map((m) => m[1]));
   // every wallet cash-out code the Errors page lists is one the cash-out controller answers
-  const kesout = src("controller/kesout_c.go") + src("controller/ramp_c.go");
+  const kesout = src("controller/kesout_c.go") + src("controller/ramp_c.go") + src("controller/mpesa_visibility.go");
   for (const c of KES_OUT_CODES) {
     if (!kesout.includes('"' + c + '"')) {
       fail(`wallet cash-out code ${c}: the server's cash-out controllers do not answer it`);

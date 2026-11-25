@@ -635,7 +635,7 @@ for (;;) {
     // charge_id and assuming a string breaks on the first payout event you receive.
     const subject = e.charge_id ?? e.payout_id;
     console.log(e.id, e.type, subject, e.status, e.attempts, e.last_error ?? "");
-    // payload is the exact body we sent, already parsed - no second JSON.parse.
+    // payload is the body we sent as a JSON value (not the same bytes), already parsed - no second JSON.parse.
     console.log(e.payload.type);
   }
   if (!body.next_cursor) break;
@@ -663,7 +663,7 @@ while target:
         # charge_id and assuming a str breaks on the first payout event you receive.
         subject = e["charge_id"] or e["payout_id"]
         print(e["id"], e["type"], subject, e["status"], e["attempts"], e.get("last_error", ""))
-        # payload is the exact body we sent, already parsed - no second json.loads.
+        # payload is the body we sent as a JSON value (not the same bytes), already parsed - no second json.loads.
         print(e["payload"]["type"])
     cursor = body["next_cursor"]
     target = f"/v1/events?status=abandoned&limit=50&cursor={quote(cursor)}" if cursor else None
@@ -688,7 +688,7 @@ while ($target !== null) {
         $subject = $e['charge_id'] ?? $e['payout_id'];
         echo $e['id'], ' ', $e['type'], ' ', $subject, ' ', $e['status'], ' ',
              $e['attempts'], ' ', ($e['last_error'] ?? ''), PHP_EOL;
-        // payload is the exact body we sent, already decoded - no second json_decode.
+        // payload is the body we sent as a JSON value (not the same bytes), already decoded - no second json_decode.
         echo $e['payload']['type'], PHP_EOL;
     }
     $cursor = $body['next_cursor'];
