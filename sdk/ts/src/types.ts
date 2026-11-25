@@ -23,6 +23,10 @@ export interface Merchant {
   state: MerchantState;
   daily_cap_kes: number;
   per_charge_max_kes: number;
+  /** Whether the payout lock binds now. Always present. */
+  payout_locked: boolean;
+  /** When the lock comes off. Present only while an unlock is pending. */
+  payout_unlocks_at?: string;
 }
 
 export interface RegisterMerchantParams {
@@ -110,6 +114,41 @@ export interface Transfer {
   id: string;
   /** "confirmed" when the chain already has it (HTTP 200); "pending" when it is in flight (202). */
   status: "pending" | "confirmed";
+}
+
+/**
+ * One row of `GET /transfers`: the signing wallet's own KSHS history, newest first.
+ * `reference` exists only on a payment made through Kakitu's relay, and it is the PAYER's claim,
+ * not proof of anything.
+ */
+export interface WalletTransfer {
+  tx_hash: string;
+  /** From the caller's point of view. */
+  direction: "in" | "out";
+  kind: "transfer" | "mint" | "burn";
+  /** The other address. Absent on a mint or a burn. */
+  counterpart?: string;
+  /** Whole shillings. Use `value_wei` when the exact amount matters. */
+  amount_kes: number;
+  /** The exact amount, as a decimal string (18 decimals). */
+  value_wei: string;
+  /** "unconfirmed" is NOT a failure: submitted, no receipt yet, the money may have moved. */
+  status: "confirmed" | "unconfirmed";
+  submitted_at: string;
+  reference?: string;
+}
+
+/** A page of `GET /transfers`. `next_before` is absent on the last page, and only there. */
+export interface WalletTransferPage {
+  transfers: WalletTransfer[];
+  next_before?: string;
+}
+
+export interface ListWalletTransfersParams {
+  /** 1-100. The server defaults to 50 and caps larger values at 100. */
+  limit?: number;
+  /** The previous page's `next_before`, unchanged. Opaque. */
+  before?: string;
 }
 
 // ----------------------------------------------------------------- balances
@@ -243,7 +282,8 @@ export type EventStatus = "pending" | "delivered" | "abandoned";
  * Delivery is AT-LEAST-ONCE. `id` is stable across every attempt and across a replay, and it is
  * your dedupe key — a receiver that keys on it sees exactly-once; one that does not double-counts.
  *
- * Exactly one of `charge_id` and `payout_id` is set. `last_error` is from a closed vocabulary
+ * At most one of `charge_id` and `payout_id` is set: both are null on `transfer.received`,
+ * `payout_destination.*` and `payout_lock.changed`, whose subject is in `payload`. `last_error` is from a closed vocabulary
  * (`http_503`, `timeout`, `no_callback_url`, ...), never a raw error string.
  */
 export interface Event {

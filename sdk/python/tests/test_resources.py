@@ -272,3 +272,36 @@ def test_payout_daily_cap_is_not_retried_as_a_rate_limit():
     with pytest.raises(PayoutLimitExceededError):
         make(h).payouts.get("p-1")
     assert len(seen) == 1
+
+
+def test_transfers_walk_get_transfers_by_next_before():
+    seen = []
+    bodies = [
+        {"transfers": [{"tx_hash": "0xa", "direction": "in"}, {"tx_hash": "0xb"}],
+         "next_before": "2026-11-07T08:21:09.1Z"},
+        {"transfers": [{"tx_hash": "0xc", "reference": "ORD-1"}]},
+    ]
+
+    def h(req):
+        seen.append(req)
+        return httpx.Response(200, json=bodies[min(len(seen) - 1, 1)])
+
+    rows = list(make(h).transfers.auto_paging_iter(limit=2))
+    assert [r.tx_hash for r in rows] == ["0xa", "0xb", "0xc"]
+    assert rows[2].reference == "ORD-1" and rows[0].reference is None
+    assert [r.url.raw_path.decode() for r in seen] == [
+        "/transfers?limit=2", "/transfers?limit=2&before=2026-11-07T08%3A21%3A09.1Z"]
+    assert "Idempotency-Key" not in seen[0].headers
+
+
+def test_transfers_walk_stops_on_a_repeated_cursor():
+    h, seen = recorder({"transfers": [{"tx_hash": "0xa"}], "next_before": "same"})
+    assert [r.tx_hash for r in make(h).transfers.auto_paging_iter()] == ["0xa", "0xa"]
+    assert len(seen) == 2
+
+
+def test_merchant_carries_the_payout_lock():
+    h, _ = recorder({"address": "0xMe", "business_name": "Duka", "state": "approved",
+                     "payout_locked": True, "payout_unlocks_at": "2026-11-08T09:00:02Z"})
+    m = make(h).merchants.me()
+    assert m.payout_locked is True and m.payout_unlocks_at == "2026-11-08T09:00:02Z"

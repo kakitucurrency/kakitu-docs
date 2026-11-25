@@ -1,9 +1,9 @@
 {
     "name": "kakitu/kakitu-php",
-    "description": "PHP SDK for the Kakitu developer API: accept M-Pesa payments settled in KES stablecoin. Request signing is automatic.",
+    "description": "PHP SDK for the Kakitu developer API: KSHS transfers, payment history and webhooks. Request signing is automatic.",
     "type": "library",
     "license": "MIT",
-    "keywords": ["kakitu", "mpesa", "kenya", "payments", "stablecoin"],
+    "keywords": ["kakitu", "kenya", "payments", "stablecoin", "kshs"],
     "require": {
         "php": ">=8.1",
         "ext-curl": "*",

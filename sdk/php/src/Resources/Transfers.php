@@ -8,7 +8,7 @@ use InvalidArgumentException;
 use Kakitu\Kakitu;
 
 /**
- * Gasless KSHS transfers (POST /v1/transfers).
+ * Gasless KSHS transfers (POST /v1/transfers), and your own history (GET /transfers).
  *
  * THIS SDK DOES NOT SIGN THE TRANSFER, AND CANNOT.
  *
@@ -57,6 +57,46 @@ final class Transfers
     {
         self::assertSignedTransfer($transfer);
         return $this->client->request('POST', '/v1/transfers', [], $transfer, $options + ['idempotent' => true]);
+    }
+
+    /**
+     * GET /transfers: your wallet's own KSHS history, sent and received, newest first, with each
+     * payment's `reference`. Not a /v1 route: it needs no merchant record.
+     *
+     * $params may carry `limit` (1 to 100; the server defaults to 50 and caps larger values) and
+     * `before` (the previous page's `next_before`, unchanged). The answer is
+     * `{"transfers": [...], "next_before"?: string}`; `next_before` is absent on the last page.
+     *
+     * @param array{limit?: int, before?: string} $params
+     * @return array<string,mixed>
+     */
+    public function list(array $params = []): array
+    {
+        return $this->client->request('GET', '/transfers', $params);
+    }
+
+    /**
+     * Walks every page of GET /transfers, following `next_before`, and yields the rows. Stops
+     * when `next_before` is absent, or when the server repeats one verbatim.
+     *
+     * @param array{limit?: int} $params
+     * @return \Generator<int, array<string,mixed>>
+     */
+    public function autoPagingIterator(array $params = []): \Generator
+    {
+        unset($params['before']);
+        $before = null;
+        while (true) {
+            $page = $this->list($before === null ? $params : $params + ['before' => $before]);
+            foreach (($page['transfers'] ?? []) as $row) {
+                yield $row;
+            }
+            $next = $page['next_before'] ?? null;
+            if (!is_string($next) || $next === '' || $next === $before) {
+                return;
+            }
+            $before = $next;
+        }
     }
 
     /**

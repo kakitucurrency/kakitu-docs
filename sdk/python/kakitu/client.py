@@ -14,7 +14,7 @@ import httpx
 from .errors import KakituConnectionError, KakituError, error_from_response
 from .models import (
     Balances, Beneficiary, Charge, Event, Limits, Merchant, Order, Payout, PayoutDestination,
-    PayoutDestinations, PayoutLock, PayoutQuote, Quote, Transfer,
+    PayoutDestinations, PayoutLock, PayoutQuote, Quote, Transfer, WalletTransfer, WalletTransferPage,
 )
 from .pagination import Page, auto_paginate
 from .signing import Signer
@@ -151,12 +151,23 @@ class Merchants:
     def __init__(self, client: Kakitu) -> None:
         self._c = client
 
+    def update(self, *, business_name: str, contact_email: str, contact_phone: str | None = None,
+               callback_url: str | None = None, idempotency_key: str | None = None) -> Merchant:
+        """Update an APPROVED merchant's contact details and callback URL (``POST /v1/merchants``).
+
+        It does not make a merchant: becoming one is the application at
+        https://kakitu.org/merchant and Kakitu's approval. Any other wallet gets
+        ``merchant_not_found`` (404). ``business_name`` must be the name you applied with: it is
+        frozen (``MerchantNameFrozenError``). Omitted optional fields keep their stored value;
+        pass ``""`` to clear one."""
+        return self.register(business_name=business_name, contact_email=contact_email,
+                             contact_phone=contact_phone, callback_url=callback_url,
+                             idempotency_key=idempotency_key)
+
     def register(self, *, business_name: str, contact_email: str, contact_phone: str | None = None,
                  callback_url: str | None = None, idempotency_key: str | None = None) -> Merchant:
-        """Register the wallet as a merchant (``POST /v1/merchants``). Creates a PENDING merchant;
-        approval is by a Kakitu operator. Re-registering updates contact details; the business
-        name is frozen after review (``MerchantNameFrozenError``). Omitted optional fields keep
-        their stored value; pass ``""`` to clear one."""
+        """Deprecated: the route no longer registers anybody. Use :meth:`update`; this is the
+        same call."""
         body: dict[str, Any] = {"business_name": business_name, "contact_email": contact_email}
         if contact_phone is not None:
             body["contact_phone"] = contact_phone
@@ -255,6 +266,31 @@ class Transfers:
             body["reference"] = reference
         return Transfer.from_dict(self._c._request("POST", "/v1/transfers", json_body=body,
                                                    idempotency_key=idempotency_key, idempotent=True))
+
+    def list(self, *, limit: int | None = None, before: str | None = None) -> WalletTransferPage:
+        """``GET /transfers``: your wallet's own KSHS history, sent and received, newest first,
+        with each payment's ``reference``. Not a /v1 route: it needs no merchant record.
+
+        ``limit`` is 1 to 100 (the server defaults to 50 and caps larger values). Pass the
+        previous page's ``next_before`` back unchanged as ``before``; it is ``None`` on the last
+        page."""
+        params: dict[str, Any] = {}
+        if limit is not None:
+            params["limit"] = int(limit)
+        if before is not None:
+            params["before"] = before
+        return WalletTransferPage.from_dict(self._c._request("GET", "/transfers", params=params or None))
+
+    def auto_paging_iter(self, *, limit: int | None = None) -> Iterator[WalletTransfer]:
+        """Walks every page of ``GET /transfers``, following ``next_before``. Stops when it is
+        absent, or when the server repeats one verbatim rather than looping for ever."""
+        before: str | None = None
+        while True:
+            page = self.list(limit=limit, before=before)
+            yield from page.transfers
+            if not page.next_before or page.next_before == before:
+                return
+            before = page.next_before
 
 
 class BalancesResource:

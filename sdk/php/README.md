@@ -2,15 +2,16 @@
 
 A PHP 8.1+ client for the Kakitu developer API, usable from Laravel, Symfony or plain PHP. There is no WooCommerce plugin; this is a library you call from your own code.
 
-**Status:** merchants apply at [kakitu.org/merchant](https://kakitu.org/merchant) and Kakitu approves them. `charges.create` is coming soon (rebuilt as a KSHS payment request) and the payout-sending calls are coming soon (being rebuilt on KCB); take payment today with a KSHS transfer and a `reference` ([status](https://developer.kakitu.org/docs/going-live#what-is-live)). The reads, transfers and webhooks work today.
+**Not published.** `kakitu/kakitu-php` is not on Packagist: `composer require kakitu/kakitu-php` fails. Install it from this repository (below), or sign requests directly with the complete signers on [Authentication](https://developer.kakitu.org/docs/authentication).
+
+**Status:** merchants apply at [kakitu.org/merchant](https://kakitu.org/merchant) and Kakitu approves them; no API call makes a merchant. Take payment today with a KSHS transfer and a `reference`, and read it with `transfers->list()`. `charges->create()` is not available (coming back as a KSHS payment request), and the payout-sending calls and `payoutDestinations->save()` are not available (coming back, paid through KCB). See [what is live](https://developer.kakitu.org/docs/going-live#what-is-live).
+
+**Server-side signing is coming soon.** This SDK signs with a hex private key. There is no safe way yet to get the key of a wallet made in the Kakitu app onto a server: the app and the extension do not export one. **Never type your 12 words into a script or tool to work one out.** See [the quickstart](https://developer.kakitu.org/docs/quickstart#server-side-signing).
 
 Kakitu authenticates by **request signing**, not a bearer token: every request is signed with your
 wallet's private key. This SDK does that for you. You never build a signature, a timestamp or a header.
 
-## 60-second quickstart
-
-> **SDKs are being published — until then, sign requests directly (see [Authentication](https://developer.kakitu.org/docs/authentication) for complete signers) or copy the reference signer from this sdk/ folder.**
-> `composer require kakitu/kakitu-php` answers 404 on Packagist today; install from this folder instead.
+## Quickstart
 
 ```bash
 # Composer cannot install from a subfolder of a git repository, so clone it and point
@@ -20,7 +21,7 @@ composer config repositories.kakitu path ./kakitu-docs/sdk/php
 composer require kakitu/kakitu-php:@dev
 ```
 
-Put your wallet private key in an environment variable or your host's secret store. Never in code,
+Put the private key in an environment variable or your host's secret store. Never in code,
 never in git.
 
 ```php
@@ -28,44 +29,45 @@ never in git.
 require 'vendor/autoload.php';
 
 use Kakitu\Kakitu;
-use Kakitu\ErrorCode;
-use Kakitu\PayoutState;
-use Kakitu\Exception\KakituException;
 
 $kakitu = new Kakitu([
     'private_key' => getenv('KAKITU_PRIVATE_KEY'),   // 64 hex chars; e.g. YOUR_PRIVATE_KEY_HERE
 ]);
 
-// 1. Register this wallet as a merchant (starts "pending"; Kakitu approves it).
-$merchant = $kakitu->merchants->register([
-    'business_name' => 'Mama Njeri Fabrics',
+// 1. Your state, after applying at kakitu.org/merchant.
+echo $kakitu->merchants->me()['state'];   // "pending", then "approved"
+
+// 2. Your payments, newest first, with each payer's reference (their claim, not proof).
+foreach ($kakitu->transfers->autoPagingIterator(['limit' => 100]) as $t) {
+    if ($t['direction'] === 'in') {
+        echo $t['tx_hash'], ' ', $t['amount_kes'], ' ', $t['reference'] ?? '-', PHP_EOL;
+    }
+}
+
+// 3. Once approved: contact details and callback URL. This does not make a merchant.
+$kakitu->merchants->update([
+    'business_name' => 'Mama Njeri Fabrics',   // exactly as you applied
     'contact_email' => 'pay@mamanjeri.example',
     'callback_url'  => 'https://mamanjeri.example/kakitu/webhook',
 ]);
-
-// 2. Check your state at any time.
-echo $kakitu->merchants->me()['state'];   // "pending", then "approved"
-
-// 3. Charges are coming soon (as KSHS payment requests); this call is shown for the shape only.
-$charge = $kakitu->charges->create(
-    ['amount' => 1500, 'phone' => '+254700000000', 'reference' => 'order-1042'],
-    ['idempotency_key' => 'order-1042'],   // optional; see "Safe retries"
-);
 ```
+
+`merchants->register()` is a deprecated alias of `merchants->update()`; the route no longer registers anybody.
 
 ## What's covered
 
 | Resource | Methods |
 | --- | --- |
-| `$kakitu->merchants` | `register`, `me` |
-| `$kakitu->charges` | `create`, `get`, `list`, `autoPagingIterator` |
-| `$kakitu->transfers` | `create` |
+| `$kakitu->merchants` | `update` (`register` is a deprecated alias), `me` |
+| `$kakitu->charges` | `get`, `list`, `autoPagingIterator` (past charges); `create` is not available |
+| `$kakitu->transfers` | `create`, `list`, `autoPagingIterator` (`GET /transfers`) |
 | `$kakitu->balances` | `retrieve` |
 | `$kakitu->orders` | `get` |
 | `$kakitu->limits` | `retrieve` |
-| `$kakitu->quotes` | `create` |
+| `$kakitu->quotes` | `create`: not available today |
 | `$kakitu->events` | `list`, `autoPagingIterator`, `replay` |
-| `$kakitu->payouts` | `quote`, `create`, `get`, `list`, `autoPagingIterator` |
+| `$kakitu->payouts` | `get`, `list`, `autoPagingIterator` (past payouts); `request`, `quote`, `create` are not available |
+| `$kakitu->payoutDestinations` | `list`, `remove`, `setLock`; `save` answers `payouts_disabled` while payouts are off |
 
 Every method returns the decoded JSON array. Closed sets live in `Kakitu\ErrorCode`,
 `Kakitu\PayoutState` and `Kakitu\EventType` — switch on those constants, never on a message.
@@ -102,7 +104,9 @@ $result = $kakitu->transfers->create($transfer);   // ['id' => '0x…', 'status'
 the signature will not verify. The SDK refuses a non-string rather than let that reach the wire, and
 refuses a half-signed transfer (a missing `is`, say) before it costs a round trip.
 
-## Payouts
+## Payouts (not available)
+
+**Payouts are not available today**: they are coming back, paid through KCB. While they are off, `payouts->quote()` and `payouts->request()` answer `payouts_disabled` and `payouts->create()` answers `payout_quote_not_found`. The shape below is the API as it stood and will change.
 
 ```php
 $quote = $kakitu->payouts->quote([
@@ -121,8 +125,8 @@ if ($payout['status'] === PayoutState::HELD) {
 
 The quote id is **single use** and expires, and a quote from `quotes->create()` is not one of these —
 that route has no merchant, no approval and no payout cap behind it, so it is refused here on purpose.
-States are in `Kakitu\PayoutState`; `paid`, `failed`, `cancelled` and `expired` are terminal
-(`PayoutState::isTerminal()`) and a retry is a **new** payout. `$kakitu->limits->retrieve()['payout']`
+The ten states are in `Kakitu\PayoutState`; `paid`, `failed`, `cancelled`, `rejected` and `expired` are
+terminal (`PayoutState::isTerminal()`) and a retry is a **new** payout. `$kakitu->limits->retrieve()['payout']`
 gives you `hold_above_kes`, `max_kes` and `daily_cap_kes` up front, so you never learn them by being
 refused.
 
@@ -154,7 +158,7 @@ try {
     $kakitu->merchants->me();
 } catch (KakituException $e) {
     switch ($e->errorCode) {                       // compare with Kakitu\ErrorCode constants
-        case ErrorCode::MERCHANT_NOT_REGISTERED: /* call register() */ break;
+        case ErrorCode::MERCHANT_NOT_REGISTERED: /* apply at kakitu.org/merchant */ break;
         case ErrorCode::RATE_LIMITED:            /* back off */ break;
         default: error_log("Kakitu {$e->errorCode} request_id={$e->requestId}");
     }
@@ -177,10 +181,10 @@ Both arrive as `RateLimitException` / `InvalidRequestException`, so only `errorC
 ## Safe retries
 
 * The server does **not** require a key uniformly, and this SDK does not pretend it does. A fresh UUID is
-  sent on the three routes that require one — `charges->create()`, `transfers->create()`,
-  `payouts->create()` — and **no key at all** on `quotes->create()`, `payouts->quote()` and
-  `events->replay()`, which mount no idempotency on the server, nor on `merchants->register()`, which is
-  an upsert. Pass your own to make a retry safe across crashes and timeouts:
+  sent on the four routes that require one — `charges->create()`, `transfers->create()`,
+  `payouts->create()`, `payouts->request()` — and **no key at all** on `quotes->create()`, `payouts->quote()` and
+  `events->replay()`, which mount no idempotency on the server, nor on `merchants->update()`, which
+  moves no money. Pass your own to make a retry safe across crashes and timeouts:
   `['idempotency_key' => 'order-1042']` (honoured on any method). Same key + same body replays the
   original response instead of acting twice; same key + different body is `idempotency_key_reuse`.
 * The SDK retries **429 `rate_limited`, 5xx and network errors** (default 2 retries, exponential backoff
@@ -205,7 +209,9 @@ $event = Webhook::constructEvent(
 
 Delivery is **at-least-once**: `Kakitu-Event-Id` (and `id` in the payload) is stable across every attempt
 and across a replay — dedupe on it or you will double-count. `Webhook::verify()` returns a bool instead of
-throwing. Types are in `Kakitu\EventType`.
+throwing. The thirteen types are in `Kakitu\EventType`; `transfer.received` is the one that matters
+today. A `payload` read back from `events->list()` is the same JSON value as the delivery but not the
+same bytes, so verify signatures on deliveries only.
 
 When an endpoint was down and events were abandoned, `$kakitu->events->list(['status' => 'abandoned'])`
 shows them and `$kakitu->events->replay($id)` puts one back in the queue with a fresh budget. Replay
