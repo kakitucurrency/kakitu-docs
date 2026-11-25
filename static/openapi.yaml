@@ -42,12 +42,13 @@ info:
     `POST /v1/transfers` refuses a merchant that is not `approved`, and so do the payout routes
     and saving a payout destination. Every other route needs a signed request and nothing more.
 
-    **Payouts are off by default for each merchant.** They are governed by two switches that
-    are ANDed: a global one for the whole platform, and a per-merchant one on your own record.
-    Neither can be turned on through this API. Until both are on, the routes that price and
-    send a payout answer an approved merchant with `403 payouts_disabled` — and which of the
-    two is off is deliberately not revealed. A merchant that is not approved gets
-    `403 merchant_not_approved` first. The two read routes, `GET /v1/payouts` and
+    **Payouts are not available.** They are governed by two switches that are ANDed: a global
+    one for the whole platform, and a per-merchant one on your own record. Neither can be
+    turned on through this API. Until both are on, `POST /v1/payouts/quote`,
+    `POST /v1/payouts/requests` and `POST /v1/payout-destinations` answer an approved merchant
+    with `403 payouts_disabled`, and `POST /v1/payouts` answers `404 payout_quote_not_found`
+    because no quote can exist. Which switch is off is deliberately not revealed. A merchant
+    that is not approved gets `403 merchant_not_approved` first. The two read routes, `GET /v1/payouts` and
     `GET /v1/payouts/{id}`, never answer `payouts_disabled`.
 
     ## Trying requests from this page
@@ -210,11 +211,11 @@ tags:
   - name: Public
     description: Unauthenticated platform configuration.
   - name: Charges
-    description: Coming soon, as a KSHS payment request. Past charges stay readable.
+    description: Not available; coming back as a KSHS payment request. Past charges stay readable.
   - name: Transfers
     description: Gasless KSHS transfers signed by the caller.
   - name: Payouts
-    description: Coming soon, being rebuilt on KCB. Past payouts stay readable.
+    description: Not available; coming back, paid through KCB. Past payouts stay readable. Saved destinations can be listed, removed and locked.
   - name: Payout destinations
     description: The places you may pay, and the lock that holds you to them. The lock controls where cash-outs go; it does not stop KSHS transfers to other wallets.
   - name: Reads
@@ -660,21 +661,23 @@ paths:
     post:
       operationId: createPayoutQuote
       tags: [Payouts]
-      summary: Price a payout and get back exactly what to sign (coming soon)
-      x-kakitu-status: coming-soon
+      summary: Price a payout and get back exactly what to sign (not available)
+      x-kakitu-status: not-available
       description: |
-        Coming soon. Payouts are being rebuilt so that Kakitu pays them itself, through KCB.
-        Until then this route answers `403 payouts_disabled`. The shapes below describe the API
-        as it stood and may change when payouts return.
+        Not available. Payouts are coming back, paid by Kakitu itself through KCB. Until then
+        payouts are switched off: after the body and the beneficiary are checked, this route
+        answers `403 payouts_disabled`, and no quote can be made. The shapes below describe the
+        API as it stood and will change when payouts return.
         See https://developer.kakitu.org/docs/payouts.
 
         Prices a payout to a beneficiary's M-Pesa number, till, paybill or bank account (see `PayoutBeneficiary`) and mints the **single-use quote that is the
         only thing `POST /v1/payouts` will accept**. Nothing is created and no money moves.
 
-        **Payouts are off by default for each merchant.** Two switches must both be on: the
-        platform's (on today) and the merchant's own (off until an operator turns it on). Both
-        are an operator's decision; until both are on this route answers `403 payouts_disabled`, and
-        which of the two is off is not revealed. The merchant must also be **approved**.
+        **Payouts are off.** Two switches must both be on: the platform's and the merchant's
+        own. Both are an operator's decision; until both are on this route answers
+        `403 payouts_disabled` (after the body, the beneficiary and the destination checks), and
+        which of the two is off is not revealed. The merchant must also be **approved**, and that
+        is checked first.
 
         **No `Idempotency-Key`.** A quote creates nothing, and each call is a request for a
         distinct price.
@@ -806,12 +809,13 @@ paths:
     post:
       operationId: createPayout
       tags: [Payouts]
-      summary: Confirm a signed payout (coming soon)
-      x-kakitu-status: coming-soon
+      summary: Confirm a signed payout (not available)
+      x-kakitu-status: not-available
       description: |
-        Coming soon. Payouts are being rebuilt so that Kakitu pays them itself, through KCB.
-        Until then this route answers `403 payouts_disabled`. The shapes below describe the API
-        as it stood and may change when payouts return.
+        Not available. Payouts are coming back, paid by Kakitu itself through KCB. Until then
+        no payout quote can be made, so every `quote_id` this route is given answers
+        `404 payout_quote_not_found`. The shapes below describe the API as it stood and will
+        change when payouts return.
         See https://developer.kakitu.org/docs/payouts.
 
         Spends a quote from `POST /v1/payouts/quote` and accepts the payout. The body is the
@@ -884,7 +888,7 @@ paths:
         '400':
           description: |
             `invalid_request` (unknown field, missing `quote_id` or `transfer`, or a signed
-            transfer that does not match the quote — nothing was sent),
+            transfer that does not match the quote — nothing was sent), `unknown_bank`,
             `payout_amount_above_maximum`, `amount_below_minimum`, `amount_above_maximum`,
             `idempotency_key_required` or `idempotency_key_invalid`. A signed transfer that does
             not match the quote has still spent the quote and the day's budget.
@@ -895,8 +899,9 @@ paths:
         '403':
           description: |
             `merchant_not_approved` or `merchant_suspended` (checked first), then
-            `payouts_disabled`, `account_blocked` (nothing was sent), or
-            `identity_verification_required`.
+            `payout_destination_locked` or `bank_unavailable` (the destination is no longer one
+            that can be paid, for example it was removed after an approval), `payouts_disabled`,
+            `account_blocked` (nothing was sent), or `identity_verification_required`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -904,14 +909,18 @@ paths:
           description: |
             `payout_quote_not_found` — the quote does not exist, has expired, has already been
             confirmed, or is not a payout quote. Ask for a new one at
-            `POST /v1/payouts/quote`. Also `merchant_not_registered`.
+            `POST /v1/payouts/quote`. While payouts are off, every `quote_id` gets this. Also
+            `payout_not_found` (the `payout_id` of an approved request does not exist) and
+            `merchant_not_registered`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '409':
           description: |
             `profile_required` (no profile yet: save one with `POST /profile`, see
-            `POST /v1/payouts/quote`), or one of the idempotency conflicts:
+            `POST /v1/payouts/quote`), `payout_not_approved` (the approved request cannot be
+            signed now), `payout_approval_required` (above `hold_above_kes` with no approval), or
+            one of the idempotency conflicts:
             `idempotency_key_reuse`, `idempotency_key_in_progress`, `idempotency_key_acted`.
 
             `idempotency_key_acted` is also the answer when the payout was handed over and its
@@ -1061,12 +1070,13 @@ paths:
     post:
       operationId: requestPayout
       tags: [Payouts]
-      summary: Ask a person to approve a payout before anything is signed (coming soon)
-      x-kakitu-status: coming-soon
+      summary: Ask a person to approve a payout before anything is signed (not available)
+      x-kakitu-status: not-available
       description: |
-        Coming soon. Payouts are being rebuilt so that Kakitu pays them itself, through KCB.
-        Until then this route answers `403 payouts_disabled`. The shapes below describe the API
-        as it stood and may change when payouts return.
+        Not available. Payouts are coming back, paid by Kakitu itself through KCB. Until then
+        payouts are switched off: after the body and the beneficiary are checked, this route
+        answers `403 payouts_disabled`. The shapes below describe the API as it stood and will
+        change when payouts return.
         See https://developer.kakitu.org/docs/payouts.
 
         A payout **above** the merchant's `hold_above_kes` (see `GET /v1/limits`) is decided by
@@ -1209,7 +1219,9 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '401': { $ref: '#/components/responses/AuthFailure' }
         '403':
-          description: '`merchant_not_approved`, `merchant_suspended` or `bank_unavailable`.'
+          description: |
+            `merchant_not_approved`, `merchant_suspended`, `payouts_disabled` (payouts are off for
+            this merchant: saving a place answers this today) or `bank_unavailable`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -1237,10 +1249,12 @@ paths:
       tags: [Payout destinations]
       summary: Remove a saved destination, at once
       description: |
-        Immediate: removing narrows where money can go, so it never waits. Any registered
-        merchant may, suspended or not. A payout already approved to this place can no longer be
-        signed, and one already dispatched is out of reach. A `payout_destination.removed` event
-        is raised.
+        Immediate: removing narrows where money can go, so it never waits. Any signed wallet may
+        call it, suspended or not; one with no such place gets `404 payout_destination_not_found`.
+        A payout already dispatched is out of reach. A payout already approved to this place can
+        no longer be signed **if the merchant is locked, or the place is a paybill or a bank**;
+        an unlocked merchant's approved payout to a phone or till can still be signed. A
+        `payout_destination.removed` event is raised.
 
         Another merchant's place, a missing one and an id that is no UUID are one answer,
         `404 payout_destination_not_found`.
@@ -1709,7 +1723,7 @@ webhooks:
     post:
       operationId: onPayoutExpired
       tags: [Events]
-      summary: payout.expired — NOT sent, sign and submit it again
+      summary: payout.expired — NOT sent, ask again with a new payout
       description: |
         POSTed to your merchant's `callback_url`. **The money did not go.** An approval went
         unsigned past `approval_expires_at`, or a held payout's signed permit lapsed. Nothing

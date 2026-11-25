@@ -258,8 +258,8 @@ for (const w of ["reference", "credited_kes", "payout_locked", "approval_expires
 // Operations a merchant cannot use today. Each says so in the first words of its description,
 // so the API reference and the pages cannot disagree.
 const NOT_TODAY = {
-  createCharge: "Not available.", createPayoutQuote: "Coming soon.", createPayout: "Coming soon.",
-  requestPayout: "Coming soon.", createQuote: "Not available today.",
+  createCharge: "Not available.", createPayoutQuote: "Not available.", createPayout: "Not available.",
+  requestPayout: "Not available.", createQuote: "Not available today.",
 };
 for (const [op, prefix] of Object.entries(NOT_TODAY)) {
   const spec = text["static/openapi.yaml"];
