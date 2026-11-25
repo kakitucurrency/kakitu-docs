@@ -32,9 +32,10 @@ final class Events
      * with `invalid_request` rather than quietly matching nothing, so "why is my list empty" is
      * answered instead of hunted.
      *
-     * Each row carries `payload` as decoded JSON (the signed body verbatim), `last_error` from a
-     * closed vocabulary (http_503, timeout, no_callback_url, ...) and never a raw error string,
-     * and exactly one of `charge_id` / `payout_id`.
+     * Each row carries `payload` as decoded JSON, for reading, and `payload_raw`, the exact body
+     * that is signed and POSTed: verify a kept Kakitu-Signature over payload_raw, never over
+     * payload. `last_error` is from a closed vocabulary (http_503, timeout, no_callback_url, ...)
+     * and never a raw error string. At most one of `charge_id` / `payout_id` is set.
      *
      * @param array<string,scalar> $filters
      * @return array<string,mixed>

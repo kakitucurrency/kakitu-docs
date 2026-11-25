@@ -174,6 +174,23 @@ final class ResourcesTest extends TestCase
         }
     }
 
+    public function testRotateWebhookSecretSendsNoBodyAndNoKey(): void
+    {
+        $t = new FakeTransport(FakeTransport::json(200, ['webhook_secret' => 'new']));
+        $this->assertSame(['webhook_secret' => 'new'], $this->client($t)->merchants->rotateWebhookSecret());
+        $this->assertSame('POST', $t->requests[0]['method']);
+        $this->assertStringEndsWith('/v1/merchants/me/webhook-secret', $t->requests[0]['url']);
+        $this->assertNull($t->requests[0]['body']);
+        $this->assertArrayNotHasKey('Idempotency-Key', $t->requests[0]['headers']);
+    }
+
+    public function testUpdateSendsOnlyTheFieldsGiven(): void
+    {
+        $t = new FakeTransport();
+        $this->client($t)->merchants->update(['callback_url' => 'https://shop.example/hook']);
+        $this->assertSame('{"callback_url":"https://shop.example/hook"}', $t->requests[0]['body']);
+    }
+
     public function testTransfersWalkGetTransfersByNextBefore(): void
     {
         $t = new FakeTransport(

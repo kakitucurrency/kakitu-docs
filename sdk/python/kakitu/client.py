@@ -71,14 +71,14 @@ class Kakitu:
     # -- core -------------------------------------------------------------
     def _request(self, method: str, path: str, *, params: dict[str, Any] | None = None,
                  json_body: dict[str, Any] | None = None, idempotency_key: str | None = None,
-                 idempotent: bool = False) -> Any:
+                 idempotent: bool = False, resend_on_network_error: bool = True) -> Any:
         """Sends one signed request.
 
         ``idempotent=True`` marks a route the server REQUIRES an ``Idempotency-Key`` on
         (``/v1/charges``, ``/v1/transfers``, ``/v1/payouts``); one is generated when the caller
         does not supply their own. It is deliberately NOT keyed off ``method == "POST"``:
         ``/v1/quotes``, ``/v1/payouts/quote`` and ``/v1/events/{id}/replay`` are POSTs that mount
-        no idempotency at all, and ``/v1/merchants`` is an upsert. Sending a key everywhere would
+        no idempotency at all, and ``/v1/merchants`` moves no money. Sending a key everywhere would
         be this SDK pretending a contract is uniform when it is not.
 
         A caller's explicit ``idempotency_key`` is always honoured, on any route.
@@ -108,6 +108,8 @@ class Kakitu:
                 resp = self._http.send(req)
             except httpx.TransportError:
                 last_exc = KakituConnectionError("connection_error", "Could not reach the Kakitu API.")
+                if not resend_on_network_error:
+                    break
                 delay = self._backoff(attempt)
             else:
                 if resp.is_success:
@@ -151,30 +153,43 @@ class Merchants:
     def __init__(self, client: Kakitu) -> None:
         self._c = client
 
-    def update(self, *, business_name: str, contact_email: str, contact_phone: str | None = None,
-               callback_url: str | None = None, idempotency_key: str | None = None) -> Merchant:
+    def update(self, *, business_name: str | None = None, contact_email: str | None = None,
+               contact_phone: str | None = None, callback_url: str | None = None,
+               idempotency_key: str | None = None) -> Merchant:
         """Update an existing merchant's contact details and callback URL (``POST /v1/merchants``).
 
         It does not make a merchant: becoming one is the application at
         https://kakitu.org/merchant and Kakitu's approval. A wallet with no merchant record gets
-        ``merchant_not_registered`` (404). ``business_name`` must be the name you applied with: it is
-        frozen (``MerchantNameFrozenError``). Omitted optional fields keep their stored value;
-        pass ``""`` to clear one."""
-        return self.register(business_name=business_name, contact_email=contact_email,
-                             contact_phone=contact_phone, callback_url=callback_url,
-                             idempotency_key=idempotency_key)
+        ``merchant_not_registered`` (404). Every field is optional; one left out keeps its stored
+        value. ``""`` clears ``contact_phone`` and ``callback_url``; ``contact_email`` cannot be
+        cleared. ``business_name``, if sent, must equal the stored name
+        (``MerchantNameFrozenError``).
+
+        The first call from an approved merchant that sets a ``callback_url`` carries
+        ``.webhook_secret``, once. If that answer is lost, call :meth:`rotate_webhook_secret`."""
+        fields = {"business_name": business_name, "contact_email": contact_email,
+                  "contact_phone": contact_phone, "callback_url": callback_url}
+        body = {k: v for k, v in fields.items() if v is not None}
+        return Merchant.from_dict(self._c._request("POST", "/v1/merchants", json_body=body,
+                                                   idempotency_key=idempotency_key))
 
     def register(self, *, business_name: str, contact_email: str, contact_phone: str | None = None,
                  callback_url: str | None = None, idempotency_key: str | None = None) -> Merchant:
         """Deprecated: the route no longer registers anybody. Use :meth:`update`; this is the
         same call."""
-        body: dict[str, Any] = {"business_name": business_name, "contact_email": contact_email}
-        if contact_phone is not None:
-            body["contact_phone"] = contact_phone
-        if callback_url is not None:
-            body["callback_url"] = callback_url
-        return Merchant.from_dict(self._c._request("POST", "/v1/merchants", json_body=body,
-                                                   idempotency_key=idempotency_key))
+        return self.update(business_name=business_name, contact_email=contact_email,
+                           contact_phone=contact_phone, callback_url=callback_url,
+                           idempotency_key=idempotency_key)
+
+    def rotate_webhook_secret(self) -> str:
+        """Make a new webhook secret and return it, once
+        (``POST /v1/merchants/me/webhook-secret``). The old one stops signing at once. Approved
+        merchants only (``merchant_not_approved``, 403).
+
+        Not resent after a network error: a first request that lands late would void the secret
+        the resend returned. If it fails that way, call it again."""
+        return str(self._c._request("POST", "/v1/merchants/me/webhook-secret",
+                                    resend_on_network_error=False)["webhook_secret"])
 
     def me(self) -> Merchant:
         """Read your merchant record (``GET /v1/merchants/me``)."""

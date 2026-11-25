@@ -123,7 +123,7 @@ final class Kakitu
      *
      * @param array<string,scalar> $query
      * @param array<mixed>|null    $body  JSON body (null for none)
-     * @param array{idempotency_key?: string, idempotent?: bool} $options
+     * @param array{idempotency_key?: string, idempotent?: bool, resend_on_network_error?: bool} $options
      * @return array<string,mixed> decoded JSON
      * @throws KakituException
      */
@@ -179,7 +179,7 @@ final class Kakitu
                     $this->timeout,
                 );
             } catch (ConnectionException $e) {
-                if ($attempt >= $this->maxRetries) {
+                if ($attempt >= $this->maxRetries || ($options['resend_on_network_error'] ?? true) === false) {
                     throw $e;
                 }
                 $this->backoff($attempt++, null);

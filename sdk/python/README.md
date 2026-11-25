@@ -33,9 +33,11 @@ for t in client.transfers.auto_paging_iter(limit=100):
         print(t.tx_hash, t.amount_kes, t.reference)
 
 # Once approved: contact details and callback URL. This does not make a merchant.
-client.merchants.update(business_name="Mama Njeri Duka",   # exactly as you applied
-                        contact_email="owner@example.com",
-                        callback_url="https://example.com/kakitu/webhook")
+# Every field is optional. The first answer that sets callback_url carries webhook_secret, ONCE.
+m = client.merchants.update(contact_email="owner@example.com",
+                            callback_url="https://example.com/kakitu/webhook")
+if m.webhook_secret:
+    ...   # store it in a secret manager now; never log it
 ```
 
 `merchants.register` is a deprecated alias of `merchants.update`; the route no longer registers anybody. Your wallet **address** (derived from the key) is your API credential. Keep the private key out of source control, logs and chat.
@@ -44,7 +46,7 @@ client.merchants.update(business_name="Mama Njeri Duka",   # exactly as you appl
 
 | Resource | Methods |
 | --- | --- |
-| `client.merchants` | `update` (`register` is a deprecated alias), `me` |
+| `client.merchants` | `update` (`register` is a deprecated alias), `rotate_webhook_secret`, `me` |
 | `client.charges` | `get`, `list`, `auto_paging_iter` (past charges); `create` is not open for integration |
 | `client.transfers` | `create`, `list`, `auto_paging_iter` (`GET /transfers`) |
 | `client.balances` | `retrieve` |
@@ -145,7 +147,7 @@ The payout codes are **not** the collection ones. `PayoutLimitExceededError` (`p
 ## What happens automatically
 
 - **Signing**: EIP-191 `personal_sign` over `"{METHOD} {path}{?query} {timestamp} {sha256(body)}"`, signed against the exact bytes sent.
-- **Idempotency**: a key is sent only where the server requires one — `charges.create`, `transfers.create`, `payouts.create`, `payouts.request` — and **never** on `quotes.create`, `payouts.quote` or `events.replay`, which mount no idempotency at all, nor on `merchants.update`, which moves no money. The generated key lives only in memory and is reused across every automatic retry; pass `idempotency_key="..."` (stored, derived from your order id) so a retry after a crash is safe too. An explicit key is honoured on any method.
+- **Idempotency**: a key is sent only where the server requires one — `charges.create`, `transfers.create`, `payouts.create`, `payouts.request` — and **never** on `quotes.create`, `payouts.quote` or `events.replay`, which mount no idempotency at all, nor on `merchants.update` or `merchants.rotate_webhook_secret`, which move no money. The generated key lives only in memory and is reused across every automatic retry; pass `idempotency_key="..."` (stored, derived from your order id) so a retry after a crash is safe too. An explicit key is honoured on any method.
 - **Retries**: exponential backoff on 5xx, network errors and `rate_limited` (429). Never on 4xx. `daily_cap_exceeded` and `payer_velocity_exceeded` are 429s but are limits, not blips, so they raise immediately. Every retry is re-signed with a fresh timestamp, and the same idempotency key.
 - **Replay guard**: the server rejects two identical requests in the same second, so the SDK waits for the next second rather than send one.
 - **Clock**: the server accepts timestamps within 120 seconds. If you see `timestamp_out_of_range`, sync your clock.
@@ -159,7 +161,11 @@ verify_webhook(raw_body_bytes, request.headers["Kakitu-Signature"], "YOUR_WEBHOO
 
 Header `Kakitu-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>`. Pass the **raw** body bytes, not parsed-and-re-serialised JSON: re-marshalling reorders keys and you would verify a different string than the one signed.
 
-Delivery is **at-least-once**. `Kakitu-Event-Id` (and `id` in the payload) is stable across every attempt and across a replay — dedupe on it or you will double-count. The thirteen types are in `kakitu.EVENT_TYPES`; `transfer.received` is the one that matters today. The API also returns `payload_raw`, the exact signed body, on each event (`event.raw["payload_raw"]` here): check a kept `Kakitu-Signature` over that (or over the raw request body), never over `payload`.
+Delivery is **at-least-once**. `Kakitu-Event-Id` (and `id` in the payload) is stable across every attempt and across a replay — dedupe on it or you will double-count. The thirteen types are in `kakitu.EVENT_TYPES`; `transfer.received` is the one that matters today. Each event also has `payload_raw`, the exact signed body: check a kept `Kakitu-Signature` over that (or over the raw request body), never over `payload`.
+
+A delivery re-checked later is outside the 300-second window, so raise `tolerance` for that check. The signature itself is not on the event: keep the header.
+
+Lost the secret, or think it leaked? `client.merchants.rotate_webhook_secret()` makes a new one and answers with it once; the old one stops signing at once. It is not resent after a network error, so call it again if that happens.
 
 When an endpoint was down and events were abandoned, `client.events.list(status="abandoned")` shows them and `client.events.replay(id)` puts one back in the queue with a fresh budget. Replay answers HTTP 202: nothing has been delivered when it returns, and the event id does not change.
 

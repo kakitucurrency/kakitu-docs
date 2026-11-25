@@ -36,6 +36,9 @@ class Merchant:
     #: RFC 3339, when the lock comes off; ``None`` unless an unlock is pending.
     payout_unlocks_at: str | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
+    #: Set on exactly one answer: the first ``merchants.update`` from an approved merchant that
+    #: sets a ``callback_url``. Store it then; it is kept out of ``repr``.
+    webhook_secret: str | None = field(default=None, repr=False)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Merchant":
@@ -45,7 +48,7 @@ class Merchant:
             callback_url=d.get("callback_url", ""), state=d["state"],
             daily_cap_kes=int(d.get("daily_cap_kes", 0)), per_charge_max_kes=int(d.get("per_charge_max_kes", 0)),
             payout_locked=bool(d.get("payout_locked", False)), payout_unlocks_at=d.get("payout_unlocks_at"),
-            raw=d,
+            raw=d, webhook_secret=d.get("webhook_secret"),
         )
 
 
@@ -307,7 +310,10 @@ class Event:
     ``transfer.received``, ``payout_destination.*`` and ``payout_lock.changed``, whose subject is
     in ``payload``. ``last_error`` is from a closed
     vocabulary (``http_503``, ``timeout``, ``no_callback_url``, ...), never a raw error string.
-    ``payload`` is the signed body, already decoded.
+    ``payload`` is the event body, already decoded, for reading. ``payload_raw`` is the exact body
+    that is signed and POSTed: verify the ``Kakitu-Signature`` you kept from a delivery over
+    ``payload_raw.encode()``, never over ``payload``. It is ``""`` only from a server older than the
+    field.
     """
     id: str
     type: str
@@ -322,6 +328,7 @@ class Event:
     last_error: str = ""
     payload: Any = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
+    payload_raw: str = field(default="", repr=False)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Event":
@@ -331,7 +338,7 @@ class Event:
             charge_id=d.get("charge_id"), payout_id=d.get("payout_id"),
             next_attempt_at=d.get("next_attempt_at"), last_attempt_at=d.get("last_attempt_at"),
             delivered_at=d.get("delivered_at"), last_error=str(d.get("last_error", "") or ""),
-            payload=d.get("payload"), raw=d,
+            payload=d.get("payload"), raw=d, payload_raw=str(d.get("payload_raw") or ""),
         )
 
 

@@ -35,12 +35,13 @@ for await (const t of kakitu.transfers.listAll({ limit: 100 })) {
   if (t.direction === "in") console.log(t.tx_hash, t.amount_kes, t.reference ?? "-");
 }
 
-// 3. Once approved: set your contact details and callback URL (this does not make a merchant)
-await kakitu.merchants.update({
-  business_name: "Mama Njeri Groceries",              // exactly as you applied
+// 3. Once approved: set your contact details and callback URL (this does not make a merchant).
+// Every field is optional. The first answer that sets callback_url carries webhook_secret, ONCE.
+const updated = await kakitu.merchants.update({
   contact_email: "owner@example.com",
-  callback_url: "https://example.com/kakitu/webhook", // optional
+  callback_url: "https://example.com/kakitu/webhook",
 });
+if (updated.webhook_secret) { /* store it in a secret manager now; never log it */ }
 
 // 4. Handle errors by code, never by message text
 try {
@@ -64,7 +65,7 @@ Your merchant identity and settlement address is the wallet address your key sig
 
 | Namespace | Methods |
 | --- | --- |
-| `merchants` | `update` (`register` is a deprecated alias), `me` |
+| `merchants` | `update` (`register` is a deprecated alias), `rotateWebhookSecret`, `me` |
 | `charges` | `get`, `list`, `listAll` (past charges); `create` is not open for integration |
 | `transfers` | `create`, `list`, `listAll` (`GET /transfers`) |
 | `balances` | `retrieve` |
@@ -135,7 +136,7 @@ The server does **not** require a key uniformly, and this SDK does not pretend i
 | --- | --- |
 | `charges.create`, `transfers.create`, `payouts.create`, `payouts.request` | **required** — generated for you (UUID), or pass your own |
 | `quotes.create`, `payouts.quote`, `events.replay` | **never sent** — the server mounts no idempotency on them |
-| `merchants.update` | not sent — it moves no money, and the server mounts no key |
+| `merchants.update`, `merchants.rotateWebhookSecret` | not sent — it moves no money, and the server mounts no key |
 | every `GET` | not sent |
 
 The generated key is reused across every automatic retry inside one call, which is what makes a retry safe. It lives only in memory, so to survive a crash or a process restart generate and store your own: `create(params, { idempotencyKey: "order-1042-attempt-1" })`. Same key means the same request; a new request needs a new key.
@@ -176,7 +177,11 @@ const ok = typeof header === "string"
 
 Header `Kakitu-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>`, 300s tolerance. Pass the **raw** body, not re-serialised JSON: re-marshalling reorders keys and you would verify a different string than the one signed.
 
-Delivery is **at-least-once**. `Kakitu-Event-Id` (and `id` in the payload) is stable across every attempt and across a replay — dedupe on it or you will double-count. There are thirteen event types: `transfer.received` (the one that matters today), `charge.paid`, `charge.settled`, `charge.failed`, `payout.approved`, `payout.rejected`, `payout.expired`, `payout.cancelled`, `payout.paid`, `payout.failed`, `payout_destination.added`, `payout_destination.removed` and `payout_lock.changed`. The API also returns `payload_raw`, the exact signed body, on each event (the `Event` type does not declare it yet): check a kept `Kakitu-Signature` over that (or over the raw request body), never over `payload`.
+Delivery is **at-least-once**. `Kakitu-Event-Id` (and `id` in the payload) is stable across every attempt and across a replay — dedupe on it or you will double-count. There are thirteen event types: `transfer.received` (the one that matters today), `charge.paid`, `charge.settled`, `charge.failed`, `payout.approved`, `payout.rejected`, `payout.expired`, `payout.cancelled`, `payout.paid`, `payout.failed`, `payout_destination.added`, `payout_destination.removed` and `payout_lock.changed`. Each event also has `payload_raw`, the exact signed body: check a kept `Kakitu-Signature` over that (or over the raw request body), never over `payload`.
+
+A delivery re-checked later is outside the 300-second window, so raise `toleranceSeconds` for that check. The signature itself is not on the event: keep the header.
+
+Lost the secret, or think it leaked? `merchants.rotateWebhookSecret()` makes a new one and answers with it once; the old one stops signing at once. It is not resent after a network error, so call it again if that happens.
 
 When an endpoint was down and events were abandoned, `events.list({ status: "abandoned" })` shows them and `events.replay(id)` puts one back in the queue with a fresh budget. Replay answers HTTP 202: nothing has been delivered when it returns, and the event id does not change.
 

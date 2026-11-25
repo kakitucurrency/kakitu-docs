@@ -45,8 +45,9 @@ foreach ($kakitu->transfers->autoPagingIterator(['limit' => 100]) as $t) {
 }
 
 // 3. Once approved: contact details and callback URL. This does not make a merchant.
-$kakitu->merchants->update([
-    'business_name' => 'Mama Njeri Fabrics',   // exactly as you applied
+// Every field is optional. The first answer that sets callback_url carries webhook_secret, ONCE:
+// store it in a secret manager then, and never log it.
+$updated = $kakitu->merchants->update([
     'contact_email' => 'pay@mamanjeri.example',
     'callback_url'  => 'https://mamanjeri.example/kakitu/webhook',
 ]);
@@ -58,7 +59,7 @@ $kakitu->merchants->update([
 
 | Resource | Methods |
 | --- | --- |
-| `$kakitu->merchants` | `update` (`register` is a deprecated alias), `me` |
+| `$kakitu->merchants` | `update` (`register` is a deprecated alias), `rotateWebhookSecret`, `me` |
 | `$kakitu->charges` | `get`, `list`, `autoPagingIterator` (past charges); `create` is not open for integration |
 | `$kakitu->transfers` | `create`, `list`, `autoPagingIterator` (`GET /transfers`) |
 | `$kakitu->balances` | `retrieve` |
@@ -211,6 +212,10 @@ Delivery is **at-least-once**: `Kakitu-Event-Id` (and `id` in the payload) is st
 and across a replay — dedupe on it or you will double-count. `Webhook::verify()` returns a bool instead of
 throwing. The thirteen types are in `Kakitu\EventType`; `transfer.received` is the one that matters
 today. Each event from `events->list()` also carries `payload_raw`, the exact signed body: check a kept `Kakitu-Signature` over that (or over the raw request body), never over `payload`.
+
+A delivery re-checked later is outside the 300-second window, so raise the tolerance argument for that check. The signature itself is not on the event: keep the header.
+
+Lost the secret, or think it leaked? `$kakitu->merchants->rotateWebhookSecret()` makes a new one and answers with it once; the old one stops signing at once. It is not resent after a network error, so call it again if that happens.
 
 When an endpoint was down and events were abandoned, `$kakitu->events->list(['status' => 'abandoned'])`
 shows them and `$kakitu->events->replay($id)` puts one back in the queue with a fresh budget. Replay

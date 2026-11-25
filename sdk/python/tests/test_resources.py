@@ -305,3 +305,59 @@ def test_merchant_carries_the_payout_lock():
                      "payout_locked": True, "payout_unlocks_at": "2026-11-08T09:00:02Z"})
     m = make(h).merchants.me()
     assert m.payout_locked is True and m.payout_unlocks_at == "2026-11-08T09:00:02Z"
+
+
+def test_update_sends_only_the_fields_given():
+    h, seen = recorder({"address": "0xMe", "business_name": "Duka", "state": "approved"})
+    c = make(h)
+    c.merchants.update(callback_url="https://shop.example/hook")
+    c.merchants.update(contact_phone="")
+    c.merchants.update()
+    assert [r.content for r in seen] == [
+        b'{"callback_url":"https://shop.example/hook"}', b'{"contact_phone":""}', b"{}"]
+    assert all("Idempotency-Key" not in r.headers for r in seen)
+
+
+def test_update_carries_the_one_time_secret_and_hides_it_from_repr():
+    h, _ = recorder({"address": "0xMe", "business_name": "Duka", "state": "approved",
+                     "webhook_secret": "s3cret"})
+    m = make(h).merchants.update(callback_url="https://shop.example/hook")
+    assert m.webhook_secret == "s3cret" and "s3cret" not in repr(m)
+
+
+def test_rotate_webhook_secret():
+    h, seen = recorder({"webhook_secret": "new"})
+    assert make(h).merchants.rotate_webhook_secret() == "new"
+    assert seen[0].method == "POST" and seen[0].url.path == "/v1/merchants/me/webhook-secret"
+    assert seen[0].content == b"" and "Idempotency-Key" not in seen[0].headers
+
+
+def test_rotate_is_not_resent_after_a_network_error():
+    # A first request that lands late would void the secret the resend returned.
+    from kakitu.errors import KakituConnectionError
+    seen = []
+
+    def h(req):
+        seen.append(req)
+        raise httpx.ConnectTimeout("slow")
+
+    with pytest.raises(KakituConnectionError):
+        make(h).merchants.rotate_webhook_secret()
+    assert len(seen) == 1
+
+
+def test_a_kept_signature_verifies_over_payload_raw():
+    from kakitu import verify_webhook
+    from kakitu.webhooks import compute_signature
+    raw = '{"id":"e1","note":"a<b \u00e9"}'
+    h, _ = recorder({"data": [{"id": "e1", "payload": json.loads(raw), "payload_raw": raw}],
+                     "next_cursor": None})
+    e = make(h).events.list()[0]
+    assert e.payload_raw == raw
+    header = compute_signature("sec", 100, raw.encode())
+    assert verify_webhook(e.payload_raw.encode(), header, "sec", tolerance=10**10)
+
+
+def test_payload_raw_is_empty_when_the_server_sends_none():
+    h, _ = recorder({"data": [{"id": "e1"}], "next_cursor": None})
+    assert make(h).events.list()[0].payload_raw == ""

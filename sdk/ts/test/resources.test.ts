@@ -5,7 +5,8 @@
  */
 import { describe, it, expect } from "vitest";
 import vectors from "./vectors.json" with { type: "json" };
-import { Kakitu, autoPaginate, type Page, type SignedTransfer } from "../src/index.js";
+import { createHmac } from "node:crypto";
+import { Kakitu, autoPaginate, verifyWebhookSignature, type Page, type SignedTransfer } from "../src/index.js";
 
 type Call = { url: string; init: RequestInit };
 function harness(responses: Array<() => Response | Promise<Response>>) {
@@ -225,5 +226,48 @@ describe("read routes", () => {
     await expect(k.payouts.create({ quote_id: "q", transfer: signed })).rejects.toMatchObject({
       code: "payout_daily_cap_exceeded",
     });
+  });
+});
+
+describe("merchant contact, webhook secret and payload_raw", () => {
+  it("update sends only the fields given, and {} when none are", async () => {
+    const { k, calls } = harness([json(200, {})]);
+    await k.merchants.update({ callback_url: "https://shop.example/hook" });
+    await k.merchants.update({});
+    const body = (i: number) => new TextDecoder().decode(calls[i]!.init.body as Uint8Array);
+    expect(body(0)).toBe('{"callback_url":"https://shop.example/hook"}');
+    expect(body(1)).toBe("{}");
+    expect(headersOf(calls[0]!)["Idempotency-Key"]).toBeUndefined();
+  });
+
+  it("update carries the one-time webhook_secret through", async () => {
+    const { k } = harness([json(200, { address: "0xMe", webhook_secret: "s3" })]);
+    const m = await k.merchants.update({ callback_url: "https://shop.example/hook" });
+    const secret: string | undefined = m.webhook_secret;
+    expect(secret).toBe("s3");
+  });
+
+  it("rotateWebhookSecret posts no body and no key, and returns the secret", async () => {
+    const { k, calls } = harness([json(200, { webhook_secret: "new" })]);
+    expect(await k.merchants.rotateWebhookSecret()).toEqual({ webhook_secret: "new" });
+    expect(calls[0]!.url).toBe("https://example.test/v1/merchants/me/webhook-secret");
+    expect(calls[0]!.init.method).toBe("POST");
+    expect(calls[0]!.init.body).toBeUndefined();
+    expect(headersOf(calls[0]!)["Idempotency-Key"]).toBeUndefined();
+  });
+
+  it("rotateWebhookSecret is not resent after a network error: a late first request would void the answer", async () => {
+    const { k, calls } = harness([() => { throw new TypeError("fetch failed"); }]);
+    await expect(k.merchants.rotateWebhookSecret()).rejects.toMatchObject({ code: "network_error" });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("a kept Kakitu-Signature verifies over an event's payload_raw", async () => {
+    const raw = '{"id":"e1","note":"a<b \u00e9"}';
+    const header = `t=100,v1=${createHmac("sha256", "sec").update("100." + raw).digest("hex")}`;
+    const { k } = harness([json(200, { data: [{ id: "e1", payload: JSON.parse(raw), payload_raw: raw }], next_cursor: null })]);
+    const got: string | undefined = (await k.events.list()).data[0]!.payload_raw;
+    expect(got).toBe(raw);
+    expect(verifyWebhookSignature({ payload: got!, header, secret: "sec", toleranceSeconds: Infinity })).toBe(true);
   });
 });

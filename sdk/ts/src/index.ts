@@ -8,7 +8,7 @@ import type {
   ListEventsParams, ListPayoutsParams, Merchant, MerchantState, Order, OrderStatus, Payout,
   PayoutBeneficiary, PayoutBeneficiaryInput, PayoutDestination, PayoutDestinationList,
   PayoutLimits, PayoutLock, PayoutQuote, PayoutState, Quote, QuoteBeneficiary,
-  RegisterMerchantParams, RequestPayoutParams, SavePayoutDestinationParams, SignedTransfer,
+  RegisterMerchantParams, UpdateMerchantParams, WebhookSecret, RequestPayoutParams, SavePayoutDestinationParams, SignedTransfer,
   Transfer, WithdrawalBand, ChargeStatus, ListWalletTransfersParams, WalletTransfer,
   WalletTransferPage,
 } from "./types.js";
@@ -24,7 +24,7 @@ export type {
   PayoutBeneficiary, PayoutBeneficiaryInput, PayoutDestination, PayoutDestinationList,
   PayoutDestinationType, PayoutLimits, PayoutLock, PayoutQuote, PayoutState, PhoneBeneficiary,
   TillBeneficiary, PaybillBeneficiary, BankBeneficiary, Quote, QuoteBeneficiary,
-  RegisterMerchantParams, RequestPayoutParams, SavePayoutDestinationParams, SignedTransfer,
+  RegisterMerchantParams, UpdateMerchantParams, WebhookSecret, RequestPayoutParams, SavePayoutDestinationParams, SignedTransfer,
   Transfer, WithdrawalBand, ListWalletTransfersParams, WalletTransfer, WalletTransferPage,
 } from "./types.js";
 export { EVENT_TYPES } from "./types.js";
@@ -58,8 +58,18 @@ export class Kakitu {
      * `POST /v1/merchants`: update an existing merchant's contact email, phone and callback URL.
      * It does not make a merchant: becoming one is the application at https://kakitu.org/merchant
      * and Kakitu's approval. A wallet with no merchant record gets `merchant_not_registered` (404).
+     * The first call from an approved merchant that sets a `callback_url` carries `webhook_secret`,
+     * once; if that answer is lost, call {@link rotateWebhookSecret}.
      */
-    update(params: RegisterMerchantParams): Promise<Merchant>;
+    update(params: UpdateMerchantParams): Promise<Merchant>;
+    /**
+     * `POST /v1/merchants/me/webhook-secret`: make a new webhook secret and receive it, once. The
+     * old one stops signing at once. Approved merchants only (`merchant_not_approved`, 403).
+     *
+     * Not resent after a network error: a first request that lands late would void the secret the
+     * resend returned. If it fails that way, call it again.
+     */
+    rotateWebhookSecret(): Promise<WebhookSecret>;
     /** @deprecated The route no longer registers anybody. Use {@link update}; this is the same call. */
     register(params: RegisterMerchantParams): Promise<Merchant>;
     me(): Promise<Merchant>;
@@ -203,6 +213,9 @@ export class Kakitu {
     this.merchants = {
       // It moves no money and the server mounts no Idempotency-Key on it, so none is sent.
       update: (p) => postNoKey<Merchant>("/v1/merchants", p),
+      rotateWebhookSecret: () => t.request<WebhookSecret>({
+        method: "POST", path: "/v1/merchants/me/webhook-secret", safeToRetry: false,
+      }),
       register: (p) => postNoKey<Merchant>("/v1/merchants", p),
       me: () => get<Merchant>("/v1/merchants/me"),
     };

@@ -27,6 +27,28 @@ export interface Merchant {
   payout_locked: boolean;
   /** When the lock comes off. Present only while an unlock is pending. */
   payout_unlocks_at?: string;
+  /**
+   * Present on exactly one answer: the first `merchants.update` from an approved merchant that
+   * sets a non-empty `callback_url`. Store it then. Never log it.
+   */
+  webhook_secret?: string;
+}
+
+/** `merchants.update`. Every field is optional; a field left out keeps its stored value. */
+export interface UpdateMerchantParams {
+  /** If sent, must equal the stored name (`merchant_name_frozen` otherwise). It cannot be changed here. */
+  business_name?: string;
+  /** A plain address. It cannot be cleared: "" is refused with `invalid_request`. */
+  contact_email?: string;
+  /** "" clears it. */
+  contact_phone?: string;
+  /** "" clears it. */
+  callback_url?: string;
+}
+
+/** The answer of `merchants.rotateWebhookSecret`. It is shown once. Never log it. */
+export interface WebhookSecret {
+  webhook_secret: string;
 }
 
 export interface RegisterMerchantParams {
@@ -299,8 +321,13 @@ export interface Event {
   last_attempt_at: string | null;
   delivered_at: string | null;
   last_error?: string;
-  /** The signed body verbatim, as JSON (not a string). */
+  /** The event body as JSON, for reading. Never check a signature over it: use `payload_raw`. */
   payload: unknown;
+  /**
+   * The exact body that is signed and POSTed. Verify the `Kakitu-Signature` you kept from a
+   * delivery over this. Undefined only from a server older than this field.
+   */
+  payload_raw?: string;
 }
 
 export interface ListEventsParams extends PageParams {
